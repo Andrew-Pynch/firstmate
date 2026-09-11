@@ -1,0 +1,40 @@
+
+╭─── omp v18.1.17 ─────────────────────────────────────────────────────────────────────────────────╮
+│                          │ Tips                                                                  │
+│      Welcome back!       │ # for prompt actions                                                  │
+│                          │ / for commands                                                        │
+│       ████████████       │ ! to run bash                                                         │
+│          ██  ██          │ $ to run python                                                       │
+│          ██  ██          │ ───────────────────────────────────────────────────────────────────── │
+│          ▒▒  ██          │ LSP Servers                                                           │
+│              ██          │ ● vscode-html-language-server .html .htm                              │
+│                          │ ● vscode-css-language-server .css .scss .sass                         │
+│       GPT-6-Astra        │ ● vscode-json-language-server .json .jsonc                            │
+│       openai-codex       │ ● bashls .sh .bash .zsh                                               │
+│                          │ ───────────────────────────────────────────────────────────────────── │
+│                          │ Recent sessions                                                       │
+│                          │ No recent sessions                                                    │
+│                          │                                                                       │
+│                          │                                                                       │
+│                          │                                                                       │
+│                          │                                                                       │
+╰──────────────────────────┴───────────────────────────────────────────────────────────────────────╯
+ Tip: Please use nerdfont 😭.
+
+ MCP finished with failures. Connected: drive. Failed: granola [config: ~/.omp/agent/mcp.json]: HTTP 401:
+ {"message":"Unauthorized"} [WWW-Authenticate: Bearer [redacted], erro…
+
+ WAKE-ACK
+
+╭── π > ◒ GPT-6-Astra 🙈 > 📁 …WP49TGD615YBDFVX73BR/.composer-lab/proj > ⑂ master > S0.55 ▶────20%─────────╎─┃──272K───╮
+│  draft line one: refactor the parser                                                                                 │
+╰─ draft line two: still typing this out                                                                              ─╯
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,24 @@
+Note: switching to '146efc70b4c9adecd7debeb1721f9e69bf89210f'.
+
+You are in 'detached HEAD' state. You can look around, make experimental
+changes and commit them, and you can discard any commits you make in this
+state without impacting any branches by switching back to a branch.
+
+If you want to create a new branch to retain commits you create, you may
+do so (now or later) by using -c with the switch command. Example:
+
+  git switch -c <new-branch-name>
+
+Or undo this operation with:
+
+  git switch -
+
+Turn off this advice by setting config variable advice.detachedHead to false
+
+ok - omp omp/18.1.17: both tracked .omp/extensions loaded by auto-discovery with no -e and no trust dialog
+ok - omp omp/18.1.17: before_agent_start delivered the digest into model context and the lock names the omp process
+ok - omp omp/18.1.17: fm_watch_arm_omp started a live watcher through the extension
+ok - omp omp/18.1.17: an actionable close spawned a ledger-linked successor and woke main exactly once through hidden custom input
+ok - omp omp/18.1.17: session_stop compelled the guard continuation (guard rc=2, then a stop_hook_active stop) and the model reached for fm_watch_arm_omp
+# omp omp/18.1.17 exited on its own after its rpc stdin closed
+# omp omp/18.1.17 model=openai-codex/gpt-6-astra: every live omp primary assertion passed

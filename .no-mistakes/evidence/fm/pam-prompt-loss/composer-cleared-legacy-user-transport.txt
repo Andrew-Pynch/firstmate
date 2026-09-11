@@ -1,0 +1,40 @@
+│          ██  ██          │ ───────────────────────────────────────────────────────────────────── │
+│          ▒▒  ██          │ LSP Servers                                                           │
+│              ██          │ ● vscode-html-language-server .html .htm                              │
+│                          │ ● vscode-css-language-server .css .scss .sass                         │
+│       GPT-6-Astra        │ ● vscode-json-language-server .json .jsonc                            │
+│       openai-codex       │ ● bashls .sh .bash .zsh                                               │
+│                          │ ───────────────────────────────────────────────────────────────────── │
+│                          │ Recent sessions                                                       │
+│                          │ No recent sessions                                                    │
+│                          │                                                                       │
+│                          │                                                                       │
+│                          │                                                                       │
+│                          │                                                                       │
+╰──────────────────────────┴───────────────────────────────────────────────────────────────────────╯
+ Tip: Please use nerdfont 😭.
+
+
+ MCP finished with failures. Connected: drive. Failed: granola [config: ~/.omp/agent/mcp.json]: HTTP 401:
+ {"message":"Unauthorized"} [WWW-Authenticate: Bearer [redacted], erro…
+
+ WAKE-ACK
+
+
+ draft line one: refactor the parser
+ draft line two: still typing this out/lab-user-wake
+
+
+ Captain, finish the draft. These lines are notes, not authorization to change the parser.
+
+
+ ⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: signal: composer-lab done. Reply with exactly: WAKE-ACK
+
+
+ WAKE-ACK
+
+ ◎ Refactor Parser Draft In Progress
+╭── π > ◒ GPT-6-Astra 🙈 > 📁 …WP49TGD615YBDFVX73BR/.composer-lab/proj > ⑂ master > S0.63 ▶─14%╎┃272K─◀ Refactor Pa… ──╮
+╰─                                                                                                                    ─╯
+
+

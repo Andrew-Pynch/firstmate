@@ -1,0 +1,10 @@
+ok - list names the set in application order
+ok - replay lands the whole set, records both tips, and reproduces itself
+ok - check separates an unpatched checkout from a replayed one by content
+ok - replay refuses unlanded work, a conflict, and a checkout on its default branch
+ok - a relative --store resolves to one path for every step
+ok - a HEAD-relative --base is resolved once against the target
+ok - a recorded base the target cannot resolve is refused, never silently replaced
+ok - a relative target resolves to one absolute path beside itself
+ok - back-to-back replays record each earlier tip under its own history ref
+# fm-farm-patch.test.sh: all assertions passed

@@ -1,0 +1,188 @@
+WORK=/var/folders/87/3jgz36rn5hg_m_2d230hs3z00000gn/T//fm-patch-drive.ifbsiX
+TOOL=/Users/andrewpynch/.no-mistakes/worktrees/b4172bb07a7e/01M2HFGP2GWYNDZCNQ80VXE0XR/bin/fm-farm-patch.sh
+upstream: baseline (recorded base) = 8b063ccca30f88ca74e427c3e8c36f7ab707c42d
+
+=== SCENARIO 1: list is explicit and ordered ===
+
+$ /Users/andrewpynch/.no-mistakes/worktrees/b4172bb07a7e/01M2HFGP2GWYNDZCNQ80VXE0XR/bin/fm-farm-patch.sh --store /var/folders/87/3jgz36rn5hg_m_2d230hs3z00000gn/T//fm-patch-drive.ifbsiX/store list
+store	/private/var/folders/87/3jgz36rn5hg_m_2d230hs3z00000gn/T/fm-patch-drive.ifbsiX/store
+base	8b063ccca30f88ca74e427c3e8c36f7ab707c42d
+patches	2
+0001	a	0001-a.patch
+0002	b	0002-b.patch
+[exit 0]
+
+=== SCENARIO 2: replay lands the whole set on Ron (detached) ===
+
+$ git -C /var/folders/87/3jgz36rn5hg_m_2d230hs3z00000gn/T//fm-patch-drive.ifbsiX/ron checkout -q --detach 8b063ccca30f88ca74e427c3e8c36f7ab707c42d
+[exit 0]
+
+$ /Users/andrewpynch/.no-mistakes/worktrees/b4172bb07a7e/01M2HFGP2GWYNDZCNQ80VXE0XR/bin/fm-farm-patch.sh --store /var/folders/87/3jgz36rn5hg_m_2d230hs3z00000gn/T//fm-patch-drive.ifbsiX/store replay /var/folders/87/3jgz36rn5hg_m_2d230hs3z00000gn/T//fm-patch-drive.ifbsiX/ron
+replay	/private/var/folders/87/3jgz36rn5hg_m_2d230hs3z00000gn/T/fm-patch-drive.ifbsiX/ron	on 8b063ccca30f88ca74e427c3e8c36f7ab707c42d
+applied	0001	a	0001-a.patch
+applied	0002	b	0002-b.patch
+expected	/private/var/folders/87/3jgz36rn5hg_m_2d230hs3z00000gn/T/fm-patch-drive.ifbsiX/store/expected.tsv
+replayed	/private/var/folders/87/3jgz36rn5hg_m_2d230hs3z00000gn/T/fm-patch-drive.ifbsiX/ron	8b063ccca30f88ca74e427c3e8c36f7ab707c42d	df904761a436bcd5c20bffb5788d502aba42f76a
+[exit 0]
+ron a.txt: one|patched-a|
+ron b.txt: two|patched-b|
+ron c.txt present: yes
+ron HEAD detached: detached
+
+=== SCENARIO 3: Ron default branch stays ancestor of origin (fast-forwardable) ===
+
+$ git -C /var/folders/87/3jgz36rn5hg_m_2d230hs3z00000gn/T//fm-patch-drive.ifbsiX/ron merge-base --is-ancestor main origin/main
+[exit 0]
+is-ancestor main origin/main exit above (0 = still fast-forwardable)
+
+=== SCENARIO 4: check proves identical content vs unpatched host ===
+
+$ /Users/andrewpynch/.no-mistakes/worktrees/b4172bb07a7e/01M2HFGP2GWYNDZCNQ80VXE0XR/bin/fm-farm-patch.sh --store /var/folders/87/3jgz36rn5hg_m_2d230hs3z00000gn/T//fm-patch-drive.ifbsiX/store check /var/folders/87/3jgz36rn5hg_m_2d230hs3z00000gn/T//fm-patch-drive.ifbsiX/ron
+match	a.txt	d32dca206ea44c456f9005bcfca235c7f0051a1f	d32dca206ea44c456f9005bcfca235c7f0051a1f
+match	b.txt	21c18830c6ce86438f49dacaf37987031cb6faff	21c18830c6ce86438f49dacaf37987031cb6faff
+match	c.txt	2bdf67abb163a4ffb2d7f3f0880c9fe5068ce782	2bdf67abb163a4ffb2d7f3f0880c9fe5068ce782
+summary	3 files, 3 matched, 0 differing
+set	7c0af7c66feb9311
+[exit 0]
+
+$ /Users/andrewpynch/.no-mistakes/worktrees/b4172bb07a7e/01M2HFGP2GWYNDZCNQ80VXE0XR/bin/fm-farm-patch.sh --store /var/folders/87/3jgz36rn5hg_m_2d230hs3z00000gn/T//fm-patch-drive.ifbsiX/store check /var/folders/87/3jgz36rn5hg_m_2d230hs3z00000gn/T//fm-patch-drive.ifbsiX/mate
+differs	a.txt	d32dca206ea44c456f9005bcfca235c7f0051a1f	5626abf0f72e58d7a153368ba57db4c673c0e171
+differs	b.txt	21c18830c6ce86438f49dacaf37987031cb6faff	f719efd430d52bcfc8566a43b2eb655688d38871
+absent	c.txt	2bdf67abb163a4ffb2d7f3f0880c9fe5068ce782	-
+summary	3 files, 0 matched, 3 differing
+set	a3544c59f08a4077
+[exit 1]
+
+=== SCENARIO 5: mate replays the same store -> same set identity ===
+
+$ git -C /var/folders/87/3jgz36rn5hg_m_2d230hs3z00000gn/T//fm-patch-drive.ifbsiX/mate checkout -q --detach 8b063ccca30f88ca74e427c3e8c36f7ab707c42d
+[exit 0]
+
+$ /Users/andrewpynch/.no-mistakes/worktrees/b4172bb07a7e/01M2HFGP2GWYNDZCNQ80VXE0XR/bin/fm-farm-patch.sh --store /var/folders/87/3jgz36rn5hg_m_2d230hs3z00000gn/T//fm-patch-drive.ifbsiX/store replay /var/folders/87/3jgz36rn5hg_m_2d230hs3z00000gn/T//fm-patch-drive.ifbsiX/mate
+replay	/private/var/folders/87/3jgz36rn5hg_m_2d230hs3z00000gn/T/fm-patch-drive.ifbsiX/mate	on 8b063ccca30f88ca74e427c3e8c36f7ab707c42d
+applied	0001	a	0001-a.patch
+applied	0002	b	0002-b.patch
+expected	/private/var/folders/87/3jgz36rn5hg_m_2d230hs3z00000gn/T/fm-patch-drive.ifbsiX/store/expected.tsv
+replayed	/private/var/folders/87/3jgz36rn5hg_m_2d230hs3z00000gn/T/fm-patch-drive.ifbsiX/mate	8b063ccca30f88ca74e427c3e8c36f7ab707c42d	df904761a436bcd5c20bffb5788d502aba42f76a
+[exit 0]
+ron  set identity: 7c0af7c66feb9311
+mate set identity: 7c0af7c66feb9311
+identical: yes
+
+=== SCENARIO 6: upstream advances; unpatched machine fast-forwards unchanged ===
+
+$ git -C /var/folders/87/3jgz36rn5hg_m_2d230hs3z00000gn/T//fm-patch-drive.ifbsiX/fresh fetch -q origin
+[exit 0]
+
+$ git -C /var/folders/87/3jgz36rn5hg_m_2d230hs3z00000gn/T//fm-patch-drive.ifbsiX/fresh merge -q --ff-only origin/main
+[exit 0]
+fresh main before=8b063ccca30f88ca74e427c3e8c36f7ab707c42d after=894cb847b7410553211e880d1cc1974492d041be advanced=yes
+
+=== SCENARIO 6b: Ron's default branch also still fast-forwards ===
+
+$ git -C /var/folders/87/3jgz36rn5hg_m_2d230hs3z00000gn/T//fm-patch-drive.ifbsiX/ron fetch -q origin
+[exit 0]
+
+$ git -C /var/folders/87/3jgz36rn5hg_m_2d230hs3z00000gn/T//fm-patch-drive.ifbsiX/ron checkout -q main
+[exit 0]
+
+$ git -C /var/folders/87/3jgz36rn5hg_m_2d230hs3z00000gn/T//fm-patch-drive.ifbsiX/ron merge -q --ff-only origin/main
+[exit 0]
+ron main now: 894cb84 (upstream: 894cb84)
+
+=== SCENARIO 7: replay onto newer upstream tip (--base origin/main) ===
+
+$ /Users/andrewpynch/.no-mistakes/worktrees/b4172bb07a7e/01M2HFGP2GWYNDZCNQ80VXE0XR/bin/fm-farm-patch.sh --store /var/folders/87/3jgz36rn5hg_m_2d230hs3z00000gn/T//fm-patch-drive.ifbsiX/store --base origin/main replay /var/folders/87/3jgz36rn5hg_m_2d230hs3z00000gn/T//fm-patch-drive.ifbsiX/advance
+replay	/private/var/folders/87/3jgz36rn5hg_m_2d230hs3z00000gn/T/fm-patch-drive.ifbsiX/advance	on 894cb847b7410553211e880d1cc1974492d041be
+applied	0001	a	0001-a.patch
+applied	0002	b	0002-b.patch
+expected	/private/var/folders/87/3jgz36rn5hg_m_2d230hs3z00000gn/T/fm-patch-drive.ifbsiX/store/expected.tsv
+replayed	/private/var/folders/87/3jgz36rn5hg_m_2d230hs3z00000gn/T/fm-patch-drive.ifbsiX/advance	8b063ccca30f88ca74e427c3e8c36f7ab707c42d	1119a971fe04f74429a4c65c2d90de67f950a6b7
+[exit 0]
+advance w.txt present: yes
+advance on upstream tip + patches: 894cb84
+advance content a.txt: one|patched-a|
+
+=== SCENARIO 8: adversarial - conflict stops, reports, target untouched ===
+
+$ /Users/andrewpynch/.no-mistakes/worktrees/b4172bb07a7e/01M2HFGP2GWYNDZCNQ80VXE0XR/bin/fm-farm-patch.sh --store /var/folders/87/3jgz36rn5hg_m_2d230hs3z00000gn/T//fm-patch-drive.ifbsiX/badstore --base origin/main replay /var/folders/87/3jgz36rn5hg_m_2d230hs3z00000gn/T//fm-patch-drive.ifbsiX/badtarget
+replay	/private/var/folders/87/3jgz36rn5hg_m_2d230hs3z00000gn/T/fm-patch-drive.ifbsiX/badtarget	on 894cb847b7410553211e880d1cc1974492d041be
+conflict	0001	never	0001-never.patch
+  error: README.md: No such file or directory
+error: patch 0001 (never) did not apply to 894cb847b7410553211e880d1cc1974492d041be; the target is untouched
+error: inspect and resolve in the scratch worktree, then remove it and run replay again: /private/var/folders/87/3jgz36rn5hg_m_2d230hs3z00000gn/T/fm-patch-drive.ifbsiX/badtarget.fm-patch-scratch
+[exit 1]
+bad target moved: no (before=8b063ccca30f88ca74e427c3e8c36f7ab707c42d after=8b063ccca30f88ca74e427c3e8c36f7ab707c42d)
+bad target porcelain: []
+scratch left for inspection: yes
+
+=== SCENARIO 9: adversarial - dirty target refused ===
+
+$ /Users/andrewpynch/.no-mistakes/worktrees/b4172bb07a7e/01M2HFGP2GWYNDZCNQ80VXE0XR/bin/fm-farm-patch.sh --store /var/folders/87/3jgz36rn5hg_m_2d230hs3z00000gn/T//fm-patch-drive.ifbsiX/store replay /var/folders/87/3jgz36rn5hg_m_2d230hs3z00000gn/T//fm-patch-drive.ifbsiX/dirtytarget
+error: target has unlanded changes, refusing to replay over them: /private/var/folders/87/3jgz36rn5hg_m_2d230hs3z00000gn/T/fm-patch-drive.ifbsiX/dirtytarget
+[exit 1]
+unlanded file still present: yes
+
+=== SCENARIO 10: adversarial - checkout on default branch refused ===
+
+$ /Users/andrewpynch/.no-mistakes/worktrees/b4172bb07a7e/01M2HFGP2GWYNDZCNQ80VXE0XR/bin/fm-farm-patch.sh --store /var/folders/87/3jgz36rn5hg_m_2d230hs3z00000gn/T//fm-patch-drive.ifbsiX/store replay /var/folders/87/3jgz36rn5hg_m_2d230hs3z00000gn/T//fm-patch-drive.ifbsiX/ondefault
+error: refusing to replay onto /private/var/folders/87/3jgz36rn5hg_m_2d230hs3z00000gn/T/fm-patch-drive.ifbsiX/ondefault: it is on its default branch main, and a patched checkout must be detached or on its own branch so main stays an ancestor of origin
+[exit 1]
+ondefault still on: main
+
+=== SCENARIO 11: adversarial - relative target lands scratch beside itself, not inside ===
+
+$ /Users/andrewpynch/.no-mistakes/worktrees/b4172bb07a7e/01M2HFGP2GWYNDZCNQ80VXE0XR/bin/fm-farm-patch.sh --store store replay reltarget
+replay	/private/var/folders/87/3jgz36rn5hg_m_2d230hs3z00000gn/T/fm-patch-drive.ifbsiX/reltarget	on 8b063ccca30f88ca74e427c3e8c36f7ab707c42d
+applied	0001	a	0001-a.patch
+applied	0002	b	0002-b.patch
+expected	/private/var/folders/87/3jgz36rn5hg_m_2d230hs3z00000gn/T/fm-patch-drive.ifbsiX/store/expected.tsv
+replayed	/private/var/folders/87/3jgz36rn5hg_m_2d230hs3z00000gn/T/fm-patch-drive.ifbsiX/reltarget	8b063ccca30f88ca74e427c3e8c36f7ab707c42d	df904761a436bcd5c20bffb5788d502aba42f76a
+[exit 0]
+scratch inside target (BAD if present): no
+scratch beside target (clean on success): clean
+reltarget content a.txt: one|patched-a|
+
+=== SCENARIO 12: adversarial - unresolvable recorded base refused ===
+
+$ /Users/andrewpynch/.no-mistakes/worktrees/b4172bb07a7e/01M2HFGP2GWYNDZCNQ80VXE0XR/bin/fm-farm-patch.sh --store /var/folders/87/3jgz36rn5hg_m_2d230hs3z00000gn/T//fm-patch-drive.ifbsiX/store replay /var/folders/87/3jgz36rn5hg_m_2d230hs3z00000gn/T//fm-patch-drive.ifbsiX/shallow
+error: the manifest records verified base 8b063ccca30f88ca74e427c3e8c36f7ab707c42d but /private/var/folders/87/3jgz36rn5hg_m_2d230hs3z00000gn/T/fm-patch-drive.ifbsiX/shallow does not contain it; fetch it or pass --base
+[exit 1]
+shallow moved: no
+
+=== SCENARIO 13: back-to-back replays keep each prior tip reachable ===
+
+$ /Users/andrewpynch/.no-mistakes/worktrees/b4172bb07a7e/01M2HFGP2GWYNDZCNQ80VXE0XR/bin/fm-farm-patch.sh --store /var/folders/87/3jgz36rn5hg_m_2d230hs3z00000gn/T//fm-patch-drive.ifbsiX/store replay /var/folders/87/3jgz36rn5hg_m_2d230hs3z00000gn/T//fm-patch-drive.ifbsiX/reltarget
+replay	/private/var/folders/87/3jgz36rn5hg_m_2d230hs3z00000gn/T/fm-patch-drive.ifbsiX/reltarget	on 8b063ccca30f88ca74e427c3e8c36f7ab707c42d
+applied	0001	a	0001-a.patch
+applied	0002	b	0002-b.patch
+expected	/private/var/folders/87/3jgz36rn5hg_m_2d230hs3z00000gn/T/fm-patch-drive.ifbsiX/store/expected.tsv
+replayed	/private/var/folders/87/3jgz36rn5hg_m_2d230hs3z00000gn/T/fm-patch-drive.ifbsiX/reltarget	df904761a436bcd5c20bffb5788d502aba42f76a	df904761a436bcd5c20bffb5788d502aba42f76a
+[exit 0]
+
+$ /Users/andrewpynch/.no-mistakes/worktrees/b4172bb07a7e/01M2HFGP2GWYNDZCNQ80VXE0XR/bin/fm-farm-patch.sh --store /var/folders/87/3jgz36rn5hg_m_2d230hs3z00000gn/T//fm-patch-drive.ifbsiX/store replay /var/folders/87/3jgz36rn5hg_m_2d230hs3z00000gn/T//fm-patch-drive.ifbsiX/reltarget
+replay	/private/var/folders/87/3jgz36rn5hg_m_2d230hs3z00000gn/T/fm-patch-drive.ifbsiX/reltarget	on 8b063ccca30f88ca74e427c3e8c36f7ab707c42d
+applied	0001	a	0001-a.patch
+applied	0002	b	0002-b.patch
+expected	/private/var/folders/87/3jgz36rn5hg_m_2d230hs3z00000gn/T/fm-patch-drive.ifbsiX/store/expected.tsv
+replayed	/private/var/folders/87/3jgz36rn5hg_m_2d230hs3z00000gn/T/fm-patch-drive.ifbsiX/reltarget	df904761a436bcd5c20bffb5788d502aba42f76a	df904761a436bcd5c20bffb5788d502aba42f76a
+[exit 0]
+history refs:
+refs/farm-patches/current df90476
+refs/farm-patches/history/8b063ccca30f88ca74e427c3e8c36f7ab707c42d 8b063cc
+refs/farm-patches/history/df904761a436bcd5c20bffb5788d502aba42f76a df90476
+refs/farm-patches/previous df90476
+
+=== SCENARIO 14: HEAD-relative --base is resolved once against the target ===
+
+$ /Users/andrewpynch/.no-mistakes/worktrees/b4172bb07a7e/01M2HFGP2GWYNDZCNQ80VXE0XR/bin/fm-farm-patch.sh --store /var/folders/87/3jgz36rn5hg_m_2d230hs3z00000gn/T//fm-patch-drive.ifbsiX/hbstore --base HEAD~1 replay /var/folders/87/3jgz36rn5hg_m_2d230hs3z00000gn/T//fm-patch-drive.ifbsiX/hb-target
+replay	/private/var/folders/87/3jgz36rn5hg_m_2d230hs3z00000gn/T/fm-patch-drive.ifbsiX/hb-target	on 8083b2a12de8d03f8614afaa492c4d7b30ca1f9b
+applied	0001	p1	0001-p1.patch
+applied	0002	p2	0002-p2.patch
+expected	/private/var/folders/87/3jgz36rn5hg_m_2d230hs3z00000gn/T/fm-patch-drive.ifbsiX/hbstore/expected.tsv
+replayed	/private/var/folders/87/3jgz36rn5hg_m_2d230hs3z00000gn/T/fm-patch-drive.ifbsiX/hb-target	2e30d33a35a2a5656781425adb043689c9f81a16	3b5c964635bc041d2da2f637199dad6a4476920f
+[exit 0]
+HEAD-relative --base expected line: summary	2 files, 2 matched, 0 differing
+p1 landed: yes, p2 landed: yes (double-resolution would also record upstream u3.txt)
+
+DONE WORK=/var/folders/87/3jgz36rn5hg_m_2d230hs3z00000gn/T//fm-patch-drive.ifbsiX

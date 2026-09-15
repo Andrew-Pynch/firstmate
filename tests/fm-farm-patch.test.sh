@@ -72,6 +72,51 @@ PATCH
   printf '%s\n' "$dir/store"
 }
 
+# A store of two patches that only add files, over a repo with upstream commits
+# below the base. Add-only patches let a replay succeed on a base the patches
+# were not generated against, which is what makes a mis-resolved --base visible
+# in the content `check` describes. Writes the base commit to <dir>/base.
+make_additive_store() {  # <dir> -> echoes <dir>/store
+  local dir=$1
+  local repo=$dir/repo base
+  mkdir -p "$dir/store"
+  fm_git_init_commit "$repo"
+  printf 'u\n' > "$repo/u.txt"
+  git -C "$repo" add u.txt
+  git -C "$repo" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' commit -qm 'upstream u'
+  printf 'v\n' > "$repo/v.txt"
+  git -C "$repo" add v.txt
+  git -C "$repo" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' commit -qm 'upstream v'
+  printf 'w\n' > "$repo/w.txt"
+  git -C "$repo" add w.txt
+  git -C "$repo" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' commit -qm 'upstream w'
+  base=$(git -C "$repo" rev-parse HEAD)
+  cat > "$dir/store/0001-p1.patch" <<'PATCH'
+diff --git a/p1.txt b/p1.txt
+new file mode 100644
+--- /dev/null
++++ b/p1.txt
+@@ -0,0 +1 @@
++p1
+PATCH
+  cat > "$dir/store/0002-p2.patch" <<'PATCH'
+diff --git a/p2.txt b/p2.txt
+new file mode 100644
+--- /dev/null
++++ b/p2.txt
+@@ -0,0 +1 @@
++p2
+PATCH
+  fm_git_add_origin "$repo" "$dir/origin.git"
+  printf '%s\n' "$base" > "$dir/base"
+  {
+    printf 'series\t%s\t2026-09-14\ttest fixture\n' "$base"
+    printf 'patch\t0001\tp1\t0001-p1.patch\tfixture\tfirst additive patch\tfix: p1\n'
+    printf 'patch\t0002\tp2\t0002-p2.patch\tfixture\tsecond additive patch\tfix: p2\n'
+  } > "$dir/store/manifest"
+  printf '%s\n' "$dir/store"
+}
+
 test_list_is_ordered_and_enumerable() {
   local store out
   store=$(make_store "$TMP_ROOT/list")
@@ -93,6 +138,7 @@ test_replay_lands_the_whole_set() {
   base=$(cat "$dir/base")
   git -C "$repo" worktree add --detach -q "$target" "$base"
   fm_git_identity
+  export GIT_AUTHOR_DATE='2026-09-14T00:00:00+00:00' GIT_COMMITTER_DATE='2026-09-14T00:00:00+00:00'
   "$TOOL" --store "$store" replay "$target" > "$dir/out" 2>&1 \
     || fail "replay failed: $(cat "$dir/out")"
   [ "$(cat "$target/a.txt")" = "one
@@ -181,9 +227,70 @@ test_replay_refuses_dirty_and_conflicting_targets() {
   pass "replay refuses unlanded work, a conflict, and a checkout on its default branch"
 }
 
+test_replay_accepts_a_relative_store() {
+  local dir store repo target base out rc
+  dir="$TMP_ROOT/relative-store"
+  store=$(make_store "$dir")
+  repo="$dir/repo"
+  target="$dir/target"
+  base=$(cat "$dir/base")
+  git -C "$repo" worktree add --detach -q "$target" "$base"
+  fm_git_identity
+  # The store is named relative to the caller's directory, so every consumer of
+  # it - the existence check and the patch open inside the scratch worktree -
+  # must resolve it to the same path.
+  out=$(cd "$dir" && "$TOOL" --store store replay "$target" 2>&1) && rc=0 || rc=$?
+  [ "$rc" -eq 0 ] || fail "a relative --store must resolve against the caller's directory: $out"
+  [ "$(cat "$target/a.txt")" = "one
+patched-a" ] || fail "the relative-store replay must land the set: $(cat "$target/a.txt")"
+  [ ! -e "$target.fm-patch-scratch" ] || fail "a successful relative-store replay must remove its scratch worktree"
+  pass "a relative --store resolves to one path for every step"
+}
+
+test_replay_resolves_base_once_in_target() {
+  local dir store repo target base out rc
+  dir="$TMP_ROOT/base-once"
+  store=$(make_additive_store "$dir")
+  repo="$dir/repo"
+  target="$dir/target"
+  base=$(cat "$dir/base")
+  git -C "$repo" worktree add --detach -q "$target" "$base"
+  fm_git_identity
+  # --base is HEAD-relative, so it must be resolved against the target exactly
+  # once: resolving it again from the scratch checkout would reach one commit
+  # further back and record that upstream commit's files as set content.
+  out=$("$TOOL" --store "$store" --base HEAD~1 replay "$target" 2>&1) && rc=0 || rc=$?
+  [ "$rc" -eq 0 ] || fail "a HEAD-relative --base must resolve in the target: $out"
+  out=$("$TOOL" --store "$store" check "$target") \
+    || fail "check on the replayed target must match: $out"
+  assert_contains "$out" 'summary	2 files' "expected must describe only the files the set touches: $out"
+  pass "a HEAD-relative --base is resolved once against the target"
+}
+
+test_replay_refuses_unresolvable_recorded_base() {
+  local dir store target before after out rc
+  dir="$TMP_ROOT/unresolvable-base"
+  store=$(make_store "$dir")
+  target="$dir/shallow"
+  # A shallow clone of upstream holds the tip but not the commit the manifest
+  # records as verified, so that recorded base cannot be resolved here.
+  git clone -q --depth 1 "file://$dir/origin.git" "$target"
+  git -C "$target" checkout --detach -q HEAD
+  before=$(git -C "$target" rev-parse HEAD)
+  out=$("$TOOL" --store "$store" replay "$target" 2>&1) && rc=0 || rc=$?
+  [ "$rc" -ne 0 ] || fail "a recorded base the target lacks must be refused: $out"
+  assert_contains "$out" '--base' "the refusal must tell the operator to pass --base: $out"
+  after=$(git -C "$target" rev-parse HEAD)
+  [ "$before" = "$after" ] || fail "a refused replay must not move the target"
+  pass "a recorded base the target cannot resolve is refused, never silently replaced"
+}
+
 test_list_is_ordered_and_enumerable
 test_replay_lands_the_whole_set
 test_check_distinguishes_content
 test_replay_refuses_dirty_and_conflicting_targets
+test_replay_accepts_a_relative_store
+test_replay_resolves_base_once_in_target
+test_replay_refuses_unresolvable_recorded_base
 
 echo "# fm-farm-patch.test.sh: all assertions passed"

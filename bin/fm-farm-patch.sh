@@ -223,22 +223,24 @@ scratch_path() {  # <target>
 # onto a newer upstream tip is attempted, and the replay then reports whatever
 # conflicts that produces instead of moving anything.
 replay_base() {  # <target> <manifest>
-  local target=$1 manifest=$2 default recorded
+  local target=$1 manifest=$2 default recorded resolved
   if [ -n "$BASE_REV" ]; then
-    git -C "$target" rev-parse --verify --quiet "$BASE_REV^{commit}" >/dev/null \
+    resolved=$(git -C "$target" rev-parse --verify --quiet "$BASE_REV^{commit}") \
       || die "base does not exist in $target: $BASE_REV"
-    printf '%s\n' "$BASE_REV"
+    printf '%s\n' "$resolved"
     return 0
   fi
   recorded=$(series_base "$manifest")
-  if [ -n "$recorded" ] && git -C "$target" rev-parse --verify --quiet "$recorded^{commit}" >/dev/null; then
-    printf '%s\n' "$recorded"
+  if [ -n "$recorded" ] && [ "$recorded" != '-' ]; then
+    resolved=$(git -C "$target" rev-parse --verify --quiet "$recorded^{commit}") \
+      || die "the manifest records verified base $recorded but $target does not contain it; fetch it or pass --base"
+    printf '%s\n' "$resolved"
     return 0
   fi
   default=$(default_branch "$target") || die "cannot determine the default branch of $target"
-  git -C "$target" rev-parse --verify --quiet "origin/$default^{commit}" >/dev/null \
+  resolved=$(git -C "$target" rev-parse --verify --quiet "origin/$default^{commit}") \
     || die "$target has no origin/$default to replay onto"
-  printf 'origin/%s\n' "$default"
+  printf '%s\n' "$resolved"
 }
 
 replay_verb() {
@@ -302,13 +304,12 @@ replay_verb() {
 
   tip=$(git -C "$scratch" rev-parse HEAD)
   prev=$(git -C "$target" rev-parse HEAD)
-  base_rev=$(git -C "$scratch" rev-parse "$base")
 
   # The whole series is on disk and verified only now, so this is the first
   # moment anything may move. Record what the set produces first: `check` reads
   # this, so it is the file that lets any host prove it carries the same content
   # without a tree transfer.
-  git -C "$scratch" -c core.abbrev=40 diff --raw --no-renames "$base_rev" "$tip" \
+  git -C "$scratch" -c core.abbrev=40 diff --raw --no-renames "$base" "$tip" \
     | awk -F'\t' '{ split($1, m, " "); if (m[2] == "000000") printf "000000\t-\t%s\n", $2; else printf "%s\t%s\t%s\n", m[2], m[4], $2 }' \
     | LC_ALL=C sort -k3 > "$STORE/expected.tsv"
   printf 'expected\t%s\n' "$STORE/expected.tsv"
@@ -326,8 +327,16 @@ replay_verb() {
   printf 'replayed\t%s\t%s\t%s\n' "$target" "$prev" "$tip"
 }
 
+resolve_store() {
+  local resolved
+  resolved=$(cd "$STORE" 2>/dev/null && pwd -P) \
+    || die "store is not a directory: $STORE"
+  STORE=$resolved
+}
+
 main() {
   parse_args "$@"
+  resolve_store
   case "$VERB" in
     list) list_verb ;;
     check) [ -n "$TARGET" ] || die 'check needs a target checkout'; check_verb "$TARGET" ;;

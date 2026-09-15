@@ -156,6 +156,19 @@ file_identity() {  # <target> <path>
   printf '%s\t%s\t%s\n' "$mode" "$hash" "$path"
 }
 
+# SHA-256 of stdin, truncated to the 16 hex characters the `set` line reports.
+# macOS ships shasum and not sha256sum, and two hosts this must run on are macOS,
+# so this follows the house order rather than assuming a GNU coreutils hash.
+# check_verb proves one of the two exists first, because a failure inside a
+# command substitution would only end that subshell.
+sha256_stream() {
+  if command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 | cut -c1-16
+  else
+    sha256sum | cut -c1-16
+  fi
+}
+
 check_verb() {
   local target=$1 expected line mode hash path actual amode ahash verdict
   local total=0 matched=0 differing=0
@@ -166,6 +179,8 @@ check_verb() {
     || die "target is not a git checkout: $target"
   expected="$STORE/expected.tsv"
   [ -f "$expected" ] || die "the store has no expected.tsv; run replay to record what the set produces"
+  command -v shasum >/dev/null 2>&1 || command -v sha256sum >/dev/null 2>&1 \
+    || die 'neither shasum nor sha256sum is available to identify the checked content'
   while IFS= read -r line; do
     [ -n "$line" ] || continue
     mode=$(printf '%s' "$line" | cut -f1)
@@ -191,7 +206,7 @@ check_verb() {
     printf '%s\t%s\t%s\t%s\n' "$verdict" "$path" "$hash" "$ahash"
   done < "$expected"
   printf 'summary\t%s files, %s matched, %s differing\n' "$total" "$matched" "$differing"
-  printf 'set\t%s\n' "$(printf '%s' "$set_lines" | LC_ALL=C sort | sha256sum | cut -c1-16)"
+  printf 'set\t%s\n' "$(printf '%s' "$set_lines" | LC_ALL=C sort | sha256_stream)"
   [ "$differing" -eq 0 ]
 }
 
@@ -227,7 +242,7 @@ replay_base() {  # <target> <manifest>
 }
 
 replay_verb() {
-  local target=$1 manifest base scratch count i id slug file origin subject tip prev epoch
+  local target=$1 manifest base scratch count i id slug file origin subject tip prev epoch current default
   [ -n "$target" ] || die 'replay needs a target checkout'
   [ -d "$target" ] || die "target is not a directory: $target"
   git -C "$target" rev-parse --is-inside-work-tree >/dev/null 2>&1 \
@@ -237,6 +252,17 @@ replay_verb() {
   # Refuse before doing anything: an unclean target is never worked around.
   if [ -n "$(dirty_status "$target")" ]; then
     die "target has unlanded changes, refusing to replay over them: $target"
+  fi
+  # A patched checkout is detached or on its own branch by construction. Moving a
+  # checkout that sits ON the default branch would detach it there, which is the
+  # diverged, un-fast-forwardable state this tool exists to prevent - the very
+  # thing the fast-forward-only update path refuses.
+  current=$(git -C "$target" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
+  if [ -n "$current" ]; then
+    default=$(default_branch "$target" 2>/dev/null || true)
+    if [ -n "$default" ] && [ "$current" = "$default" ]; then
+      die "refusing to replay onto $target: it is on its default branch $current, and a patched checkout must be detached or on its own branch so $default stays an ancestor of origin"
+    fi
   fi
   scratch=$(scratch_path "$target")
   if [ -e "$scratch" ]; then

@@ -168,7 +168,17 @@ test_replay_refuses_dirty_and_conflicting_targets() {
     || fail "a conflicted replay must not half-write the target: $(git -C "$bad_target" status --porcelain)"
   [ -e "$bad_target.fm-patch-scratch" ] \
     || fail "a conflicted replay must leave its scratch worktree for inspection"
-  pass "replay refuses unlanded work and stops on a conflict without moving the target"
+
+  # A checkout that is on its default branch must never be repointed: detaching
+  # it there is the diverged state the whole mechanism exists to prevent.
+  local plain_clone="$dir/plain"
+  git clone -q "$dir/origin.git" "$plain_clone"
+  out=$("$TOOL" --store "$store" replay "$plain_clone" 2>&1) && rc=0 || rc=$?
+  [ "$rc" -ne 0 ] || fail "replaying a checkout that sits on its default branch must be refused"
+  assert_contains "$out" 'default branch' "the refusal must name the branch it refuses to detach"
+  [ "$(git -C "$plain_clone" symbolic-ref --quiet --short HEAD)" = main ] \
+    || fail "the refusal must leave the checkout on its default branch"
+  pass "replay refuses unlanded work, a conflict, and a checkout on its default branch"
 }
 
 test_list_is_ordered_and_enumerable

@@ -244,7 +244,7 @@ replay_base() {  # <target> <manifest>
 }
 
 replay_verb() {
-  local target=$1 manifest base scratch count i id slug file origin subject tip prev epoch current default
+  local target=$1 manifest base scratch count i id slug file origin subject tip prev current default
   [ -n "$target" ] || die 'replay needs a target checkout'
   [ -d "$target" ] || die "target is not a directory: $target"
   git -C "$target" rev-parse --is-inside-work-tree >/dev/null 2>&1 \
@@ -316,8 +316,7 @@ replay_verb() {
 
   # Label the tip the target is leaving before it moves, so the move never
   # strands it, and only then repoint the target.
-  epoch=$(date +%s)
-  git -C "$target" update-ref "refs/farm-patches/history/$epoch" "$prev"
+  git -C "$target" update-ref "refs/farm-patches/history/$prev" "$prev"
   git -C "$target" update-ref refs/farm-patches/previous "$prev"
   git -C "$target" update-ref refs/farm-patches/current "$tip"
   git -C "$target" worktree remove "$scratch" >/dev/null 2>&1 \
@@ -334,9 +333,17 @@ resolve_store() {
   STORE=$resolved
 }
 
+resolve_target() {
+  local resolved
+  [ -n "$TARGET" ] || return 0
+  resolved=$(resolved_existing_dir "$TARGET") || resolved=$(resolve_path "$TARGET")
+  TARGET=$resolved
+}
+
 main() {
   parse_args "$@"
   resolve_store
+  resolve_target
   case "$VERB" in
     list) list_verb ;;
     check) [ -n "$TARGET" ] || die 'check needs a target checkout'; check_verb "$TARGET" ;;

@@ -285,6 +285,46 @@ test_replay_refuses_unresolvable_recorded_base() {
   pass "a recorded base the target cannot resolve is refused, never silently replaced"
 }
 
+test_replay_accepts_a_relative_target() {
+  local dir store repo target base out rc
+  dir="$TMP_ROOT/relative-target"
+  store=$(make_store "$dir")
+  repo="$dir/repo"
+  target="$dir/target"
+  base=$(cat "$dir/base")
+  git -C "$repo" worktree add --detach -q "$target" "$base"
+  fm_git_identity
+  # The target is named relative to the caller's directory; the scratch worktree
+  # must still land beside the target rather than inside it.
+  out=$(cd "$dir" && "$TOOL" --store "$store" replay target 2>&1) && rc=0 || rc=$?
+  [ "$rc" -eq 0 ] || fail "a relative target must resolve against the caller's directory: $out"
+  [ "$(cat "$target/a.txt")" = "one
+patched-a" ] || fail "the relative-target replay must land the set: $(cat "$target/a.txt")"
+  [ ! -e "$target/target.fm-patch-scratch" ] || fail "the scratch worktree must not land inside the target"
+  [ ! -e "$target.fm-patch-scratch" ] || fail "a clean replay must remove its scratch worktree"
+  pass "a relative target resolves to one absolute path beside itself"
+}
+
+test_replay_keeps_each_previous_tip_reachable() {
+  local dir store repo target base first
+  dir="$TMP_ROOT/history"
+  store=$(make_store "$dir")
+  repo="$dir/repo"
+  target="$dir/target"
+  base=$(cat "$dir/base")
+  git -C "$repo" worktree add --detach -q "$target" "$base"
+  fm_git_identity
+  export GIT_AUTHOR_DATE='2026-09-14T00:00:00+00:00' GIT_COMMITTER_DATE='2026-09-14T00:00:00+00:00'
+  "$TOOL" --store "$store" replay "$target" > /dev/null 2>&1 || fail "the first replay failed"
+  first=$(git -C "$target" rev-parse HEAD)
+  "$TOOL" --store "$store" replay "$target" > /dev/null 2>&1 || fail "the second replay failed"
+  [ "$(git -C "$repo" rev-parse "refs/farm-patches/history/$base" 2>/dev/null)" = "$base" ] \
+    || fail "the first previous tip must stay recorded under its own history ref"
+  [ "$(git -C "$repo" rev-parse "refs/farm-patches/history/$first" 2>/dev/null)" = "$first" ] \
+    || fail "the second previous tip must stay recorded under its own history ref"
+  pass "back-to-back replays record each earlier tip under its own history ref"
+}
+
 test_list_is_ordered_and_enumerable
 test_replay_lands_the_whole_set
 test_check_distinguishes_content
@@ -292,5 +332,7 @@ test_replay_refuses_dirty_and_conflicting_targets
 test_replay_accepts_a_relative_store
 test_replay_resolves_base_once_in_target
 test_replay_refuses_unresolvable_recorded_base
+test_replay_accepts_a_relative_target
+test_replay_keeps_each_previous_tip_reachable
 
 echo "# fm-farm-patch.test.sh: all assertions passed"

@@ -162,6 +162,23 @@ The Definition of done's rule that `--intent` must be self-sufficient still gove
 EOF
 }
 
+# A local-only ship whose landing target was selected at intake carries that
+# selection in its own task record, so the worker is told the concrete branch
+# to stay a fast-forward of rather than the generic "selected target" wording
+# the scaffolded Definition of done can only state in the abstract.
+# bin/fm-spawn.sh is its one emitter, rendering it from the validated record on
+# every launch and relaunch.
+fm_brief_local_target_overlay() {  # <task-id> <target-branch> <target-worktree>
+  cat <<EOF
+
+# Current local landing target
+This section supersedes every earlier brief instruction about which branch your \`fm/$1\` branch must stay a fast-forward of.
+This task lands on local branch \`$2\`, checked out in \`$3\`.
+Rebase \`fm/$1\` onto \`$2\` whenever that branch advances, so the eventual landing stays a clean fast-forward.
+Never check out, commit to, or otherwise write in \`$3\`; firstmate performs the guarded landing there after the configured merge authority approves.
+EOF
+}
+
 # Accept the current two-subsection contract only when both bodies have content;
 # briefs predating that contract remain valid when their # Task body has content.
 fm_brief_task_content_valid() {  # <file>
@@ -209,9 +226,11 @@ EOF
 Delivery contract: mode=local-only
 This task ships **local-only**: no remote, no PR, no pipeline.
 The task is complete only when committed on your branch \`fm/$id\`. Do NOT push, do NOT open a PR, do NOT merge.
-Keep your branch a clean fast-forward onto the current default branch - if \`main\` has advanced, rebase onto it so the eventual merge stays a fast-forward.
+Keep your branch a clean fast-forward onto the selected local target branch.
+When no explicit target is selected, that target is the project's current default branch.
+If the target has advanced, rebase onto it so the eventual merge stays a fast-forward.
 When it is implemented and committed, append \`done: ready in branch fm/$id\` to the status file and stop.
-The configured merge authority approves the ready branch, then firstmate merges it into local \`main\` through the guarded fast-forward path.
+The configured merge authority approves the ready branch, then firstmate lands it through the guarded fast-forward path.
 EOF
       ;;
     no-mistakes)

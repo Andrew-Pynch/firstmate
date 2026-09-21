@@ -11,6 +11,9 @@
 #   (d) pr= present but PR head unreachable -> fallback to local branch + warning
 #   (e) pr= + STALE recorded pr_head= + newer remote pull head -> must use fetched head
 #       (this is the class that bit reviewers holding merges over "missing" fixes)
+#   (f) mode=local-only + recorded local_target_branch= -> diff against that landing
+#       branch, showing only the task change and never the target's divergence
+#   (g) mode=local-only without a recorded target -> unchanged default-branch base
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -37,6 +40,34 @@ make_case() {
   git clone -q "$case_dir/origin.git" "$case_dir/project"
   git -C "$case_dir/project" remote set-head origin main 2>/dev/null || true
   git -C "$case_dir/project" worktree add -q -b fm/task-x1 "$case_dir/wt" main
+
+  touch "$case_dir/state/.last-watcher-beat"
+  printf '%s\n' "$case_dir"
+}
+
+# A local-only project: no origin, a default branch, and a separate landing
+# branch (gsg-sim) that has already diverged from it in its own linked copy.
+make_local_case() {
+  local name=$1 case_dir
+  case_dir="$TMP_ROOT/$name"
+  mkdir -p "$case_dir/state"
+
+  git init -q "$case_dir/project"
+  git -C "$case_dir/project" symbolic-ref HEAD refs/heads/main
+  printf 'base\n' > "$case_dir/project/feature.txt"
+  git -C "$case_dir/project" add feature.txt
+  git -C "$case_dir/project" commit -qm "project baseline"
+
+  git -C "$case_dir/project" branch gsg-sim
+  git -C "$case_dir/project" worktree add -q "$case_dir/target" gsg-sim
+  printf 'sim-only\n' > "$case_dir/target/simulation.txt"
+  git -C "$case_dir/target" add simulation.txt
+  git -C "$case_dir/target" commit -qm "simulation divergence"
+
+  git -C "$case_dir/project" worktree add -q -b fm/task-x1 "$case_dir/wt" gsg-sim
+  printf 'task-change\n' > "$case_dir/wt/feature.txt"
+  git -C "$case_dir/wt" add feature.txt
+  git -C "$case_dir/wt" commit -qm "task work on top of the landing branch"
 
   touch "$case_dir/state/.last-watcher-beat"
   printf '%s\n' "$case_dir"
@@ -169,8 +200,67 @@ test_unreachable_pr_head_falls_back_with_warning() {
   pass "fm-review-diff falls back to local branch with a warning when PR head is unreachable"
 }
 
+test_local_target_branch_is_the_review_base() {
+  local case_dir out
+  case_dir=$(make_local_case local-target)
+  write_task_meta "$case_dir" \
+    "mode=local-only" \
+    "local_target_branch=gsg-sim" \
+    "local_target_worktree=$case_dir/target"
+
+  out=$(run_review_diff "$case_dir" task-x1 2> "$case_dir/stderr")
+
+  assert_contains "$out" 'diff base: gsg-sim' \
+    "local-target: the recorded landing branch must be the announced base"
+  assert_contains "$out" '+task-change' "local-target: diff should show the task change"
+  assert_not_contains "$out" 'sim-only' \
+    "local-target: diff must not replay the landing branch's divergence from main"
+  assert_not_contains "$out" 'simulation.txt' \
+    "local-target: diff must not list files the landing branch already carries"
+  assert_not_contains "$(cat "$case_dir/stderr")" 'warning' \
+    "local-target: no warning on the local-only landing-branch path"
+  pass "fm-review-diff reviews a local-only task against its recorded local target"
+}
+
+test_local_target_review_never_fetches() {
+  local case_dir out
+  case_dir=$(make_local_case local-target-no-fetch)
+  # A reachable-looking but absent remote: any fetch attempt fails the command.
+  git -C "$case_dir/project" remote add origin "$case_dir/absent-origin.git"
+  write_task_meta "$case_dir" \
+    "mode=local-only" \
+    "local_target_branch=gsg-sim" \
+    "local_target_worktree=$case_dir/target"
+
+  out=$(run_review_diff "$case_dir" task-x1 2> "$case_dir/stderr") \
+    || fail "local-target-no-fetch: review diff must not fetch for a recorded local target"
+
+  assert_contains "$out" 'diff base: gsg-sim' \
+    "local-target-no-fetch: base stays the local landing branch"
+  assert_contains "$out" '+task-change' "local-target-no-fetch: diff should show the task change"
+  pass "fm-review-diff resolves the recorded local target without fetching"
+}
+
+test_local_only_without_target_keeps_default_base() {
+  local case_dir out
+  case_dir=$(make_local_case local-no-target)
+  write_task_meta "$case_dir" "mode=local-only"
+
+  out=$(run_review_diff "$case_dir" task-x1 2> "$case_dir/stderr")
+
+  assert_contains "$out" 'diff base: main' \
+    "local-no-target: an unrecorded target keeps the default-branch base"
+  assert_contains "$out" '+task-change' "local-no-target: diff should show the task change"
+  assert_contains "$out" '+sim-only' \
+    "local-no-target: the default base still shows everything main lacks"
+  pass "fm-review-diff keeps the default-branch base when no local target is recorded"
+}
+
 test_pr_meta_uses_pr_head_not_stale_local
 test_pr_meta_fetches_pull_head_without_recorded_sha
 test_stale_recorded_pr_head_loses_to_fetched_pull_head
 test_no_pr_meta_uses_local_branch
 test_unreachable_pr_head_falls_back_with_warning
+test_local_target_branch_is_the_review_base
+test_local_target_review_never_fetches
+test_local_only_without_target_keeps_default_base

@@ -2124,6 +2124,49 @@ test_recovery_finishes_a_close_for_the_same_meta_incarnation() {
   pass "session start finishes a close for the matching meta incarnation"
 }
 
+# A pending close serializes its local landing note as the literal prefix
+# `local%20` plus the branch verbatim. A branch can never contain a space, so a
+# branch whose own name contains `%20` still replays byte-for-byte.
+test_recovery_replays_a_percent_bearing_local_landing_branch() {
+  local case_dir home id
+  id=atomic-heal-percent-branch-b13
+  case_dir=$(make_home heal-percent-branch)
+  home=$(home_of "$case_dir")
+  add_item "$case_dir" "$id"
+  start_item "$case_dir" "$id"
+  write_task_meta "$case_dir" "$id" ship local-only "spawn_gen=spawn-percent"
+  printf 'id=%s\ndata=%s\nspawn_gen=spawn-percent\narg=--note\narg=local%%20gsg%%20sim\n' \
+    "$id" "$home/data" > "$home/state/$id.backlog-close"
+
+  run_bootstrap "$case_dir" >/dev/null
+  [ "$(row_state "$case_dir" "$id")" = "done" ] \
+    || fail "recovery did not close a task landing on a percent-bearing branch"
+  assert_grep 'local gsg%20sim' "$(backlog_of "$case_dir")" \
+    "recovery did not replay the percent-bearing landing branch verbatim"
+  pass "recovery replays a percent-bearing local landing branch unchanged"
+}
+
+# The serialized note is not a generic percent encoding: anything that is not
+# the one fixed prefix plus a valid branch is refused rather than guessed at.
+test_recovery_refuses_an_unparsable_local_landing_note() {
+  local case_dir home id out
+  id=atomic-heal-bad-note-b13
+  case_dir=$(make_home heal-bad-note)
+  home=$(home_of "$case_dir")
+  add_item "$case_dir" "$id"
+  start_item "$case_dir" "$id"
+  write_task_meta "$case_dir" "$id" ship local-only "spawn_gen=spawn-bad-note"
+  printf 'id=%s\ndata=%s\nspawn_gen=spawn-bad-note\narg=--note\narg=local%%20..bad\n' \
+    "$id" "$home/data" > "$home/state/$id.backlog-close"
+
+  out=$(run_bootstrap "$case_dir")
+  [ "$(row_state "$case_dir" "$id")" = in_flight ] \
+    || fail "recovery closed a row from an unparsable landing note: $out"
+  assert_present "$home/state/$id.backlog-close" \
+    "recovery discarded a pending close it could not parse"
+  pass "recovery refuses a pending close whose landing note is not a valid branch"
+}
+
 test_recovery_preserves_a_close_for_ambiguous_incarnation_metadata() {
   local case_dir home id marker out
   id=atomic-heal-ambiguous-incarnation-b12
@@ -3057,6 +3100,8 @@ test_recovery_backfills_a_recorded_link_on_an_already_done_item
 test_recovery_preserves_a_close_when_the_backlog_cannot_be_read
 test_recovery_retry_preserves_incomplete_cleanup_warning
 test_recovery_finishes_a_close_for_the_same_meta_incarnation
+test_recovery_replays_a_percent_bearing_local_landing_branch
+test_recovery_refuses_an_unparsable_local_landing_note
 test_recovery_preserves_a_close_for_ambiguous_incarnation_metadata
 test_recovery_preserves_both_records_when_meta_removal_fails
 test_recovery_preserves_a_close_beside_symlinked_metadata

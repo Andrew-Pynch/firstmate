@@ -512,7 +512,7 @@ backlog_json() {  # [<backlog-path>] - defaults to this home's $BACKLOG
               // (if any(.body_lines[];
                     test("^Resolution recorded by fm-(captain|decision)-hold\\.$"))
                   then null
-                  else cap(.body_lines[-1]; "^(?<v>local main)$")
+                  else cap(.body_lines[-1]; "^(?<v>local [^[:space:]]+)$")
                   end))
           | .body_excerpt = ((.body_lines | join(" "))[:240])
         else . end)

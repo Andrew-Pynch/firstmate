@@ -511,6 +511,7 @@ test_backlog_tasks_axi_forms_and_overrides() {
 ## Queued
 - [ ] queued-comma - Queued Comma Task (repo: beta, since 2026-07-08) (kind: ship)
 - [ ] parenthetical-title - Refresh sidebar (mobile) (repo: beta) (kind: ship)
+- [ ] local-landing-words - Support nondefault local landings (repo: beta) (kind: ship)
 - [ ] blocked-reason - Blocked Reason (repo: beta) (kind: ship) blocked-by: queued-comma - waits on queued-comma
 - [ ] sample-decision-route - Choose sample route (repo: sample) (kind: captain) (since 2026-07-14) (hold: captain route choice pending) (hold-kind: captain)
 - [ ] dated-route - Deferred sample route (repo: sample) (kind: ship) (hold: captain sent this to later) (hold-kind: captain) (hold-until: 2026-09-01)
@@ -522,6 +523,8 @@ test_backlog_tasks_axi_forms_and_overrides() {
 - [x] done-bracket-pr - Done Bracket PR - <https://github.com/kunchenguid/firstmate/pull/43> (repo: gamma, merged 2026-07-12) (kind: ship)
 - [x] reported-comma - Reported Scout data/reported-comma/report.md (repo: gamma, reported 2026-07-10) (kind: scout)
 - [x] done-note - Done Note local main (repo: delta, done 2026-07-11) (kind: ship)
+- [x] done-body-note - Done Body Note (repo: delta, done 2026-07-13) (kind: ship)
+  local gsg-sim
 EOF
   printf '# Bold Scout\n' > "$data/bold-task/report.md"
   fm_write_meta "$home/state/bold-task.meta" \
@@ -621,6 +624,18 @@ EOF
       and .done == "2026-07-11"
       and .completion == {verb:"done",date:"2026-07-11"}
   ' >/dev/null || fail "done closure metadata did not parse"
+  printf '%s' "$out" | jq -e '
+    .backlog.records[] | select(.id == "done-body-note")
+    | .repo == "delta"
+      and .title == "Done Body Note"
+      and .local_note == "local gsg-sim"
+      and .completion == {verb:"done",date:"2026-07-13"}
+  ' >/dev/null || fail "a nondefault landing note in the authoritative body line did not parse"
+  printf '%s' "$out" | jq -e '
+    .backlog.records[] | select(.id == "local-landing-words")
+    | .title == "Support nondefault local landings"
+      and (.local_note == null)
+  ' >/dev/null || fail "a title ending in ordinary words after \"local\" was mined as a landing artifact"
   printf '%s' "$out" | jq -e --arg data "$data" '
     .tasks[] | select(.id == "bold-task")
     | .backlog.id == "bold-task"
@@ -635,7 +650,11 @@ EOF
   assert_contains "$view" "| done-bracket-pr | Done Bracket PR | gamma | ship | - | https://github.com/kunchenguid/firstmate/pull/43 |" \
     "view should render bracketed PR artifact outside the title"
   assert_contains "$view" "| done-note | Done Note | delta | ship | - | local main |" \
-    "view should render local-only done artifact outside the title"
+    "view should render the legacy local-only artifact outside the title"
+  assert_contains "$view" "| done-body-note | Done Body Note | delta | ship | - | local gsg-sim |" \
+    "view should render a nondefault local-only artifact recorded in the body"
+  assert_contains "$view" "| local-landing-words | Support nondefault local landings | beta | ship | - | - |" \
+    "view should not fabricate a landing artifact from ordinary title words"
   pass "snapshot parses tasks-axi rows and respects operational overrides"
 }
 

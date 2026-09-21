@@ -1180,6 +1180,26 @@ fm_firstmate_root_home() {
   printf '%s\n' "$home"
 }
 
+# A Treehouse slot has the managed pool's fixed <pool>/<slot>/<repo> layout.
+# Require both its pool state and the same Git common directory as the given
+# project; an ordinary linked worktree is not evidence that Treehouse owns it.
+# Shared by cleanup, which must take the pool lock before returning a slot, and
+# by spawn, which must not accept a slot the pool can hand to the task it is
+# about to allocate for.
+fm_treehouse_pool_slot() {  # <project> <worktree>
+  local project=$1 worktree=$2 slot pool state project_common slot_common
+  [ -d "$project" ] && [ -d "$worktree" ] || return 1
+  slot=$(CDPATH='' cd -- "$worktree" 2>/dev/null && pwd -P) || return 1
+  pool=$(dirname "$(dirname "$slot")")
+  state="$pool/treehouse-state.json"
+  [ -f "$state" ] && [ ! -L "$state" ] || return 1
+  project_common=$(git -C "$project" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
+  slot_common=$(git -C "$slot" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
+  project_common=$(CDPATH='' cd -- "$project_common" 2>/dev/null && pwd -P) || return 1
+  slot_common=$(CDPATH='' cd -- "$slot_common" 2>/dev/null && pwd -P) || return 1
+  [ "$project_common" = "$slot_common" ]
+}
+
 # The one lock serializing Treehouse slot allocation and return for a project.
 #
 # It is anchored in the local root home's state directory so that every home on

@@ -4,6 +4,9 @@
 # Pooled project clones do not keep their local default branch current, so this
 # helper compares remote-backed projects against origin/<default> after fetching
 # the default branch, and local-only projects against the local default branch.
+# A mode=local-only task that records local_target_branch= is instead compared
+# against that recorded landing branch - the branch bin/fm-merge-local.sh will
+# fast-forward - read locally with no fetch.
 # When state/<id>.meta records pr= (URL or number) for an open PR, the compare
 # side is ALWAYS a freshly fetched refs/pull/<n>/head by default so review stays
 # current after no-mistakes fix rounds push to the PR. A recorded pr_head= is
@@ -64,8 +67,6 @@ default_branch() {
   done
   return 1
 }
-
-DEFAULT=$(default_branch) || { echo "error: cannot determine default branch for $PROJ; expected origin/HEAD, main, or master" >&2; exit 1; }
 
 BRANCH="fm/$ID"
 if ! git -C "$WT" rev-parse --verify --quiet "refs/heads/$BRANCH" >/dev/null; then
@@ -133,13 +134,23 @@ if [ -n "$PR_URL" ]; then
   fi
 fi
 
-if git -C "$PROJ" remote get-url origin >/dev/null 2>&1; then
-  # Update the remote-tracking ref itself; a bare single-branch fetch can leave
-  # origin/<default> stale on some Git versions and only refresh FETCH_HEAD.
-  git -C "$WT" fetch origin "+refs/heads/$DEFAULT:refs/remotes/origin/$DEFAULT" --quiet
-  BASE="origin/$DEFAULT"
+MODE=$(grep '^mode=' "$META" | tail -1 | cut -d= -f2- || true)
+LOCAL_TARGET_BRANCH=
+[ "$MODE" != local-only ] \
+  || LOCAL_TARGET_BRANCH=$(grep '^local_target_branch=' "$META" | tail -1 | cut -d= -f2- || true)
+
+if [ -n "$LOCAL_TARGET_BRANCH" ]; then
+  BASE="$LOCAL_TARGET_BRANCH"
 else
-  BASE="$DEFAULT"
+  DEFAULT=$(default_branch) || { echo "error: cannot determine default branch for $PROJ; expected origin/HEAD, main, or master" >&2; exit 1; }
+  if git -C "$PROJ" remote get-url origin >/dev/null 2>&1; then
+    # Update the remote-tracking ref itself; a bare single-branch fetch can leave
+    # origin/<default> stale on some Git versions and only refresh FETCH_HEAD.
+    git -C "$WT" fetch origin "+refs/heads/$DEFAULT:refs/remotes/origin/$DEFAULT" --quiet
+    BASE="origin/$DEFAULT"
+  else
+    BASE="$DEFAULT"
+  fi
 fi
 
 git -C "$WT" rev-parse --verify --quiet "$BASE^{commit}" >/dev/null || { echo "error: base $BASE does not exist in $WT" >&2; exit 1; }

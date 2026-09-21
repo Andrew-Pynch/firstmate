@@ -838,6 +838,31 @@ fm_backlog_close_marker_path() {  # <state-dir> <id>
   printf '%s/%s.backlog-close\n' "$1" "$2"
 }
 
+# Pending-close records are line-oriented, so a local landing note is serialized
+# as the literal prefix `local%20` followed by the branch verbatim. A git branch
+# can never contain a space, so stripping that one fixed prefix is unambiguous
+# even for a branch whose own name contains `%20`. The branch is validated with
+# `git check-ref-format` on both write and replay.
+fm_backlog_local_note_encode() {  # <local-note>
+  local note=$1 branch
+  case "$note" in
+    "local "*) branch=${note#local } ;;
+    *) return 1 ;;
+  esac
+  git check-ref-format "refs/heads/$branch" >/dev/null 2>&1 || return 1
+  printf 'local%%20%s\n' "$branch"
+}
+
+fm_backlog_local_note_decode() {  # <serialized-local-note>
+  local serialized=$1 branch
+  case "$serialized" in
+    local%20*) branch=${serialized#local%20} ;;
+    *) return 1 ;;
+  esac
+  git check-ref-format "refs/heads/$branch" >/dev/null 2>&1 || return 1
+  printf 'local %s\n' "$branch"
+}
+
 fm_backlog_close_marker_validate() {  # <marker-path> <authorized-data-dir> <expected-id> <state-dir>
   local marker=$1 authorized_data data_resolved expected_id=$3 state=$4
   local id='' data='' marker_spawn_gen='' cleanup_incomplete=0 mode=close line raw_bytes arg_value
@@ -937,7 +962,7 @@ fm_backlog_close_marker_validate() {  # <marker-path> <authorized-data-dir> <exp
     0) ;;
     2)
       case "${args[0]}" in
-        --note) [ "${args[1]}" = "local%20main" ] ;;
+        --note) fm_backlog_local_note_decode "${args[1]}" >/dev/null ;;
         --pr)
           arg_value=${args[1]}
           [ "${#arg_value}" -le 2048 ] \
@@ -1015,7 +1040,7 @@ fm_backlog_close_marker_validate() {  # <marker-path> <authorized-data-dir> <exp
 # transition records.
 fm_backlog_close_marker_stage() {  # <temporary-path> <id> <data-dir> <spawn-gen> <state-dir> <cleanup-incomplete: 0|1> [--retain] [flag...]
   local tmp=$1 id=$2 data spawn_gen=$4 state=$5 cleanup_incomplete=$6 arg previous_arg=''
-  local mode=close serialized_args=()
+  local mode=close serialized_note serialized_args=()
   data=$(fm_backlog_data_absolute "$3") || {
     FM_BACKLOG_TRANSITION_ERROR="data directory cannot be resolved: $3"
     return 1
@@ -1035,8 +1060,12 @@ fm_backlog_close_marker_stage() {  # <temporary-path> <id> <data-dir> <spawn-gen
     shift
   fi
   for arg in "$@"; do
-    if [ "$previous_arg" = --note ] && [ "$arg" = "local main" ]; then
-      serialized_args+=("local%20main")
+    if [ "$previous_arg" = --note ]; then
+      serialized_note=$(fm_backlog_local_note_encode "$arg") || {
+        FM_BACKLOG_TRANSITION_ERROR="invalid local landing note"
+        return 1
+      }
+      serialized_args+=("$serialized_note")
     else
       serialized_args+=("$arg")
     fi
@@ -1112,7 +1141,10 @@ fm_backlog_close_marker_replay() {  # <state-dir> <marker-path> <authorized-data
   [ "$mode" = close ] || mode_flags=(--retain)
   args=("${FM_BACKLOG_CLOSE_VALIDATED_ARGS[@]+"${FM_BACKLOG_CLOSE_VALIDATED_ARGS[@]}"}")
   if [ "${args[0]-}" = --note ]; then
-    args[1]="local main"
+    args[1]=$(fm_backlog_local_note_decode "${args[1]}") || {
+      FM_BACKLOG_TRANSITION_ERROR="invalid local landing note in pending-close record $marker"
+      return 1
+    }
   fi
   meta="$state/$id.meta"
   if [ -e "$meta" ] || [ -L "$meta" ]; then

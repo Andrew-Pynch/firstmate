@@ -3521,7 +3521,7 @@ test_merge_entrypoints_refuse_a_reused_task_incarnation() {
 
 test_merge_entrypoints_serialize_forced_teardown_before_task_reads() {
   local home id pr repo wt ready release merge_pid teardown_rc merge_rc real_grep
-  local local_home local_id local_repo local_wt local_ready local_release local_pid
+  local local_home local_id local_repo local_repo_real local_wt local_ready local_release local_pid
   local local_teardown_rc local_merge_rc real_git before after i
 
   home=$(make_home teardown-race-pr-entrypoint)
@@ -3626,21 +3626,32 @@ SH
   real_git=$(command -v git)
   local_ready="$local_home/local-validation-ready"
   local_release="$local_home/local-validation-release"
+  # The barrier arms once, on the short-rev read the guarded local merge does
+  # in its landing copy after every validation and immediately before the
+  # fast-forward. That commit-ish is a fresh oid each run, so the shim matches
+  # the command prefix; arming once keeps the post-merge read and the refused
+  # teardown from blocking on it. The merge resolves the landing copy with
+  # `pwd -P`, so the repo it is matched against is canonicalized too.
+  local_repo_real=$(cd "$local_repo" && pwd -P)
   cat > "$local_home/fakebin/git" <<'SH'
 #!/usr/bin/env bash
-if [ "$*" = "-C ${FM_TEST_RACE_REPO:-} rev-parse --short main" ]; then
-  output=$("$FM_TEST_REAL_GIT" "$@") || exit $?
-  : > "$FM_TEST_RACE_READY"
-  while [ ! -e "$FM_TEST_RACE_RELEASE" ]; do sleep 0.01; done
-  printf '%s\n' "$output"
-  exit 0
+if [ ! -e "${FM_TEST_RACE_READY:-}" ]; then
+  case "$*" in
+    "-C ${FM_TEST_RACE_REPO:-} rev-parse --short "*)
+      output=$("$FM_TEST_REAL_GIT" "$@") || exit $?
+      : > "$FM_TEST_RACE_READY"
+      while [ ! -e "$FM_TEST_RACE_RELEASE" ]; do sleep 0.01; done
+      printf '%s\n' "$output"
+      exit 0
+      ;;
+  esac
 fi
 exec "$FM_TEST_REAL_GIT" "$@"
 SH
   chmod +x "$local_home/fakebin/git"
   before=$(git -C "$local_repo" rev-parse main)
   PATH="$local_home/fakebin:$PATH" FM_TEST_REAL_GIT="$real_git" \
-    FM_TEST_RACE_REPO="$local_repo" FM_TEST_RACE_READY="$local_ready" \
+    FM_TEST_RACE_REPO="$local_repo_real" FM_TEST_RACE_READY="$local_ready" \
     FM_TEST_RACE_RELEASE="$local_release" FM_ROOT_OVERRIDE="$ROOT" \
     FM_HOME="$local_home" FM_STATE_OVERRIDE="$local_home/state" \
     FM_DATA_OVERRIDE="$local_home/data" FM_CONFIG_OVERRIDE="$local_home/config" \
@@ -3680,6 +3691,8 @@ SH
     "local cleanup was not refused by the merge's task control lock"
   [ "$local_merge_rc" -eq 0 ] || fail "the serialized local merge failed after cleanup was refused"
   [ "$after" != "$before" ] || fail "the serialized local merge did not fast-forward main"
+  [ "$after" = "$(git -C "$local_wt" rev-parse "fm/$local_id")" ] \
+    || fail "the serialized local merge landed something other than the task commit"
   assert_present "$local_home/state/$local_id.meta" \
     "the refused local cleanup removed task metadata"
   pass "merge entrypoints own task state before forced cleanup can retire it"

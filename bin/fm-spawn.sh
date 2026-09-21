@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Spawn a direct report: a crewmate in a treehouse or Orca worktree, or a
 # secondmate in its isolated firstmate home.
-# Usage: fm-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>]
+# Usage: fm-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--local-target-branch <branch> --local-target-worktree <path>]
 #        fm-spawn.sh <task-id> <project-dir> --scout [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>]
 #        fm-spawn.sh <task-id> [<firstmate-home>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] --secondmate
 #   --mode and --yolo are this task's delivery contract, REQUIRED for every ship
@@ -23,6 +23,18 @@
 #   loud one-line deviation notice is printed and the spawn continues.
 #   no-mistakes-prod-only is a registry policy rather than a task mode and is
 #   refused as a flag value.
+#   --local-target-branch and --local-target-worktree name a --mode local-only
+#   ship's approved landing target: an existing local branch and the linked
+#   worktree of the same project already checked out on it. A Treehouse pool
+#   slot is refused as that copy, because the pool can hand the slot to this
+#   very task and move it off the selected branch. They are supplied
+#   together, refused on every other mode and kind, validated before the worker
+#   exists, and recorded on the task as local_target_branch/local_target_worktree.
+#   That record is the single authority the launch brief, bin/fm-merge-local.sh,
+#   and bin/fm-teardown.sh all read, so the selected branch cannot drift from
+#   what the worker was told. Omitting them keeps the historical behavior: the
+#   landing goes to the project's default branch in the project checkout.
+#   A relaunch reuses the recorded target and refuses both flags.
 #   Ship/scout launches always supply fm-dod-lib.sh's current worker role scope
 #   using the same private launch-brief overlay. This never rewrites a project's
 #   instruction files or a secondmate's charter.
@@ -451,6 +463,8 @@ BACKEND_ARG=
 MODE=
 YOLO=
 TRACEPARENT_ARG=
+LOCAL_TARGET_BRANCH=
+LOCAL_TARGET_WT=
 HARNESS_SET=0
 MODEL_SET=0
 EFFORT_SET=0
@@ -458,6 +472,7 @@ BACKEND_SET=0
 MODE_SET=0
 YOLO_SET=0
 TRACEPARENT_SET=0
+LOCAL_TARGET_SET=0
 RELAUNCH=0
 POS=()
 want_value=
@@ -474,6 +489,8 @@ for a in "$@"; do
       mode) MODE=$a; MODE_SET=1 ;;
       yolo) YOLO=$a; YOLO_SET=1 ;;
       traceparent) TRACEPARENT_ARG=$a; TRACEPARENT_SET=1 ;;
+      local-target-branch) LOCAL_TARGET_BRANCH=$a; LOCAL_TARGET_SET=1 ;;
+      local-target-worktree) LOCAL_TARGET_WT=$a; LOCAL_TARGET_SET=1 ;;
       *) echo "error: internal parser state for --$want_value" >&2; exit 1 ;;
     esac
     want_value=
@@ -497,6 +514,10 @@ for a in "$@"; do
     --yolo=*) YOLO=${a#--yolo=}; YOLO_SET=1 ;;
     --traceparent) want_value=traceparent ;;
     --traceparent=*) TRACEPARENT_ARG=${a#--traceparent=}; TRACEPARENT_SET=1 ;;
+    --local-target-branch) want_value=local-target-branch ;;
+    --local-target-branch=*) LOCAL_TARGET_BRANCH=${a#--local-target-branch=}; LOCAL_TARGET_SET=1 ;;
+    --local-target-worktree) want_value=local-target-worktree ;;
+    --local-target-worktree=*) LOCAL_TARGET_WT=${a#--local-target-worktree=}; LOCAL_TARGET_SET=1 ;;
     *) POS+=("$a") ;;
   esac
 done
@@ -508,6 +529,10 @@ done
 [ "$MODE_SET" -eq 0 ] || [ -n "$MODE" ] || { echo "error: --mode requires a non-empty value" >&2; exit 1; }
 [ "$YOLO_SET" -eq 0 ] || [ -n "$YOLO" ] || { echo "error: --yolo requires a non-empty value" >&2; exit 1; }
 [ "$TRACEPARENT_SET" -eq 0 ] || [ -n "$TRACEPARENT_ARG" ] || { echo "error: --traceparent requires a non-empty value" >&2; exit 1; }
+[ "$LOCAL_TARGET_SET" -eq 0 ] || { [ -n "$LOCAL_TARGET_BRANCH" ] && [ -n "$LOCAL_TARGET_WT" ]; } || {
+  echo "error: --local-target-branch and --local-target-worktree must be supplied together with non-empty values" >&2
+  exit 1
+}
 # A parent-delivered carrier replaces this home's own resolution, so it is
 # refused unless it is a secondmate spawn carrying a strictly valid W3C value.
 # Nothing else may reach the pane's TRACEPARENT export.
@@ -535,6 +560,7 @@ if [ "$RELAUNCH" -eq 1 ]; then
   [ "$KIND_SET" -eq 0 ] || { echo "error: --relaunch reuses the task's recorded kind; --scout/--secondmate cannot override it" >&2; exit 1; }
   [ "$MODE_SET" -eq 0 ] || { echo "error: --relaunch reuses the task's recorded delivery mode; --mode cannot override it" >&2; exit 1; }
   [ "$YOLO_SET" -eq 0 ] || { echo "error: --relaunch reuses the task's recorded yolo posture; --yolo cannot override it" >&2; exit 1; }
+  [ "$LOCAL_TARGET_SET" -eq 0 ] || { echo "error: --relaunch reuses the task's recorded local landing target; --local-target-branch/--local-target-worktree cannot override it" >&2; exit 1; }
 else
   # Delivery contract (AGENTS.md section 7). A ship task's mode and yolo are
   # firstmate's per-task decision, so they are required and closed-set validated
@@ -560,6 +586,10 @@ else
       on|off) ;;
       *) echo "error: --yolo must be on or off (got '$YOLO')" >&2; exit 1 ;;
     esac
+    [ "$LOCAL_TARGET_SET" -eq 0 ] || [ "$MODE" = local-only ] || {
+      echo "error: --local-target-branch/--local-target-worktree apply only to --mode local-only ships; every other mode lands through its PR" >&2
+      exit 1
+    }
   else
     [ "$MODE_SET" -eq 0 ] || {
       echo "error: --mode applies only to ship spawns; a scout delivers a report and a secondmate records its own fixed posture" >&2
@@ -567,6 +597,10 @@ else
     }
     [ "$YOLO_SET" -eq 0 ] || {
       echo "error: --yolo applies only to ship spawns; a scout delivers a report and a secondmate records its own fixed posture" >&2
+      exit 1
+    }
+    [ "$LOCAL_TARGET_SET" -eq 0 ] || {
+      echo "error: --local-target-branch/--local-target-worktree apply only to ship spawns" >&2
       exit 1
     }
   fi
@@ -1292,6 +1326,8 @@ if [ "$RELAUNCH" -eq 1 ]; then
   [ -n "$KIND" ] || KIND=ship
   MODE=$(fm_meta_get "$RELAUNCH_META" mode)
   YOLO=$(fm_meta_get "$RELAUNCH_META" yolo)
+  LOCAL_TARGET_BRANCH=$(fm_meta_get "$RELAUNCH_META" local_target_branch)
+  LOCAL_TARGET_WT=$(fm_meta_get "$RELAUNCH_META" local_target_worktree)
   RELAUNCH_WT=$(fm_meta_get "$RELAUNCH_META" worktree)
   [ -n "$RELAUNCH_WT" ] && [ -d "$RELAUNCH_WT" ] || {
     echo "error: task $ID's recorded worktree '${RELAUNCH_WT:-none}' is missing; refusing to relaunch without the local copy its work lives in" >&2
@@ -2181,6 +2217,57 @@ else
   WT=""
   BRIEF="$DATA/$ID/brief.md"
 fi
+
+# Local landing target (AGENTS.md section 7). A local-only ship may be given an
+# explicit landing branch and the linked copy holding it. Validating and
+# recording it here - before the worker exists - is what lets the launch brief
+# name the concrete branch and lets bin/fm-merge-local.sh and bin/fm-teardown.sh
+# honor the same selection instead of each re-deciding it. No selection keeps
+# the historical default-branch behavior untouched.
+if { [ -n "$LOCAL_TARGET_BRANCH" ] && [ -z "$LOCAL_TARGET_WT" ]; } \
+   || { [ -z "$LOCAL_TARGET_BRANCH" ] && [ -n "$LOCAL_TARGET_WT" ]; }; then
+  echo "error: task $ID has incomplete local landing target provenance; refusing" >&2
+  exit 1
+fi
+if [ "$RELAUNCH" -eq 0 ] && [ -n "$LOCAL_TARGET_BRANCH" ]; then
+  spawn_git_common_dir() {  # <path>
+    local common
+    common=$(git -C "$1" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
+    CDPATH='' cd -- "$common" 2>/dev/null && pwd -P
+  }
+  git check-ref-format "refs/heads/$LOCAL_TARGET_BRANCH" >/dev/null 2>&1 || {
+    echo "error: --local-target-branch '$LOCAL_TARGET_BRANCH' is not a valid git branch name" >&2
+    exit 1
+  }
+  LOCAL_TARGET_WT=$(CDPATH='' cd -- "$LOCAL_TARGET_WT" 2>/dev/null && pwd -P) || {
+    echo "error: --local-target-worktree is not an available directory" >&2
+    exit 1
+  }
+  SPAWN_TARGET_COMMON=$(spawn_git_common_dir "$LOCAL_TARGET_WT") || {
+    echo "error: --local-target-worktree $LOCAL_TARGET_WT is not a git working copy" >&2
+    exit 1
+  }
+  SPAWN_PROJECT_COMMON=$(spawn_git_common_dir "$PROJ_ABS") || {
+    echo "error: project $PROJ_ABS is not a git repository; it cannot carry a local landing target" >&2
+    exit 1
+  }
+  if [ "$SPAWN_TARGET_COMMON" != "$SPAWN_PROJECT_COMMON" ] \
+     || ! git -C "$PROJ_ABS" worktree list --porcelain 2>/dev/null \
+          | grep -Fxq -- "worktree $LOCAL_TARGET_WT"; then
+    echo "error: --local-target-worktree $LOCAL_TARGET_WT is not a linked copy of $PROJ_ABS" >&2
+    exit 1
+  fi
+  [ "$(git -C "$LOCAL_TARGET_WT" symbolic-ref --quiet --short HEAD 2>/dev/null || true)" = "$LOCAL_TARGET_BRANCH" ] || {
+    echo "error: --local-target-worktree $LOCAL_TARGET_WT is not checked out on '$LOCAL_TARGET_BRANCH'" >&2
+    exit 1
+  }
+  if [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ] \
+     && fm_treehouse_pool_slot "$PROJ_ABS" "$LOCAL_TARGET_WT"; then
+    echo "error: --local-target-worktree $LOCAL_TARGET_WT is a Treehouse pool slot for $PROJ_ABS; the pool can hand that slot to this very task, which would move it off '$LOCAL_TARGET_BRANCH'" >&2
+    echo "Use a copy Treehouse does not allocate (the project checkout or a worktree outside the pool) as the landing target." >&2
+    exit 1
+  fi
+fi
 if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
   SPAWN_TREEHOUSE_PROJECT_LOCK=$(fm_treehouse_project_lock_path "$PROJ_ABS") || {
     echo "error: could not resolve the shared Treehouse project lock for $PROJ_ABS" >&2
@@ -2225,6 +2312,9 @@ if [ "$KIND" = ship ] || [ "$KIND" = scout ]; then
       fm_brief_worker_role &&
       if [ "$KIND" = ship ] && [ "$MODE" = no-mistakes ]; then
         fm_brief_intent_overlay "$CAPTAIN_INTENT"
+      fi &&
+      if [ "$KIND" = ship ] && [ "$MODE" = local-only ] && [ -n "$LOCAL_TARGET_BRANCH" ]; then
+        fm_brief_local_target_overlay "$ID" "$LOCAL_TARGET_BRANCH" "$LOCAL_TARGET_WT"
       fi
   } > "$BRIEF_TMP" || { rm -f -- "$BRIEF_TMP"; echo "error: could not render current launch contract for $SOURCE_BRIEF" >&2; exit 1; }
   if ! mv "$BRIEF_TMP" "$BRIEF"; then
@@ -3122,6 +3212,11 @@ elif [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
 
   validate_spawn_worktree "treehouse get" "$T"
 fi
+if [ -n "$LOCAL_TARGET_BRANCH" ] && [ -n "$WT" ] \
+   && [ "$(real_path_or_raw "$WT")" = "$LOCAL_TARGET_WT" ]; then
+  echo "error: task $ID's own worktree is also its local landing target $LOCAL_TARGET_WT; refusing; inspect window $T" >&2
+  exit 1
+fi
 if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ]; then
   freshen_spawn_worktree_base "$WT" || exit 1
 fi
@@ -3614,7 +3709,7 @@ SPAWN_META_PATH=$SPAWN_META_TMP
 preserve_relaunch_meta() {
   awk -F= '
     BEGIN {
-      split("window endpoint_task_id worktree project harness kind mode yolo tasktmp model effort busy_gen spawn_gen traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id home projects control_relaunch_tx", keys, " ")
+      split("window endpoint_task_id worktree project harness kind mode yolo local_target_branch local_target_worktree tasktmp model effort busy_gen spawn_gen traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id home projects control_relaunch_tx", keys, " ")
       for (i in keys) owned[keys[i]] = 1
     }
     !($1 in owned)
@@ -3629,6 +3724,10 @@ preserve_relaunch_meta() {
   echo "kind=$KIND"
   [ -z "$MODE" ] || echo "mode=$MODE"
   [ -z "$YOLO" ] || echo "yolo=$YOLO"
+  if [ -n "$LOCAL_TARGET_BRANCH" ]; then
+    echo "local_target_branch=$LOCAL_TARGET_BRANCH"
+    echo "local_target_worktree=$LOCAL_TARGET_WT"
+  fi
   echo "tasktmp=$TASK_TMP"
   echo "model=${MODEL:-default}"
   echo "effort=${EFFORT:-default}"

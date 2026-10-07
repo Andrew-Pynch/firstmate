@@ -562,13 +562,15 @@ test_drifted_slot_converges_after_fresh_fetch() {
 
 # A remote-tracking ref whose upstream branch was deleted still vouches for its
 # commit locally. The fresh, pruning fetch must withdraw that vouch, so a commit
-# no remote branch holds any more is refused as uncommitted work and kept.
+# no remote branch holds any more is refused as uncommitted work and kept. The
+# slot is still on the old base, so the refusal must also leave it there.
 test_pruned_upstream_branch_no_longer_proves_containment() {
-  local rec id out status orphan
+  local rec id out status orphan before
   id='pool-sub-pruned-r1'
   rec=$(make_submodule_case sub-pruned "$id")
   read_submodule_case "$rec"
-  strand_submodule_pin
+  before=$(git -C "$POOL_DIR" rev-parse HEAD)
+  [ "$before" != "$ADVANCED_SHA" ] || fail "the fixture slot already holds the advanced base"
   git -C "$CASE_DIR/sub-origin" checkout --quiet -b gone "$SUBPIN1"
   printf 'only on a branch about to be deleted\n' > "$CASE_DIR/sub-origin/gone.txt"
   git -C "$CASE_DIR/sub-origin" add gone.txt
@@ -588,9 +590,33 @@ test_pruned_upstream_branch_no_longer_proves_containment() {
     "a commit vouched for only by a pruned ref was not refused as uncommitted work"
   [ "$(git -C "$POOL_DIR/ui" rev-parse HEAD)" = "$orphan" ] \
     || fail "spawn moved the submodule off a commit no remote branch holds"
-  [ "$(git -C "$POOL_DIR" rev-parse HEAD)" = "$ADVANCED_SHA" ] \
+  [ "$(git -C "$POOL_DIR" rev-parse HEAD)" = "$before" ] \
     || fail "spawn moved the superproject while refusing the slot"
   pass "a pruned upstream branch no longer proves containment; the commit is refused and kept"
+}
+
+# Only origin is fetched, so only origin may vouch: a remote-tracking ref of any
+# other remote can be just as stale as a pruned one and proves nothing.
+test_another_remotes_ref_does_not_prove_containment() {
+  local rec id out status kept
+  id='pool-sub-other-remote-r1'
+  rec=$(make_submodule_case sub-other-remote "$id")
+  read_submodule_case "$rec"
+  strand_submodule_pin
+  printf 'held only by a stale mirror ref\n' > "$POOL_DIR/ui/mirror.txt"
+  git -C "$POOL_DIR/ui" add mirror.txt
+  git -C "$POOL_DIR/ui" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' commit -qm mirror-only
+  kept=$(git -C "$POOL_DIR/ui" rev-parse HEAD)
+  git -C "$POOL_DIR/ui" update-ref refs/remotes/mirror/kept "$kept"
+
+  out=$(run_spawn "$id" --mode no-mistakes --yolo off)
+  status=$?
+  [ "$status" -ne 0 ] || fail "spawn converged a submodule commit only a non-origin remote ref holds"
+  assert_contains "$out" "refusing to discard uncommitted work" \
+    "a commit vouched for only by another remote's ref was not refused as uncommitted work"
+  [ "$(git -C "$POOL_DIR/ui" rev-parse HEAD)" = "$kept" ] \
+    || fail "spawn moved the submodule off a commit origin does not hold"
+  pass "another remote's ref does not prove containment; the commit is refused and kept"
 }
 
 test_stale_submodule_pin_explains_itself() {
@@ -633,7 +659,8 @@ test_unpushed_submodule_commit_is_still_uncommitted_work() {
   id='pool-sub-unpushed-r10'
   rec=$(make_submodule_case sub-unpushed "$id")
   read_submodule_case "$rec"
-  strand_submodule_pin
+  # The slot stays on the old base, so a refusal that moved the superproject
+  # before refusing would be visible below.
   # A commit made inside the submodule and never pushed leaves the submodule work
   # tree clean and the pins different - the same two facts a stale pin shows. Any
   # checkout of the recorded pin would move HEAD off this commit and leave it
@@ -648,6 +675,7 @@ test_unpushed_submodule_commit_is_still_uncommitted_work() {
   [ "$unpushed" != "$(git -C "$POOL_DIR" rev-parse "HEAD:ui")" ] \
     || fail "fixture did not leave the recorded pin different from what is checked out"
   before=$(git -C "$POOL_DIR" rev-parse HEAD)
+  [ "$before" != "$ADVANCED_SHA" ] || fail "the fixture slot already holds the advanced base"
   before_sub=$unpushed
 
   out=$(run_spawn "$id" --mode no-mistakes --yolo off)
@@ -959,6 +987,7 @@ test_inactive_conditional_origin_include_launches_pool
 test_spawn_converges_pin_moved_by_its_own_reset
 test_drifted_slot_converges_after_fresh_fetch
 test_pruned_upstream_branch_no_longer_proves_containment
+test_another_remotes_ref_does_not_prove_containment
 test_stale_submodule_pin_explains_itself
 test_unpushed_submodule_commit_is_still_uncommitted_work
 test_work_inside_submodule_is_still_uncommitted_work

@@ -294,9 +294,11 @@
 #   pin - is converged rather than refused, because `treehouse get` resets the
 #   superproject with read-tree and never moves submodule checkouts, so every
 #   pin move on the base would otherwise strand the next slot it hands out.
-#   Convergence happens before and after the base reset alike, and a submodule
-#   is only moved onto its pin after a fresh `fetch --prune` of its own origin
-#   proves its checked-out commit is contained in a remote branch; any submodule
+#   Drift already present is proven before the base reset, so a refusal leaves
+#   the superproject unmoved; every drifted submodule, including one the reset
+#   itself strands, is moved onto its pin after the reset. A submodule moves only
+#   after a fresh `fetch --prune` of its own origin proves its checked-out commit
+#   is contained in an origin branch; any submodule
 #   that cannot be proven contained (an unpushed commit, no origin, a fetch or
 #   git error) refuses the spawn as uncommitted work and is left untouched.
 #   An origin-less slot cannot fetch, so its drift is still refused, reported as
@@ -3491,14 +3493,16 @@ EOF
 # The containment proof convergence stands on: the submodule work tree is clean,
 # a fresh fetch of its own origin succeeds with --prune (so a deleted or rewritten
 # upstream branch cannot keep vouching for a commit), and the checked-out commit
-# is then reachable from a remote-tracking branch. Nothing is moved here.
+# is then reachable from one of origin's remote-tracking branches. Only origin is
+# consulted because only origin was just fetched; another remote's refs may be
+# stale. Nothing is moved here.
 spawn_submodule_checkout_contained() { # <worktree> <path>
   local sub=$1/$2 have unpushed
   [ -z "$(git -C "$sub" status --porcelain 2>/dev/null)" ] || return 1
   git -C "$sub" config --get remote.origin.url >/dev/null 2>&1 || return 1
   git -C "$sub" fetch --quiet --prune origin >/dev/null 2>&1 || return 1
   have=$(git -C "$sub" rev-parse --verify --quiet HEAD 2>/dev/null) || return 1
-  unpushed=$(git -C "$sub" log --format=%H --max-count=1 "$have" --not --remotes -- 2>/dev/null) || return 1
+  unpushed=$(git -C "$sub" log --format=%H --max-count=1 "$have" --not --remotes=origin -- 2>/dev/null) || return 1
   [ -z "$unpushed" ]
 }
 

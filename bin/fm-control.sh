@@ -38,8 +38,8 @@
 #              recovery-grade classifier reports the agent gone. The task stays
 #              recorded (parked), and bin/fm-presentation-park.sh then collapses
 #              its exited presentation - on Herdr it closes the endpoint only
-#              when the worktree has nothing to lose and otherwise keeps it
-#              under a "parked: <id>" tab - reported as a trailing
+#              when the work is landed and otherwise keeps it under a
+#              "parked: <id>" tab - reported as a trailing
 #              presentation=<verdict> that never fails the verb.
 #              Already-stopped is success (idempotent). An endpoint that reads
 #              `missing` is put through the control plane's per-backend absence

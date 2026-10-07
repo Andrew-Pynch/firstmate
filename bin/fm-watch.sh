@@ -1502,8 +1502,8 @@ wedge_dead_record() {  # <window> <since-file> <triage-label> <idle-age> <pane-h
 
 # Sweep one stale ordinary crew endpoint's exited presentation. The decision is
 # bin/fm-presentation-park.sh's (trigger sweep: current status done or paused, a
-# positively agent-free endpoint, close only with nothing to lose, else the
-# parked stub); this only rate-limits it to once per stale pane hash through the
+# positively agent-free endpoint, close only for landed work, else the parked
+# stub); this only rate-limits it to once per stale pane hash through the
 # window's .park-swept- marker. Returns 0 only when the endpoint is now gone, so
 # the caller skips the rest of this window's triage.
 presentation_park_sweep() {  # <window> <task> <pane-hash>

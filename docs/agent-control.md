@@ -57,7 +57,7 @@ A stopped agent whose pane still shows the dialog text is not refused.
 **Teardown and discard are not verbs and will not become verbs.**
 `exit` stops an agent and keeps its worktree and record; the only endpoint it may close is the exited agent's own terminal, through [`bin/fm-presentation-park.sh`](../bin/fm-presentation-park.sh).
 Removing a worktree, retiring a record, or discarding work stays with [`bin/fm-teardown.sh`](../bin/fm-teardown.sh), which owns the landed-work test.
-A relaunch into a recorded Treehouse slot whose owner claim now names another task refuses, because the parked task's closed terminal no longer kept that slot in use and the pool handed it on.
+A relaunch into a recorded Treehouse slot whose owner claim now names another task refuses, because the task's landed work had closed its terminal, so that slot was no longer in use and the pool handed it on.
 
 **`resume` is not a verb.**
 It is not deterministic across the verified adapters: codex, grok, gemini, and devin resume only from a session id printed at exit, opencode continues the most recent session for the cwd, and claude, pi, pi-signed, omp, kimi, and agy have no verified general pane-resume contract.

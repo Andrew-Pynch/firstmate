@@ -6,12 +6,13 @@
 # The bug: a crewmate whose agent exited kept a bare-shell Herdr workspace
 # forever unless a teardown ran and succeeded. These cases pin the verdicts on a
 # real Herdr pane:
-#   - exited agent, worktree with nothing to lose     -> pane closed
-#   - exited agent, unlanded or uncommitted work      -> "parked: <id>" tab,
-#                                                        pane, ids, labels kept
+#   - exited agent, landed work (clean, pushed, HEAD in main) -> pane closed
+#   - exited agent, unmerged, unlanded or uncommitted work    -> "parked: <id>"
+#                                                  tab, pane, ids, labels kept
 #   - teardown refusal                                -> stub, never a close
 #   - live agent, or a status that is not done/paused -> untouched
-#   - relaunch restores the label, and refuses a slot another task claimed
+#   - relaunch restores the label, resumes a stub after a later merge, and
+#     refuses a slot another task claimed
 #   - an unrelated pane in the same session is never touched
 #
 # The agent is a symlink named like a harness (the construction
@@ -260,10 +261,9 @@ OUT=$(park refused teardown-refused) || fail "park should succeed: $OUT"
 [ "$OUT" = "presentation=parked task=refused" ] || fail "teardown-refused must never close, got: $OUT"
 pass "real herdr: a refused teardown keeps source and record and shows only the parked stub"
 
-# --- sweep: status gate, then a close with nothing to lose ---------------------
+# --- sweep: status gate, then a close of landed work ---------------------------
 new_task swept
 SW_PANE=$TASK_PANE SW_WS=$TASK_WS SW_WT=$TASK_WT
-open_pr "$SW_WT" swept
 start_agent "$SW_PANE"
 exit_agent "$SW_PANE"
 echo "working [at=1]: busy" > "$HOME_DIR/state/swept.status"
@@ -305,31 +305,49 @@ for _ in 1 2 3 4 5 6; do
   pane_present "$SW_PANE" || break
   ack_stopped_cycle || fail "could not acknowledge a watcher cycle"
 done
-pane_present "$SW_PANE" && fail "the watcher did not sweep a paused, exited, nothing-to-lose presentation: $(tail -5 "$SCRATCH/watch.out")"
+pane_present "$SW_PANE" && fail "the watcher did not sweep a paused, exited, landed presentation: $(tail -5 "$SCRATCH/watch.out")"
 [ -z "$(ws_label "$SW_WS")" ] || fail "the swept projected workspace is still listed"
 [ -f "$HOME_DIR/state/swept.meta" ] && [ -d "$SW_WT" ] || fail "the sweep removed the record or worktree"
 OUT=$(park swept sweep)
 [ "$OUT" = "presentation=gone task=swept" ] || fail "a repeated sweep should report gone, got: $OUT"
-pass "real herdr: the watcher closes a paused exited presentation with nothing to lose, idempotently"
+pass "real herdr: the watcher closes a paused exited presentation whose work is landed, idempotently"
 
-# --- a HEAD already in main: closing would release the slot, so stub ----------
-new_task landed
-LD_PANE=$TASK_PANE LD_TAB=$TASK_TAB
-OUT=$(park landed exit)
-[ "$OUT" = "presentation=parked task=landed" ] \
-  || fail "a clean task whose HEAD is already in main must keep its slot under a stub, got: $OUT"
-pane_present "$LD_PANE" && [ "$(tab_label "$LD_TAB")" = "parked: landed" ] || fail "the landed task lost its pane"
-pass "real herdr: a clean task whose HEAD is already in main keeps its pane and slot under the stub"
+# --- an open PR is still resumable: stub, kept across a later merge -----------
+new_task openpr
+OP_PANE=$TASK_PANE OP_TAB=$TASK_TAB OP_WS=$TASK_WS OP_WT=$TASK_WT
+OP_WS_LABEL=$(ws_label "$OP_WS")
+open_pr "$OP_WT" openpr
+OUT=$(env FM_HOME="$HOME_DIR" HERDR_SESSION="$SESSION" FM_CONTROL_POLL=0.2 FM_CONTROL_EXIT_WAIT=2 \
+  "$ROOT/bin/fm-control.sh" openpr exit 2>&1) || fail "exit should succeed: $OUT"
+case "$OUT" in
+  "already-stopped openpr "*"presentation=parked") : ;;
+  *) fail "exit with a pushed but unmerged HEAD should park the presentation, got: $OUT" ;;
+esac
+echo "paused [at=1]: parked by Main" > "$HOME_DIR/state/openpr.status"
+OUT=$(park openpr sweep)
+[ "$OUT" = "presentation=parked task=openpr" ] || fail "a sweep of unmerged work must keep the stub, got: $OUT"
+pane_present "$OP_PANE" && [ "$(tab_label "$OP_TAB")" = "parked: openpr" ] || fail "the open-PR task lost its stub"
+# The branch lands later; the stub's shell still holds the endpoint, so the
+# task resumes in place.
+git -C "$PROJ" push -q origin "fm/openpr:main"
+git -C "$PROJ" fetch -q origin
+git -C "$OP_WT" merge-base --is-ancestor HEAD origin/main || fail "the lab merge did not land the open-PR head"
+fm_backend_herdr_send_text_line "$SESSION:$OP_PANE" "export PATH=$FAKEBIN_Q:\$PATH" || fail "fake harness PATH"
+OUT=$(env FM_HOME="$HOME_DIR" HERDR_SESSION="$SESSION" FM_SPAWN_NO_GUARD=1 \
+  "$ROOT/bin/fm-spawn.sh" openpr --relaunch --harness codex 2>&1) || fail "relaunch after a later merge failed: $OUT"
+[ "$(sed -n 's/^window=//p' "$HOME_DIR/state/openpr.meta" | tail -1)" = "$SESSION:$OP_PANE" ] \
+  || fail "relaunch after a later merge did not reuse the parked endpoint"
+[ "$(ws_label "$OP_WS")" = "$OP_WS_LABEL" ] || fail "relaunch after a later merge did not restore the workspace label"
+pass "real herdr: unmerged work stays one parked stub and resumes in place after its branch later lands"
 
-# --- exit with nothing to lose closes; relaunch refuses a reassigned slot ------
+# --- exit of landed work closes; relaunch refuses a reassigned slot ------------
 new_task clean
-CL_PANE=$TASK_PANE CL_WT=$TASK_WT
-open_pr "$CL_WT" clean
+CL_PANE=$TASK_PANE
 OUT=$(env FM_HOME="$HOME_DIR" HERDR_SESSION="$SESSION" FM_CONTROL_POLL=0.2 FM_CONTROL_EXIT_WAIT=2 \
   "$ROOT/bin/fm-control.sh" clean exit 2>&1) || fail "exit should succeed: $OUT"
 case "$OUT" in
   "already-stopped clean "*"presentation=closed") : ;;
-  *) fail "exit with nothing to lose should close the presentation, got: $OUT" ;;
+  *) fail "exit of landed work should close the presentation, got: $OUT" ;;
 esac
 pane_present "$CL_PANE" && fail "the closed presentation's pane is still present"
 printf 'task=someone-else\nhome=%s\n' "$HOME_DIR" > "$SCRATCH/slots/clean/.fm-slot-owner"
@@ -341,7 +359,7 @@ case "$OUT" in
   *"now claimed by task someone-else"*) : ;;
   *) fail "the reassigned-slot refusal should name the claimant, got: $OUT" ;;
 esac
-pass "real herdr: exit with nothing to lose closes the presentation, and relaunch refuses a reassigned slot"
+pass "real herdr: exit of landed work closes the presentation, and relaunch refuses a reassigned slot"
 
 pane_present "$UNRELATED" && [ "$(ws_label "$(R pane get "$UNRELATED" | jq -r .result.pane.workspace_id)")" = unrelated ] \
   || fail "an unrelated pane was touched"

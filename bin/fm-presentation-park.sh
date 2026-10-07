@@ -21,16 +21,20 @@
 #                     that has not landed.
 #
 # The verdict:
-#   closed  The worktree is clean, has no commit off every remote, and closing
-#           keeps its Treehouse slot this task's (slot_stays_reserved below),
-#           so the endpoint is closed; on Herdr the projected workspace goes
-#           with its last pane. Never on teardown-refused. The task record,
-#           claim, and worktree stay, and bin/fm-spawn.sh --relaunch re-creates
-#           the endpoint in that worktree (refusing one another task claimed).
-#   parked  Anything else: the endpoint, its shell, its Treehouse slot, the
-#           worktree, every id, the projection token, and the journal are kept;
-#           the task tab reads "parked: <task-id>" and a projected workspace
-#           reads "└ parked: <task-id> · p:<token>". A relaunch restores both.
+#   closed  The work is landed: the worktree is clean, has no commit off every
+#           remote, and its HEAD is contained in origin's default branch
+#           (work_is_landed below), so the endpoint is closed; on Herdr the
+#           projected workspace goes with its last pane. Never on
+#           teardown-refused. The task record, claim, and worktree stay for
+#           bin/fm-teardown.sh; a released Treehouse slot may be handed on, and
+#           bin/fm-spawn.sh --relaunch then refuses a slot another task claimed.
+#   parked  Every still-resumable task: the endpoint, its shell, its Treehouse
+#           slot, the worktree, every id, the projection token, and the journal
+#           are kept; the task tab reads "parked: <task-id>" and a projected
+#           workspace reads "└ parked: <task-id> · p:<token>". A relaunch
+#           restores both. The live shell keeps an interactive Treehouse slot
+#           reserved, so unmerged work stays resumable in place even after its
+#           branch later lands.
 #   gone    The endpoint was already gone.
 #   unchanged  The backend, kind, status, or agent state is not eligible.
 #
@@ -150,38 +154,26 @@ else
   exit 0
 fi
 
-# 0 only when the worktree is readable, clean, and has no commit that is not
-# on some remote-tracking branch.
-worktree_has_nothing_to_lose() {
-  local dirty unpushed
+# 0 only when the work is landed: the worktree is readable and clean, has no
+# commit that is not on some remote-tracking branch, and its HEAD is contained
+# in origin's default branch. An unresolvable default ref or a failed read is
+# not landed. Everything else stays resumable and keeps the stub, because
+# closing the shell releases an interactive Treehouse slot and Treehouse 2.3.0
+# has no supported way to reserve it again.
+work_is_landed() {
+  local dirty unpushed ref
   [ -n "$WT" ] && [ -d "$WT" ] || return 1
   dirty=$(git -C "$WT" status --porcelain 2>/dev/null) || return 1
   [ -z "$dirty" ] || return 1
   unpushed=$(git -C "$WT" log --oneline HEAD --not --remotes -- 2>/dev/null) || return 1
-  [ -z "$unpushed" ]
-}
-
-# 0 only when closing the endpoint keeps the task's worktree its own. A
-# Treehouse slot taken with the interactive `treehouse get` is held only while a
-# process runs in it, and Treehouse 2.3.0 has no supported way to reserve an
-# existing slot, so closing the shell releases it. Treehouse itself still never
-# hands out a released slot whose HEAD is not merged into the remote default
-# branch (its acquire refuses to reset unmerged commits), so such a slot stays
-# this task's - claim, copy, and relaunch target intact. A HEAD already merged
-# there, an unresolvable default ref, or a failed read would let the pool reuse
-# the slot under this task's record, so those keep the stub instead.
-slot_stays_reserved() {
-  local project ref
-  project=$(fm_meta_get "$META" project)
-  fm_treehouse_pool_slot "$project" "$WT" || return 0
+  [ -z "$unpushed" ] || return 1
   ref=$(git -C "$WT" symbolic-ref -q refs/remotes/origin/HEAD 2>/dev/null) || return 1
   [ -n "$ref" ] || return 1
   git -C "$WT" merge-base --is-ancestor HEAD "$ref" 2>/dev/null
-  [ "$?" -eq 1 ]
 }
 
 MODE=stub
-if [ "$TRIGGER" != teardown-refused ] && worktree_has_nothing_to_lose && slot_stays_reserved; then
+if [ "$TRIGGER" != teardown-refused ] && work_is_landed; then
   MODE=close
 fi
 

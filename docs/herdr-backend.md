@@ -505,15 +505,13 @@ A live, unknown, or moved endpoint is left alone, and the proof is re-read under
 
 | Verdict | When | What changes |
 | --- | --- | --- |
-| `closed` | Exit or sweep, clean worktree, no commit off a remote, and a HEAD not yet merged into origin's default branch. | The exact pane is closed, and a projected workspace goes with it. The record, journal, claim, and worktree stay. |
-| `parked` | Every other eligible case, and always on a teardown refusal. | The tab reads `parked: <id>` and a projected workspace reads `└ parked: <id> · p:<token>`. Ids, the token, the journal, the pane, and its shell stay. |
+| `closed` | Exit or sweep, and the work is landed: clean worktree, no commit off a remote, and a HEAD contained in origin's default branch. | The exact pane is closed, and a projected workspace goes with it. The record, journal, claim, and worktree stay for teardown. |
+| `parked` | Every still-resumable task, and always on a teardown refusal. | The tab reads `parked: <id>` and a projected workspace reads `└ parked: <id> · p:<token>`. Ids, the token, the journal, the pane, and its shell stay. |
 
 The close rule follows from Treehouse 2.3.0: an interactive slot is held only while a process runs in it, and there is no supported way to reserve an existing slot.
-Treehouse still never hands out a released slot whose HEAD is unmerged, so a closed slot stays the task's and `relaunch` re-creates the endpoint there.
-A slot whose HEAD is already merged would be reused under the task's record, so it keeps the stub.
-That reservation lasts only while the HEAD stays unmerged.
-Once the branch lands by a merge commit or fast-forward, the pool may hand the slot on; `bin/fm-spawn.sh --relaunch` then refuses rather than share another task's copy, and the parked record's teardown runs records-only as for any reassigned slot.
-A squash or rebase merge never makes the HEAD an ancestor, so that slot stays held until teardown.
+Closing the shell therefore releases the slot, so only landed work closes.
+A parked stub keeps its shell, so its slot stays the task's and `relaunch` resumes in place, even after the branch later lands.
+When a closed landed slot is later handed on, `bin/fm-spawn.sh --relaunch` refuses rather than share another task's copy, and the record's teardown runs records-only as for any reassigned slot.
 
 The parked workspace label keeps the U+2514 prefix and the exact token suffix, so token correlation and child ordering still match; the journal keeps the ordinary label, and a relaunch that adopts the endpoint restores both labels before the new agent starts.
 `tests/fm-presentation-park-e2e.test.sh` pins every verdict against the real binary, and [`verification/runtime-backends.md`](verification/runtime-backends.md#parked-presentation) records the real-agent lab proof.

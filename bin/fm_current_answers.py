@@ -102,12 +102,12 @@ def write_decisions(decisions, now):
 # ---------- server ----------
 
 def configured():
-    """config/current-page lines `answers_origin=<https origin>` and `answers_listen=<host>:<port>`."""
+    """config/current-page lines `answers_origin=<https origin>`, `answers_listen=<host>:<port>`, `linear_key_file=<path>`."""
     found = {}
     try:
         with open(os.path.join(HOME, "config", "current-page"), encoding="utf-8") as fh:
             for line in fh:
-                match = re.match(r"^\s*(answers_origin|answers_listen)=(\S+)\s*$", line)
+                match = re.match(r"^\s*(answers_origin|answers_listen|linear_key_file)=(\S+)\s*$", line)
                 if match and match.group(1) not in found:
                     found[match.group(1)] = match.group(2)
     except OSError:
@@ -117,6 +117,103 @@ def configured():
 
 def iso(ts):
     return dt.datetime.fromtimestamp(ts, dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+# ---------- Linear hover cards ----------
+
+LINEAR_API = "https://api.linear.app/graphql"
+LINEAR_ID_RE = re.compile(r"^[A-Z][A-Z0-9]{1,6}-\d{1,6}$")
+LINEAR_TTL = 600            # a card is at most 10 min old
+LINEAR_ERROR_TTL = 30       # an upstream failure is retried soon, not hammered
+CARD_LINES = 12
+NOT_COUNTED_STATES = {"references"}         # reference notes: no work, so never done and never outstanding
+NOT_COUNTED_TYPES = {"canceled", "duplicate"}
+LINEAR_QUERY = """query($id:String!){issue(id:$id){identifier title url description state{name type}
+ assignee{name displayName} projectMilestone{name issues(first:250){nodes{state{name type}}}}}}"""
+
+
+def counts_toward_completion(state):
+    """False for the References state, canceled, and duplicates; they are neither done nor outstanding."""
+    return (str(state.get("name") or "").casefold() not in NOT_COUNTED_STATES
+            and str(state.get("type") or "") not in NOT_COUNTED_TYPES)
+
+
+def completion(states):
+    """{"done", "total", "pct"} over the issues that count; pct is None when none count."""
+    counted = [s for s in states if counts_toward_completion(s)]
+    done = sum(1 for s in counted if s.get("type") == "completed")
+    return {"done": done, "total": len(counted), "pct": round(100 * done / len(counted)) if counted else None}
+
+
+def card(issue):
+    """The hover card for one Linear issue: title, state, assignee, the body's first lines, milestone completion."""
+    state = issue.get("state") or {}
+    who = issue.get("assignee") or {}
+    lines = (issue.get("description") or "").strip().splitlines()
+    milestone = issue.get("projectMilestone")
+    return {"id": issue.get("identifier", ""), "title": issue.get("title", ""), "url": issue.get("url", ""),
+            "state": state.get("name", ""), "state_type": state.get("type", ""),
+            "counted": counts_toward_completion(state), "assignee": who.get("name") or who.get("displayName") or "",
+            "body": [line[:240] for line in lines[:CARD_LINES]], "more": len(lines) > CARD_LINES,
+            "milestone": {"name": milestone.get("name", ""),
+                          **completion([(n or {}).get("state") or {} for n in (milestone.get("issues") or {}).get("nodes") or []])}
+            if milestone else None}
+
+
+def linear_key():
+    """The Linear API key: FM_LINEAR_API_KEY, else the `*LINEAR_API_KEY=` line (or bare key) of linear_key_file."""
+    if os.environ.get("FM_LINEAR_API_KEY"):
+        return os.environ["FM_LINEAR_API_KEY"].strip()
+    path = configured().get("linear_key_file")
+    if not path:
+        return ""
+    try:
+        with open(os.path.expanduser(path), encoding="utf-8") as fh:
+            text = fh.read()
+    except OSError:
+        return ""
+    match = re.search(r"^\s*(?:export\s+)?[A-Z_]*LINEAR_API_KEY=['\"]?([^'\"\s]+)", text, re.M)
+    bare = text.strip()
+    return match.group(1) if match else bare if bare and not re.search(r"\s|=", bare) else ""
+
+
+class LinearCards:
+    """Cards fetched from Linear's GraphQL API, cached per issue for LINEAR_TTL (errors for LINEAR_ERROR_TTL)."""
+    def __init__(self):
+        self.cache, self.lock = {}, threading.Lock()
+
+    def get(self, ident):
+        """(http code, payload)."""
+        now = time.time()
+        with self.lock:
+            hit = self.cache.get(ident)
+            if hit and now < hit[0]:
+                return hit[1], hit[2]
+        code, payload = self.fetch(ident)
+        ttl = LINEAR_TTL if code in (200, 404) else LINEAR_ERROR_TTL
+        with self.lock:
+            self.cache[ident] = (now + ttl, code, {**payload, "fetched": iso(now)})
+        return code, self.cache[ident][2]
+
+    def fetch(self, ident):
+        import urllib.request
+        key = linear_key()
+        if not key:
+            return 503, {"error": "linear", "detail": "no Linear key configured (linear_key_file in config/current-page)"}
+        req = urllib.request.Request(LINEAR_API, json.dumps({"query": LINEAR_QUERY, "variables": {"id": ident}}).encode(),
+                                     {"Content-Type": "application/json", "Authorization": key})
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.load(resp)
+        except (OSError, ValueError) as exc:
+            return 502, {"error": "linear", "detail": type(exc).__name__}
+        issue = (data.get("data") or {}).get("issue")
+        if issue:
+            return 200, card(issue)
+        if any("not found" in str(err.get("message", "")).casefold() or
+               (err.get("extensions") or {}).get("code") == "INPUT_ERROR" for err in data.get("errors") or []) or not data.get("errors"):
+            return 404, {"error": "not found", "id": ident}
+        return 502, {"error": "linear", "detail": "upstream error"}
 
 
 def read_decisions():
@@ -213,6 +310,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send(200, {"ok": True})
         elif route == "/answers":
             self.send(200, self.feed())
+        elif route.startswith("/linear/") and LINEAR_ID_RE.fullmatch(route[8:]):
+            code, payload = self.server.linear.get(route[8:])
+            self.send(code, payload)
         else:
             self.send(404, {"error": "not found"})
 
@@ -337,7 +437,7 @@ def main(argv):
         return 2
     secret()
     srv = Server((host, port), Handler)
-    srv.origin, srv.receipts = origin, Receipts()
+    srv.origin, srv.receipts, srv.linear = origin, Receipts(), LinearCards()
     print(f"fm-current-answers: listening on {host}:{port} for {origin}", flush=True)
     srv.serve_forever()
     return 0

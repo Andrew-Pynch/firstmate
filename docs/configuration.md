@@ -220,6 +220,7 @@ With it absent the command renders nothing unless given `--out`.
 The page reads this home's durable records only and never claims, acknowledges, or advances a wake, so a renderer or its `watch` trigger can run beside supervision without changing it.
 `bin/fm-current-page.sh`'s header owns the sources, the curated-file format, the trigger, and its environment knobs.
 Optional `answers_origin=<https origin>` and `answers_listen=<host>:<port>` lines turn on the page's answer buttons and configure `bin/fm-current-answers.sh`, whose header owns the endpoint, its security checks, and how an answer reaches Main as an inbox note.
+An optional `linear_key_file=<path>` line names a local file holding a Linear API key, which that endpoint uses for the Linear hover card every served captain page shows on each STA-NNNN; the key stays in that file and never enters `config/current-page`.
 
 ## Turn-end pane-churn absorb (config/turnend-churn-absorb)
 

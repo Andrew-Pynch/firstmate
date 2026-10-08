@@ -17,12 +17,15 @@
 # shell (`-l -c`) so the server inherits the account's own environment; the
 # gui/<uid> launchd domain it is bootstrapped into, not the shell, is what
 # gives the server and its panes the Aqua audit session and login-keychain
-# access. The guard execs the server in the foreground under launchd, leaves an
-# Aqua-born server alone, and takes the session over from a server born
-# outside that session (an SSH remote attach wins the socket at boot), because
-# such a server's panes cannot read the login keychain;
-# bin/fm-remote-herdr-owner-lib.sh owns that birth test. Doctor remains
-# invokable over the plain-SSH bootstrap path to inspect and repair that worker.
+# access. The guard does not become the server: it supervises a forked child
+# that calls setsid(2) first, because Herdr offers a session to another host's
+# sidebar only when its server is its own session leader. The guard leaves a
+# supervised server alone and takes the session over from a server born outside
+# that session (an SSH remote attach wins the socket at boot), because such a
+# server's panes cannot read the login keychain;
+# bin/fm-remote-herdr-owner-lib.sh owns that birth test and the start
+# primitive. Doctor remains invokable over the plain-SSH bootstrap path to
+# inspect and repair that worker.
 # SSH cannot create an Aqua session, so a host with no GUI login is a human
 # gap rather than something --fix attempts to bypass.
 #
@@ -175,12 +178,10 @@ herdr_server_running() {
   [ "$running" = true ]
 }
 
-# Birth of the process serving the session, as the guard classifies it:
-# prints "<birth> <pid>" (launchd, worker, ssh, or unknown), "unproven" when
-# no herdr process can be shown to hold the socket, or "nolsof" when lsof does
-# not resolve. bin/fm-remote-herdr-owner-lib.sh owns the markers.
-herdr_server_birth() {
-  local socket owner rc birth
+# Which process serves the session: its pid, "unproven" when no herdr process
+# can be shown to hold the socket, or "nolsof" when lsof does not resolve.
+herdr_server_owner() {
+  local socket owner rc
   socket=$(herdr_server_status_json | jq -r '.server.socket // empty' 2>/dev/null) || socket=
   owner=$(fm_remote_herdr_socket_owner "$socket"); rc=$?
   if [ "$rc" -eq 2 ]; then
@@ -191,18 +192,32 @@ herdr_server_birth() {
     printf 'unproven\n'
     return 0
   fi
+  printf '%s\n' "$owner"
+}
+
+# Birth of that process, as the guard classifies it: prints "<birth> <pid>"
+# (supervised, launchd, worker, ssh, or unknown), or the bare "unproven" or
+# "nolsof" above. bin/fm-remote-herdr-owner-lib.sh owns the classification.
+herdr_server_birth() {
+  local owner birth
+  owner=$(herdr_server_owner)
+  case "$owner" in
+    nolsof|unproven) printf '%s\n' "$owner"; return 0 ;;
+  esac
   birth=$(fm_remote_herdr_owner_birth "$owner")
   printf '%s %s\n' "$birth" "$owner"
 }
 
-# On darwin the session is ready only when its server was born in the Aqua
-# login session; elsewhere any running server is.
-herdr_server_aqua_owned() {
+# On darwin the session is ready only when its server is this launch agent's
+# supervised session leader. An Aqua birth alone still allows the historical
+# shape where the job process IS the server and shares launchd's session, which
+# Herdr refuses to save as a machine. Elsewhere any running server is.
+herdr_server_ready() {
   local birth
   herdr_server_running || return 1
   [ "$PLATFORM" = darwin ] || return 0
   birth=$(herdr_server_birth)
-  fm_remote_herdr_birth_is_aqua "${birth%% *}"
+  fm_remote_herdr_birth_is_supervised "${birth%% *}"
 }
 
 launch_agent_is_aqua() {
@@ -254,9 +269,9 @@ resolve_launch_agent_shell() {
   printf '%s' /bin/sh
 }
 
-# Login-shell command that execs the Firstmate-owned guard, which in turn execs
-# the resolved herdr so launchd keeps one foreground process in the Aqua
-# session, or exits 0 when an Aqua-born server already owns the session.
+# Login-shell command that execs the Firstmate-owned guard, which either
+# supervises a session-leader herdr child from the Aqua session or exits 0 when
+# one of its own supervised children already owns the session.
 # KeepAlive={SuccessfulExit=false} is load-bearing for that exit: an
 # unconditional KeepAlive would respawn the job every throttle interval
 # forever while a foreign server holds the socket, exactly the loop this guard
@@ -661,6 +676,43 @@ check_launch_agent_loaded() { # <resolved-login-shell>
     "close the login-session gap first; a launch agent can only be bootstrapped into an existing GUI session"
 }
 
+# A host with no Aqua login session has no launch agent to supervise the
+# server, so the guarantee there is only that the running server is its own
+# session leader - the shape Herdr requires before another machine's sidebar
+# can reach this session. Replacing a running server means closing its panes,
+# which is a live-session decision the captain owns, so that gap is reported
+# rather than repaired.
+check_herdr_server_detached() {
+  local owner rc
+  owner=$(herdr_server_owner)
+  case "$owner" in
+    nolsof)
+      record herdr-server "human: session $HERDR_SESSION_NAME is running but lsof does not resolve, so its server cannot be identified" \
+        "install lsof on that account so this check can identify the process serving the session"
+      return 0
+      ;;
+    unproven)
+      record herdr-server "human: session $HERDR_SESSION_NAME is running but no herdr process can be shown to own its socket" \
+        "inspect that account's herdr processes yourself; this check will not replace a running server it cannot identify"
+      return 0
+      ;;
+  esac
+  rc=0
+  fm_remote_herdr_pid_is_session_leader "$owner" || rc=$?
+  case "$rc" in
+    0)
+      record herdr-server "ok: session $HERDR_SESSION_NAME is running as a detached session-leader server (pid $owner)"
+      ;;
+    2)
+      record herdr-server "ok: session $HERDR_SESSION_NAME is running (pid $owner); this kernel does not report which session a process leads, so the saved-machine requirement is unverified here"
+      ;;
+    *)
+      record herdr-server "human: session $HERDR_SESSION_NAME is served by pid $owner, which is not its own session leader, so Herdr cannot offer this host to another machine's sidebar" \
+        "during an approved window, stop that session's server so this command can start a detached session-leader one with --fix; its panes close, so Firstmate never does it unasked"
+      ;;
+  esac
+}
+
 check_herdr_server() {
   if ! herdr_cli_available; then
     record herdr-server "human: herdr server status cannot be read without both herdr and jq on the runtime PATH" \
@@ -669,14 +721,18 @@ check_herdr_server() {
   fi
   if herdr_server_running; then
     if [ "$PLATFORM" != darwin ]; then
-      record herdr-server "ok: session $HERDR_SESSION_NAME is running"
+      check_herdr_server_detached
       return 0
     fi
     local birth
     birth=$(herdr_server_birth)
     case "$birth" in
+      supervised\ *)
+        record herdr-server "ok: session $HERDR_SESSION_NAME is running as the launch agent's supervised session-leader server (pid ${birth#* })"
+        ;;
       launchd\ *|worker\ *)
-        record herdr-server "ok: session $HERDR_SESSION_NAME is running in the Aqua login session (pid ${birth#* }, ${birth%% *})"
+        record herdr-server "fixable: session $HERDR_SESSION_NAME is served by Aqua-born pid ${birth#* } (${birth%% *}), which is not its own session leader, so Herdr cannot offer this host to another machine's sidebar" \
+          "rerun this command with --fix so the launch agent takes the session over and supervises a session-leader server (its current panes close and the parent firstmate relaunches its mates)"
         ;;
       nolsof)
         record herdr-server "human: session $HERDR_SESSION_NAME is running but lsof does not resolve, so its server's birth cannot be proven" \
@@ -792,7 +848,7 @@ reload_launch_agent() { # <check-to-report-under>
     return 1
   fi
   if ! wait_for_herdr_server; then
-    fix_report "$report" failed "the herdr server for session $HERDR_SESSION_NAME did not come up inside the Aqua launch agent within 10s"
+    fix_report "$report" failed "the herdr server for session $HERDR_SESSION_NAME did not come up as the launch agent's supervised session-leader server within 10s"
     return 1
   fi
   fix_report "$report" applied "bootstrapped and started $LAUNCH_AGENT_LABEL in gui/$UID_NUM"
@@ -801,22 +857,39 @@ reload_launch_agent() { # <check-to-report-under>
 wait_for_herdr_server() {
   local i=0
   while [ "$i" -lt 20 ]; do
-    herdr_server_aqua_owned && return 0
+    herdr_server_ready && return 0
     i=$((i + 1))
     sleep 0.5
   done
   return 1
 }
 
+# The fm-remote server's first start on a host with no Aqua launch agent to
+# supervise it. The herdr adapter's own ensure is the general-purpose starter
+# for every session, including the captain's default one, and it leaves the
+# server inside the caller's session; this session needs the session leader
+# Herdr requires before another machine's sidebar can reach it, so the start
+# primitive forks that child here and this path polls the same status.
 start_herdr_server() {
+  local bin pid i=0
   if ! herdr_adapter_load; then
     fix_report herdr-server failed "herdr and jq must both resolve before the server can be started"
     return 1
   fi
-  if fm_backend_herdr_server_ensure "$HERDR_SESSION_NAME" >/dev/null 2>&1; then
-    fix_report herdr-server applied "started the herdr server for session $HERDR_SESSION_NAME"
-    return 0
+  fm_backend_herdr_client_select "$HERDR_SESSION_NAME"
+  bin=$(fm_backend_herdr_bin)
+  if ! pid=$(fm_remote_herdr_start_detached "$bin" "$HERDR_SESSION_NAME"); then
+    fix_report herdr-server failed "no perl interpreter resolves, so a detached session-leader server cannot be started"
+    return 1
   fi
+  while [ "$i" -lt 20 ]; do
+    if herdr_server_running; then
+      fix_report herdr-server applied "started the herdr server for session $HERDR_SESSION_NAME as a detached session-leader server (pid $pid)"
+      return 0
+    fi
+    i=$((i + 1))
+    sleep 0.5
+  done
   fix_report herdr-server failed "the herdr server for session $HERDR_SESSION_NAME did not come up"
   return 1
 }

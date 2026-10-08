@@ -2504,6 +2504,42 @@ parked_watch_round() {  # <state> <fakebin> <out> <capture> <window> <exit|absor
   return 0
 }
 
+test_explicit_external_pause_uses_only_the_long_cadence() {
+  local reason dir state fakebin out capture statusf window sig key back index=0
+  for reason in 'paused: vendor reply pending, declared by Main' \
+                'paused: awaiting external input'; do
+    index=$((index + 1))
+    dir=$(make_case "explicit-external-pause-$index")
+    state="$dir/state"; fakebin="$dir/fakebin"; out="$dir/watch.out"
+    capture="$dir/pane.txt"; statusf="$state/parked.status"; window=test:fm-parked
+    key=test_fm-parked
+    printf 'window=%s\nkind=ship\nharness=grok\nbackend=tmux\n' "$window" > "$state/parked.meta"
+    printf '%s\n' "$reason" > "$statusf"
+    sig=$(seen_sig "$statusf"); printf '%s' "$sig" > "$state/.seen-parked_status"
+    printf 'parked, elapsed 1s' > "$capture"
+    printf '%s' "$(hash_text 'parked, elapsed 1s')" > "$state/.hash-$key"
+    printf '1\n' > "$state/.count-$key"
+    printf '%s\n' $(( $(date +%s) - 500 )) > "$state/.stale-since-$key"
+    parked_watch_round "$state" "$fakebin" "$out" "$capture" "$window" absorb \
+      || fail "an explicit external pause emitted a short-cadence stale wake: $(cat "$out")"
+    [ ! -s "$state/.wake-queue" ] || fail "fresh explicit pause queued a wake"
+    ack_stopped_cycle "$state" || fail "could not acknowledge the intentional pause stop"
+    printf 'parked, elapsed 2s' > "$capture"
+    parked_watch_round "$state" "$fakebin" "$out" "$capture" "$window" absorb \
+      || fail "pane churn bypassed the explicit pause cadence"
+    ack_stopped_cycle "$state" || fail "could not acknowledge the churn stop"
+    back=$(( $(date +%s) - 1500 ))
+    if [ "$(uname)" = Darwin ]; then touch -mt "$(date -r "$back" '+%Y%m%d%H%M.%S')" "$statusf"
+    else touch -m -d "@$back" "$statusf"; fi
+    sig=$(seen_sig "$statusf"); printf '%s' "$sig" > "$state/.seen-parked_status"
+    parked_watch_round "$state" "$fakebin" "$out" "$capture" "$window" exit \
+      || fail "the long-cadence explicit pause recheck never arrived"
+    assert_contains "$(cat "$out")" 'awaiting external' "recheck did not name the external wait"
+    assert_not_contains "$(cat "$out")" 'possible wedge' "external pause climbed the wedge ladder"
+  done
+  pass "Main-declared and explicit external pauses absorb stable/churning live panes until the long recheck"
+}
+
 # --- a live worker parked on a declared wait: pane churn must not re-alarm ----
 # The 2026-08/09 alarm loop, in both observed forms - a worker parked on the
 # CAPTAIN (captain-held, five consecutive alarms) and one parked on the PIPELINE
@@ -6193,6 +6229,7 @@ test_nonterminal_stale_paused_absorbed_then_resurfaced
 test_exited_declared_pause_is_bounded_but_live_gate_surfaces
 test_absorbed_replacement_wait_does_not_inherit_the_old_throttle
 test_live_declared_wait_churn_honors_the_resurface_throttle
+test_explicit_external_pause_uses_only_the_long_cadence
 test_live_paused_until_controls_recheck_time
 test_wedge_threshold_defers_to_a_declared_wait_under_a_working_verdict
 test_wedge_threshold_recheck_names_the_captain_for_a_held_lane

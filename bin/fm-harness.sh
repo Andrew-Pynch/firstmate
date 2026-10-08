@@ -145,14 +145,13 @@ harness_marker() {
   return 0
 }
 
-# True when an exact `omp` process sits within eight parents of this one. The
-# same anchored match as the ancestry walk below, kept separate so the marker
+# True when an omp process sits within eight parents of this one, by the same
+# per-process verdict as the ancestry walk below, kept separate so the marker
 # precedence above can demand real process evidence before trusting FM_OMP_HARNESS.
 ancestry_names_omp() {
-  local pid=$$ comm
+  local pid=$$
   for _ in 1 2 3 4 5 6 7 8; do
-    comm=$(ps -o comm= -p "$pid" 2>/dev/null) || return 1
-    [ "$(basename -- "$comm")" = omp ] && return 0
+    case "$(harness_process_verdict "$pid")" in *" omp") return 0 ;; esac
     pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
     [ -n "$pid" ] && [ "$pid" -gt 1 ] || return 1
   done
@@ -210,10 +209,10 @@ harness_process_verdict() {  # <pid>
     # is why detect_own keeps a marker that agrees on the family.
     pi-signed) echo "comm pi"; return ;;
     pi) echo "comm pi"; return ;;
-    # omp is a Bun-compiled single binary whose process name is exactly `omp`
-    # (verified, omp 18.1.11: `ps -o comm=` reports omp from both its `!`
-    # bash path and the model's bash tool). Anchored, never *omp*, so ompd,
-    # comp, and similar unrelated commands are not misread as this harness.
+    # omp's process name is exactly `omp` on Linux (verified, omp 18.1.11:
+    # `ps -o comm=` reports omp from both its `!` bash path and the model's
+    # bash tool); the bun arm below covers macOS. Anchored, never *omp*, so
+    # ompd, comp, and similar unrelated commands are not misread as this harness.
     # It sits above the node*|python* interpreter fallback deliberately: the
     # optional claude-bridge extension runs a nested executable literally
     # named `claude` with its own node child, and that fallback's *claude*
@@ -229,6 +228,20 @@ harness_process_verdict() {  # <pid>
     # detected by ancestry alone.
     agy) echo "comm agy"; return ;;
     devin) echo "comm devin"; return ;;
+    # The installed omp is the `#!/usr/bin/env bun` script ~/.bun/bin/omp, and
+    # it renames its process to `omp` only through Linux prctl, so on macOS the
+    # whole session reports comm `bun` with args `bun /Users/<u>/.bun/bin/omp ...`
+    # (verified on lil-timmy, 2026-09-30). Only argv[1], the script bun was
+    # handed, is evidence, and only an exact `omp` path component; it is an
+    # interpreter-args inference, so it carries args strength.
+    bun)
+      args=$(ps -o args= -p "$pid" 2>/dev/null)
+      case "$args" in
+        *" "*)
+          args=${args#* }
+          case "/${args%% *}/" in */omp/*) echo "args omp"; return ;; esac
+          ;;
+      esac ;;
     node*|python*)
       # Bare interpreter: match the harness name in its script path.
       args=$(ps -o args= -p "$pid" 2>/dev/null)

@@ -22,8 +22,9 @@
 . "$(dirname -- "${BASH_SOURCE[0]}")/fm-cursor-lib.sh"
 
 # Known harness command names; extend when a new adapter is verified. omp is
-# anchored exactly like pi: its process name is the bare word `omp` (verified,
-# omp 18.1.11), and a substring match would claim ompd or comp.
+# anchored exactly like pi: its process name is the bare word `omp` on Linux
+# (verified, omp 18.1.11), and a substring match would claim ompd or comp. On
+# macOS the same omp reports as `bun` instead; see fm_harness_process_matches.
 FM_HARNESS_RE='claude|codex|opencode|grok|kimi|^pi$|^pi-signed$|^omp$'
 
 # The same harnesses as exact executable names. Keep in sync with
@@ -62,11 +63,12 @@ fm_harness_path_name() {  # <path>
 #      argv[0] in `ps -o comm=`, while procps on Linux reports the kernel exec
 #      name and ignores argv[0] entirely, so a version-named Claude Code binary
 #      is identified by its install path on macOS and by argv[0] on Linux.
-#   3. a bare interpreter (node, python) running a harness script path.
+#   3. a bare interpreter (node, python) running a harness script path, or bun
+#      running a script whose own path carries an exact harness component.
 #   4. Cursor's own structural identity, owned by bin/fm-cursor-lib.sh.
 FM_HARNESS_IS_CLAUDE=0
 fm_harness_process_matches() {  # <comm> <args>
-  local comm=$1 args=$2 base argv0 name
+  local comm=$1 args=$2 base argv0 name script
   FM_HARNESS_IS_CLAUDE=0
   base=$(basename -- "$comm")
   if printf '%s' "$base" | grep -qE "$FM_HARNESS_RE"; then
@@ -85,6 +87,27 @@ fm_harness_process_matches() {  # <comm> <args>
         case "$args" in *claude*) FM_HARNESS_IS_CLAUDE=1 ;; esac
         return 0
       fi
+      ;;
+  esac
+  # Bun running a harness script: the installed omp is the `#!/usr/bin/env bun`
+  # script ~/.bun/bin/omp, and omp renames its process to `omp` only through
+  # Linux prctl. On macOS `ps` keeps reporting comm `bun` and args
+  # `bun /Users/<u>/.bun/bin/omp ...` for the whole session (verified on
+  # lil-timmy, 2026-09-30), so without this arm an omp session there can never
+  # find itself and refuses the session lock. Only argv[1], the script bun
+  # was handed, is evidence, and only an exact harness path component, so a
+  # harness name elsewhere in the arguments claims nothing.
+  case "$base:${argv0##*/}" in
+    bun:*|*:bun)
+      case "$args" in
+        *" "*)
+          script=${args#* }
+          if name=$(fm_harness_path_name "${script%% *}"); then
+            case "$name" in claude) FM_HARNESS_IS_CLAUDE=1 ;; esac
+            return 0
+          fi
+          ;;
+      esac
       ;;
   esac
   # Cursor: its own owner decides, from Cursor's name or versioned install tree

@@ -111,6 +111,41 @@ test_lock_identity_and_liveness_classification() {
   pass "session lock and tmux liveness: omp is anchored, decoys stay out"
 }
 
+# On macOS the installed omp (the `#!/usr/bin/env bun` script ~/.bun/bin/omp)
+# reports comm `bun` and args `bun <path>/omp ...` for its whole session, so a
+# session there has only argv[1] to identify it. A real process of that shape:
+# a `bun` symlink to the system shell running a script file named omp.
+test_bun_run_omp_session_owns_its_lock() {
+  local dir out rc lockpid
+  dir="$TMP_ROOT/bun-run"
+  mkdir -p "$dir/runtime" "$dir/.bun/bin" "$dir/home/state"
+  ln -sf /bin/bash "$dir/runtime/bun"
+  # shellcheck disable=SC2016 # the body expands inside the bun-run session
+  printf '%s\n' 'printf "%s\n" "$$"' '"$@"; rc=$?' 'exit "$rc"' > "$dir/.bun/bin/omp"
+  # The exact macOS shape, and decoys that only mention omp outside argv[1].
+  fm_harness_process_matches bun 'bun /Users/u/.bun/bin/omp --config /x/fm-worker-overlay.yml' \
+    || fail "session-lock identity must accept bun running the omp script"
+  ! fm_harness_process_matches bun 'bun /x/tool.js --cwd /x/omp' \
+    || fail "session-lock identity must not accept bun when omp is only a later argument"
+  ! fm_harness_process_matches bun 'bun /x/.bun/bin/ompd' \
+    || fail "session-lock identity must not accept bun running ompd"
+  ! fm_harness_process_matches bun 'bun' || fail "session-lock identity must not accept a bare bun"
+
+  # shellcheck disable=SC2016 # the body expands inside the bun-run session
+  out=$(env -u CLAUDECODE -u FM_OMP_HARNESS -u PI_CODING_AGENT -u CURSOR_AGENT -u CURSOR_INVOKED_AS \
+    "$dir/runtime/bun" "$dir/.bun/bin/omp" bash -c '"$1" ancestry "$PPID"; :' _ "$HARNESS")
+  [ "$(printf '%s\n' "$out" | sed -n 2p)" = "args omp" ] \
+    || fail "fm-harness must identify the bun-run omp session itself, got '$out'"
+  out=$(env -u CLAUDECODE -u FM_OMP_HARNESS -u PI_CODING_AGENT -u CURSOR_AGENT -u CURSOR_INVOKED_AS \
+    FM_HOME="$dir/home" "$dir/runtime/bun" "$dir/.bun/bin/omp" "$ROOT/bin/fm-lock.sh" 2>&1)
+  rc=$?
+  expect_code 0 "$rc" "fm-lock must accept a bun-run omp session: $out"
+  lockpid=$(head -n 1 "$dir/home/state/.lock" 2>/dev/null)
+  [ "$lockpid" = "$(printf '%s\n' "$out" | head -n 1)" ] \
+    || fail "the session lock must name the bun-run omp pid, got '$lockpid' from: $out"
+  pass "session lock and fm-harness: a bun-run omp session (the macOS shape) identifies itself"
+}
+
 # --- 2. Launch ---------------------------------------------------------------
 
 # A fake omp that answers `models --json` with a two-provider catalog, prints
@@ -1197,6 +1232,7 @@ EOF
 
 test_detection_anchored_name_and_marker_precedence
 test_lock_identity_and_liveness_classification
+test_bun_run_omp_session_owns_its_lock
 test_spawn_launch_line_and_worker_wiring
 test_spawn_model_validation_scoped_to_listed_providers
 test_secondmate_launch_relies_on_discovery

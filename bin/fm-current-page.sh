@@ -90,11 +90,12 @@
 #
 # Curated file (keeper-maintained JSON object):
 #   checked "<ISO time>" or epoch               the keeper's last full re-check
-#   needs  [{"t", "why", "task", "link", "link_label", "do", "message", "to",
+#   needs  [{"t", "why", "task", "key", "link", "link_label", "do", "message", "to",
 #            "options", "rec", "asked", "checked", "who", "machine"}]
 #          "t": one-line title; "why": one line on why it matters.
 #          "task": the backlog id this need answers; omit only for asks that
-#                have no backlog row.
+#                have no backlog row. "key": the row's stable id, shown in its
+#                detail (default: "task"), so a resolver can name the row.
 #          "link": the direct URL to act on; "link_label" overrides its short
 #                label. "do": optional exact action; wrap each command in single
 #                backticks for monospace text and its Copy button.
@@ -111,7 +112,7 @@
 #   links  [{"label", "url"}]                   link-outs in the top bar (O opens the first)
 #   wins   [{"t", "url", "why", "kind"}]        up to 10 Wins cards: title, the link that
 #          shows the success, one line on why it matters, optional short link label
-#   factory [{"t", "unblocks", "task", "options", "rec", "why", "links"}]
+#   factory [{"t", "unblocks", "task", "key", "options", "rec", "why", "links"}]
 #          up to 8 rows in the FACTORY BLOCKED ON YOU band at the very top, above
 #          Wins: only calls whose answer releases running work. "t": the one-line
 #          question; "unblocks": what the answer releases (about 6 words);
@@ -120,7 +121,7 @@
 #          detail a click on the question opens (with that typed answer);
 #          "links": [{"label", "url"}] when the answer happens elsewhere. A row
 #          tied to a "task" leaves the band when that row stops being an open
-#          captain hold.
+#          captain hold. Each row prints its "key" (default: "task").
 #   initiatives [{"id", "title", "match"}]
 #          "match": {"project_tokens": [...], "linear_projects": [...],
 #                    "title_keywords": [...]} uses OR within and across lists.

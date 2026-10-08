@@ -954,6 +954,7 @@ background:linear-gradient(90deg,var(--alert-dim),rgba(255,51,102,.04));border-r
 .fx-w .answer{margin-top:5px;max-width:560px}
 .fx-u{flex:none;font:11.5px var(--mono);color:var(--data);white-space:nowrap}
 .fx-a{flex:none;display:flex;gap:10px;align-items:center}.fx-a>a{font:12px var(--mono)}
+.fx-k{flex:none;font:11px var(--mono);color:var(--dim);user-select:all}
 .answer.compact{margin:0;padding:0;border:0;background:none;display:flex;align-items:center;gap:8px}
 .answer.compact .ans-opts{margin:0;gap:6px;flex-wrap:nowrap}.answer.compact .ans-btn{padding:2px 10px;font-size:12px}
 .answer.compact .ans-btn.armed::after{display:inline;content:" · tap again"}.answer.compact .receipt{margin:0;max-width:300px}
@@ -1211,6 +1212,7 @@ def render(paths, reason):
 
     def need_div(n, stale, asked, checked):
         who, task = str(n.get("who") or ""), str(n.get("task") or "")
+        key = str(n.get("key") or task)
         host = n.get("machine") or (by_task[who]["host"] if who in by_task else mates.get(who, {}).get("host") or here)
         link = str(n.get("link") or "").strip()
         opts = [o for o in n.get("options") or [] if isinstance(o, str) and o.strip()] if isinstance(n.get("options"), list) else []
@@ -1218,7 +1220,7 @@ def render(paths, reason):
         ans = answer_for(task, str(n["t"]), f'{n.get("why", "")} {reason}'.strip(), opts, n.get("rec") if opts else None)
         row = f'<span class="mk"></span><span class="t">{e(str(n["t"]))}</span><span class="m">{age(asked, now)}</span>'
         det = (f'<h2>{e(str(n["t"]))}</h2>'
-               + chips(age(asked, now, "asked "), e(str(host)), e(who) if who != task else "", f"<code>{e(task)}</code>" if task else "",
+               + chips(age(asked, now, "asked "), e(str(host)), e(who) if who != task else "", f"<code>{e(key)}</code>" if key else "",
                        f'not re-checked · {age(checked, now, "checked ")}' if stale else "")
                + f'<div class="why">{fm_md.inline(str(n.get("why", "")))}</div>{need_actions(n, bool(ans))}{ans}'
                + docs(task, who))
@@ -1345,9 +1347,11 @@ def render(paths, reason):
                         for lk in f.get("links") or [] if isinstance(lk, dict) and re.match(r"https://", str(lk.get("url", ""))))
         inline, below = (ans, "") if opts else ("", ans)
         detail = f'<div class="fx-w">{fm_md.inline(why)}{below}</div>' if why or below else ""
+        key = str(f.get("key") or task or answers.answer_key(task, title))
         return (f'<div class="fx" data-task="{e(task)}" data-k="{e(answers.answer_key(task, title))}">'
                 f'<span class="fx-q{" has-w" if detail else ""}" title="{e(why or title)}">{e(title)}</span>'
-                f'<span class="fx-u">&#8594; {e(str(f.get("unblocks", "")))}</span><span class="fx-a">{inline}{links}</span>{detail}</div>')
+                f'<span class="fx-u">&#8594; {e(str(f.get("unblocks", "")))}</span><span class="fx-a">{inline}{links}</span>'
+                f'<code class="fx-k" title="key">{e(key)}</code>{detail}</div>')
     factory = [d for d in (factory_div(f) for f in cur["factory"]) if d]
     wins = "".join(
         f'<a class="win" href="{e(str(w["url"]))}" target="_blank" rel="noopener"><b>{e(str(w["t"]))}</b>'

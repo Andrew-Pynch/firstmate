@@ -234,6 +234,20 @@ fm_control_exit_command() {  # <harness>
   esac
 }
 
+# The transport shape for one harness/backend exit command. Most adapters use
+# the shared literal-then-Enter submit loop, whose retries handle slash-command
+# completion popups. omp on Herdr is the measured exception (omp 18.1.18,
+# Linux): after a relaunch the shared path leaves the same actual omp process
+# alive even though delivery is confirmed, while Herdr's atomic `pane run
+# <pane> /quit` stops it. Keep that one observed divergence here with the other
+# per-harness lifecycle mechanics; every other pair retains the shared path.
+fm_control_exit_submission() {  # <harness> <backend>
+  case "${1-}:${2-}" in
+    omp:herdr) printf 'atomic-line' ;;
+    *) printf 'verified-submit' ;;
+  esac
+}
+
 # Which named keys a backend adapter can deliver. Every session provider
 # normalizes Enter, Ctrl+C, and the Ctrl+U composer clear; Orca's terminal API
 # exposes only an interrupt and an Enter, so it can deliver neither Escape nor

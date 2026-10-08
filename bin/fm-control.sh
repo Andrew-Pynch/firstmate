@@ -551,7 +551,7 @@ retire_busy_incarnation() {
 # do_exit: stop the running agent, preserving endpoint and worktree. Prints
 # `already-stopped`, `endpoint-gone`, or `stopped`.
 do_exit() {
-  local state cmd hazard verdict composer_state cancel absence interrupt_result=not-needed
+  local state cmd hazard verdict composer_state submission cancel absence interrupt_result=not-needed
   require_state_verified_backend exit
   state=$(agent_state)
   case "$state" in
@@ -618,6 +618,15 @@ do_exit() {
   if [ -n "$hazard" ] && rendered_matches "$hazard"; then
     die "task $ID shows the $HARNESS revert picker, where typed text becomes a search and Enter reverts file changes; refusing to type the $cmd exit command. Close it with $(fm_control_interrupt_key "$HARNESS"), never Enter, then retry '$VERB'"
   fi
+  # The composer gate below is upstream's, kept intact wherever the composer can
+  # actually be read. It is relaxed for exactly one measured pair: an idle, empty
+  # omp composer on Herdr reads `unknown` (measured 2026-09-15, omp 18.2.0 on
+  # Herdr 0.9.0, in an isolated lab session), so refusing every composer that is
+  # not proven empty would make omp exit on Herdr impossible rather than unsafe -
+  # the failure the atomic submit below exists to remove. A composer that is
+  # provably PENDING still refuses on every path, because that is real text the
+  # exit command would concatenate onto.
+  submission=$(fm_control_exit_submission "$HARNESS" "$BACKEND")
   composer_state=$(fm_backend_composer_state "$BACKEND" "$T" "$LABEL" 2>/dev/null) \
     || composer_state=unknown
   case "$composer_state" in
@@ -626,19 +635,36 @@ do_exit() {
       die "task $ID's composer visibly holds pending text; refusing to type the $cmd exit command because it would concatenate onto that text. Clear or submit the pending text, then retry '$VERB'"
       ;;
     *)
-      die "task $ID's composer state is '$composer_state', not proven empty; refusing to type the $cmd exit command because it could concatenate onto existing text. Clear the composer, then retry '$VERB'"
+      [ "$submission" = atomic-line ] \
+        || die "task $ID's composer state is '$composer_state', not proven empty; refusing to type the $cmd exit command because it could concatenate onto existing text. Clear the composer, then retry '$VERB'"
       ;;
   esac
-  # The submit verdict is NOT the postcondition here: a successful exit command
-  # destroys the composer the verdict is read from, so a post-exit read can
-  # legitimately report anything. Only a hard transport failure aborts; the
-  # authoritative proof is the agent-state wait below. The retried Enter still
-  # matters, because a slash command opens a completion popup on some TUIs that
-  # swallows the first Enter.
-  verdict=$(fm_backend_send_text_submit "$BACKEND" "$T" "$cmd" "$EXIT_RETRIES" "$POLL" 1.2 "$LABEL") \
-    || die "the exit command could not be sent to task $ID on $BACKEND"
-  [ "$verdict" != send-failed ] \
-    || die "the exit command could not be sent to task $ID on $BACKEND"
+  case "$submission" in
+    atomic-line)
+      # Herdr's atomic pane-run submit is the measured-deterministic exit for
+      # omp on Herdr (patch 0002; re-measured 2026-09-15 on omp 18.2.0, where
+      # the shared literal+Enter loop also stopped omp but reported no verdict,
+      # and where a submit onto a pending draft concatenated). Like every other
+      # path here, it is submitted only with a composer that is empty or
+      # unreadable, and the authoritative proof remains the agent-state wait
+      # below: a concatenated submit leaves the agent running and this verb
+      # reports exit-unconfirmed instead of claiming a stop.
+      fm_backend_send_text_line "$BACKEND" "$T" "$cmd" "$LABEL" \
+        || die "the exit command could not be sent to task $ID on $BACKEND"
+      ;;
+    verified-submit)
+      # The submit verdict is NOT the postcondition here: a successful exit
+      # command destroys the composer the verdict is read from, so a post-exit
+      # read can legitimately report anything. Only a hard transport failure
+      # aborts; the authoritative proof is the agent-state wait below. The
+      # retried Enter still matters, because a slash command opens a completion
+      # popup on some TUIs that swallows the first Enter.
+      verdict=$(fm_backend_send_text_submit "$BACKEND" "$T" "$cmd" "$EXIT_RETRIES" "$POLL" 1.2 "$LABEL") \
+        || die "the exit command could not be sent to task $ID on $BACKEND"
+      [ "$verdict" != send-failed ] \
+        || die "the exit command could not be sent to task $ID on $BACKEND"
+      ;;
+  esac
   state=$(wait_agent_state "$EXIT_WAIT" dead) || {
     die "exit-delivered $ID interrupt=$interrupt_result exit-command=delivered agent-state=$state exit=unconfirmed; the agent did not stop within ${EXIT_WAIT}s"
   }

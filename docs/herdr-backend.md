@@ -227,7 +227,7 @@ An already-running server is reused without restart or environment changes.
 Explicit named-session routing and unrelated launch environment remain intact.
 
 Literal text and Enter are separate operations on `fm-send.sh`'s typed plane; ordinary local text steers instead use the durable steering inbox and send only its best-effort constant doorbell through this adapter.
-Spawn-time fixed commands may use Herdr's atomic run primitive.
+Spawn-time fixed commands use Herdr's atomic run primitive, as does the omp lifecycle control plane's `/quit`: the ordinary literal-then-Enter submit loop was measured leaving the same actual omp 18.1.18 pid alive after relaunch, while the atomic line stopped it.
 Enter, Escape, and Ctrl-C are supported.
 Typed-plane slash input, and dollar-prefixed skill input for Codex, uses the shared harness-aware settle before the first Enter so a completion popup cannot consume it.
 Typed-plane text is typed once; only Enter is retried.

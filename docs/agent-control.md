@@ -50,6 +50,8 @@ muse is the one verified adapter that restores the cancelled prompt back into it
 The clear is refused before anything is sent when the recorded backend cannot deliver it.
 
 `exit` reads the composer's state before typing the exit command and requires the exact `empty` verdict; a `pending` verdict refuses by naming the pending text, and any other verdict (`unknown`, `pending-unproven`, or an unreadable read) refuses as not proven empty, matching the fail-safe contract every other consumer that can overwrite composer input follows.
+The one exception is the single pair noted below whose composer cannot be read at all: omp on Herdr answers `unknown` even for an empty composer, so requiring a proven-empty composer there would make `exit` impossible rather than safe, and such a pair refuses only on a `pending` verdict.
+That relaxation is scoped to the atomic-submission pair and never widens to a backend-wide or harness-wide rule.
 
 **Teardown and discard are not verbs and will not become verbs.**
 `exit` stops an agent and preserves everything else.
@@ -179,6 +181,8 @@ Backend capability comes from each adapter's real surface, not from a policy cho
 
 Per-harness interrupt keys, repeat counts, composer clears, exit commands, and supported task kinds live in `bin/fm-control-lib.sh` and are exercised for every verified harness by `tests/fm-control.test.sh`, with adapters outside its lane pinning their control mechanics in their own harness suites.
 The empirical basis for each adapter's value is the `harness-adapters` skill's verification record for that adapter.
+The one backend-specific exit transport is also in that owner: omp on Herdr uses the backend's atomic line submission for `/quit`, because omp 18.1.18 was measured leaving the same actual pid alive after the shared literal-then-Enter submit loop while the atomic submission stopped it; every other harness/backend pair retains the shared loop.
+Re-measured 2026-09-15 in an isolated Herdr lab (omp 18.2.0, Herdr 0.9.0): the atomic submission stops omp, the shared loop also stops it while reporting no submit verdict, and a submission onto a pending draft concatenates on both paths, which is why a `pending` composer still refuses on every path and the agent-state wait described above stays the only proof of the stop.
 
 ## Verification
 

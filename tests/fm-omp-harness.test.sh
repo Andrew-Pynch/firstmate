@@ -335,8 +335,8 @@ test_secondmate_requires_discoverable_supervision_extensions() {
   pass "fm-spawn: an omp secondmate refuses a home whose supervision extensions cannot be auto-discovered"
 }
 
-test_secondmate_refuses_unverified_omp_and_states_an_unreadable_one() {
-  local out status launch
+test_secondmate_refuses_unverified_or_unreadable_omp() {
+  local out status
   read_secondmate_world "$(make_secondmate_world secondmate-old-omp 17.9.9)"
   out=$(run_secondmate_spawn "$SM_WORLD" "$SM_FAKEBIN" "$SM_LAUNCH_LOG" sm "$SM_HOME" omp)
   status=$?
@@ -351,15 +351,16 @@ test_secondmate_refuses_unverified_omp_and_states_an_unreadable_one() {
   out=$(run_secondmate_spawn "$SM_WORLD" "$SM_FAKEBIN" "$SM_LAUNCH_LOG" sm "$SM_HOME" omp)
   expect_code 0 $? "the verified floor version itself must launch: $out"
 
-  # A build that prints no version proves nothing either way: say so and launch.
+  # An unreadable version cannot prove the load-bearing auto-discovery surface.
   read_secondmate_world "$(make_secondmate_world secondmate-silent-omp '')"
   out=$(run_secondmate_spawn "$SM_WORLD" "$SM_FAKEBIN" "$SM_LAUNCH_LOG" sm "$SM_HOME" omp)
   status=$?
-  expect_code 0 "$status" "an unreadable omp version must not refuse the spawn: $out"
-  assert_contains "$out" "printed no recognizable version" "an unreadable version was not reported: $out"
-  launch=$(cat "$SM_LAUNCH_LOG")
-  assert_contains "$launch" "FM_OMP_HARNESS=omp OMP_SKIP_SETUP=1 '$SM_FAKEBIN/omp'" "the unconfirmed-version launch did not happen: $launch"
-  pass "fm-spawn: an omp secondmate refuses an unverified omp and reports one whose version it cannot read"
+  expect_code 1 "$status" "an unreadable omp version must refuse the spawn: $out"
+  assert_contains "$out" "cannot prove this omp provides the extension auto-discovery" \
+    "the unreadable-version refusal did not name the missing proof: $out"
+  assert_absent "$SM_WORLD/home/state/sm.meta" "an unreadable-version refusal must publish no sm.meta"
+  [ ! -s "$SM_LAUNCH_LOG" ] || fail "an unreadable-version refusal must record no launch: $(cat "$SM_LAUNCH_LOG")"
+  pass "fm-spawn: an omp secondmate refuses an old or unreadable runtime before endpoint creation"
 }
 
 # --- 3. Busy state -------------------------------------------------------------
@@ -756,7 +757,7 @@ test_spawn_model_validation_scoped_to_listed_providers
 test_secondmate_launch_relies_on_discovery
 test_secondmate_config_pinned_model_is_validated
 test_secondmate_requires_discoverable_supervision_extensions
-test_secondmate_refuses_unverified_omp_and_states_an_unreadable_one
+test_secondmate_refuses_unverified_or_unreadable_omp
 test_busy_extension_lifecycle
 test_control_composer_and_model_tables
 test_ownership_proof_is_omp_keyed

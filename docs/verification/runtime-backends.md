@@ -2282,16 +2282,19 @@ Observed output:
 ok - omp omp/18.1.18: a seeded secondmate home loads both tracked supervision extensions by auto-discovery alone
 ok - omp omp/18.1.18: a durable steering instruction reached the live secondmate and its completion landed on the parent channel
 ok - omp omp/18.1.18: the live secondmate stays controllable and its supported relaunch reloads supervision in the same endpoint
-ok - omp omp/18.1.18: live secondmate placement verified end to end in an isolated Herdr lab
+ok - omp omp/18.1.18: standalone exit after relaunch stops the actual agent and reports it dead
 ```
 
 Facts that run established:
 
-- a seeded secondmate home loads `.omp/extensions/fm-primary-omp-watch.ts` and `.omp/extensions/fm-primary-turnend-guard.ts` by auto-discovery alone, with no `-e` on the launch line, which is why `bin/fm-spawn.sh` refuses an omp secondmate whose home lacks those files or whose installed omp predates 18.1.11;
+- a seeded secondmate home loads `.omp/extensions/fm-primary-omp-watch.ts` and `.omp/extensions/fm-primary-turnend-guard.ts` by auto-discovery alone, with no `-e` on the launch line, which is why `bin/fm-spawn.sh` refuses an omp secondmate whose home lacks those files, whose installed omp predates 18.1.11, or whose binary prints no recognizable version;
 - a durable steering record plus its doorbell reached the live mate, it ran the named command, `bin/fm-secondmate-report.sh` published the correlated completion into the parent home's `state/<id>.status`, and the mate moved the record into `handled/`;
-- `bin/fm-control.sh <id> interrupt` cancelled the turn and left the agent alive, and `relaunch` stopped the previous agent, launched the replacement into the same recorded endpoint, and the replacement re-loaded both extensions.
+- `bin/fm-control.sh <id> interrupt` cancelled the turn and left the agent alive, and `relaunch` stopped the previous agent, launched the replacement into the same recorded endpoint, and the replacement re-loaded both extensions;
+- standalone `exit` after that relaunch stopped the actual foreground omp pid and the recovery-grade Herdr classifier reported the agent dead.
 
-One unresolved observation, carried into the real-host smoke test rather than claimed either way: a standalone `bin/fm-control.sh <id> exit` against that settled replacement returned `exit-delivered <id> interrupt=not-needed exit-command=delivered agent-state=alive exit=unconfirmed` after its 30-second wait, twice, including once immediately after refreshing the home's watcher beacon.
-The stop path itself is exercised in the same run, because relaunch stops the previous agent through the same plane before launching its replacement, so this is specific to a standalone exit of a relaunched secondmate and the control plane reported the uncertainty instead of claiming a stop.
+The exit diagnosis separated transport from classification before changing the control path.
+The original shared literal-then-delayed-Enter submission returned `exit=unconfirmed`, and a `pane process-info` sample proved that the same actual omp pid survived, so the symptom was not a stale Herdr registration or classifier error.
+Changing only the delivery primitive to Herdr's atomic line submission stopped that pid.
+`bin/fm-control-lib.sh` now selects the atomic form only for omp on Herdr; every other harness/backend pair retains the shared submit loop.
 
 Remote placement is covered deterministically by `tests/fm-remote-secondmate-lifecycle-e2e.test.sh`, `tests/fm-remote-doctor.test.sh`, and the remote cases in `tests/fm-omp-harness.test.sh`; real-host proof on a second Linux machine and on macOS remains an operator smoke test and is not claimed here.

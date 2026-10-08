@@ -510,6 +510,22 @@ test_backend_key_capability_matrix() {
   pass "fm-control-lib: the backend key matrix matches each adapter's real send-key surface"
 }
 
+test_exit_submission_contract() {
+  local harness backend
+  [ "$(fm_control_exit_submission omp herdr)" = atomic-line ] \
+    || fail "omp on Herdr must use atomic line submission for /quit"
+  [ "$(fm_control_exit_submission omp tmux)" = verified-submit ] \
+    || fail "omp on tmux must retain the shared verified submit path"
+  for harness in $VERIFIED_HARNESSES; do
+    [ "$harness" = omp ] && continue
+    for backend in tmux herdr zellij orca cmux; do
+      [ "$(fm_control_exit_submission "$harness" "$backend")" = verified-submit ] \
+        || fail "$harness on $backend must retain the shared verified submit path"
+    done
+  done
+  pass "fm-control-lib: only omp on Herdr uses atomic exit submission"
+}
+
 # A verified adapter is not automatically verified for every task kind, and the
 # check has to sit on the pre-stop side of a relaunch: muse has no primary
 # supervision protocol, so bin/fm-spawn.sh refuses it for a secondmate, and
@@ -1043,6 +1059,7 @@ test_unverified_harness_is_refused
 test_harness_family_resolution
 test_prefixed_recorded_harness_reaches_each_control_verb
 test_backend_key_capability_matrix
+test_exit_submission_contract
 test_harness_kind_capability
 test_orca_refuses_an_escape_harness_interrupt
 test_unverified_state_backends_refuse_stop_verbs

@@ -15,8 +15,9 @@
 #      reaches the live agent and it executes that instruction;
 #   3. its completion reaches the PARENT through the real parent channel
 #      (bin/fm-parent-channel-lib.sh), not just its own pane;
-#   4. it stays controllable (bin/fm-control.sh interrupt) and survives the
-#      supported relaunch path, whose replacement loads supervision again.
+#   4. it stays controllable (bin/fm-control.sh interrupt), survives the
+#      supported relaunch path with supervision reloaded, then standalone exit
+#      stops the actual relaunched omp process and reports the agent dead.
 #
 # The transport half of a remote route (SSH, readiness, the host-local control
 # verbs) is covered deterministically by tests/fm-remote-secondmate-lifecycle-e2e.sh
@@ -231,14 +232,33 @@ wait_for_file "$SM_HOME/state/.omp-turnend-extension-loaded" 120 \
 [ "$(agent_state)" = alive ] || fail "the relaunched omp secondmate is not alive"
 pass "omp $OMP_VERSION: the live secondmate stays controllable and its supported relaunch reloads supervision in the same endpoint"
 
-# Standalone `exit` is deliberately NOT asserted here. The stop half of the
-# control plane is already exercised above, because relaunch stopped the
-# previous agent before launching its replacement. A separate
-# `bin/fm-control.sh <id> exit` against the settled replacement was observed
-# twice (omp 18.1.18, Linux, idle per `herdr agent get`, once with a freshly
-# refreshed watcher beacon) to return `exit-command=delivered agent-state=alive
-# exit=unconfirmed` after its 30s wait: the control plane reported the
-# uncertainty rather than claiming a stop it could not see. That observation is
-# recorded in docs/verification/runtime-backends.md and belongs to the
-# real-host omp smoke test, not to this guard's contract.
-pass "omp $OMP_VERSION: live secondmate placement verified end to end in an isolated Herdr lab"
+# Standalone exit after relaunch is part of the remote lifecycle contract, not
+# implied by relaunch. Drive the supported control verb, then prove both
+# surfaces: Herdr no longer attributes a live agent and the actual foreground
+# omp pid disappears.
+PANE=$(meta_field herdr_pane_id)
+omp_pid() {
+  lab pane process-info --pane "$PANE" 2>/dev/null | jq -r '
+    .result.process_info.foreground_processes[]?
+    | select((.name // "") == "omp" or ((.argv0 // "") | endswith("/omp")))
+    | .pid
+  ' | head -1
+}
+BEFORE_PID=$(omp_pid)
+[ -n "$BEFORE_PID" ] && [ "$BEFORE_PID" != null ] \
+  || fail "the relaunched endpoint had no actual omp foreground process before standalone exit"
+EXIT_OUT=$(PATH="$FAKEBIN:$HERDR_ORIGINAL_PATH" \
+  FM_HOME="$PARENT" FM_ROOT_OVERRIDE="$ROOT" HERDR_SESSION="$HERDR_LAB_SESSION" \
+  "$ROOT/bin/fm-control.sh" "$ID" exit 2>&1) \
+  || fail "standalone exit failed after omp relaunch: $EXIT_OUT"
+assert_contains "$EXIT_OUT" "stopped $ID harness=omp backend=herdr" \
+  "standalone exit did not report the stopped omp agent: $EXIT_OUT"
+i=0
+while [ "$i" -lt 120 ]; do
+  [ -z "$(omp_pid)" ] && break
+  sleep 0.5
+  i=$((i + 1))
+done
+[ -z "$(omp_pid)" ] || fail "standalone control exit reported success while the actual omp process survived"
+[ "$(agent_state)" != alive ] || fail "standalone control exit reported success while Herdr still attributed a live omp agent"
+pass "omp $OMP_VERSION: standalone exit after relaunch stops the actual agent and reports it dead"

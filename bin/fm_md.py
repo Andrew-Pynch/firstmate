@@ -446,7 +446,7 @@ def sectioned(body_html):
     return parts[0] + "".join(f"<section>{p}</section>" for p in parts[1:])
 
 
-BACK = "/current.html"  # the captain page every report links back to; same server root
+BACK = "/deck/"  # the captain page (Deck) every report links back to; same server root
 
 
 def page(md_text, title=None):
@@ -460,19 +460,19 @@ def page(md_text, title=None):
     source = md_text.replace("</", "<\\/")
     help_rows = [("j / k", "scroll"), ("d / u, ^d / ^u, space", "half page / page"), ("n / p, J / K, ] / [", "next / previous heading"),
                  ("gg / G", "top / bottom"), ("t", "toggle the outline"), ("za / zM / zR", "fold this section / fold all / open all"),
-                 ("gb", "back to current"), ("?", "this help"), ("Esc", "close")]
+                 ("gb", "back to Deck"), ("?", "this help"), ("Esc", "close")]
     keys = "".join(f"<kbd>{e(k)}</kbd><span>{e(v)}</span>" for k, v in help_rows)
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8">'
             '<meta name="viewport" content="width=device-width,initial-scale=1">'
             f"<title>{e(title)}</title><style>{THEME_CSS}{MD_CSS}{PAGE_CSS}</style></head><body>"
-            f'<header><span class="brand">FM//REPORT</span><a class="back" href="{BACK}">&#8592; back to current</a>'
+            f'<header><span class="brand">FM//REPORT</span><a class="back" href="{BACK}">&#8592; back to Deck</a>'
             f'<span class="title">{e(title)}</span>'
             f'<span class="lbl">{max(1, round(words / 230))} min · <span id="cnt"></span></span>'
             '<span class="lbl"><kbd>?</kbd> keys</span></header><div id="xp"></div>'
             f'<nav aria-label="Outline">{nav}</nav><main><article class="md">{body}</article></main>'
             f'<div class="overlay" id="help" hidden><div class="box"><h2>Keys</h2><div class="keys">{keys}</div></div></div>'
             f'<script type="text/markdown" id="md-src">{source}</script>'
-            f'<a class="back bottom" href="{BACK}">&#8592; back to current</a>'
+            f'<a class="back bottom" href="{BACK}">&#8592; back to Deck</a>'
             f'<script>const BACK={json.dumps(BACK)};{PAGE_JS}</script>{LINEAR_CARD}</body></html>')
 
 

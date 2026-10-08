@@ -14,9 +14,9 @@
 # Any other HTML page is left untouched and named on stderr; the exit code is 1
 # when any source was refused, 2 on a usage error. Writes are atomic.
 #
-# The page: a "back to current" link fixed at the top and bottom (/current.html),
+# The page: a "back to Deck" link fixed at the top and bottom (/deck/),
 # an outline pane with the current section lit, a reading-progress bar, and vim
-# keys (j/k scroll, n/p next/previous heading, gg/G, d/u, gb back to current, t
+# keys (j/k scroll, n/p next/previous heading, gg/G, d/u, gb back to Deck, t
 # toggles the outline, za/zM/zR fold one/all/none, ? help).
 # bin/fm_md.py's header owns the supported Markdown subset and the theme.
 set -euo pipefail

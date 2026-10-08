@@ -12,7 +12,16 @@
 # against the home). With no page path it renders nothing and exits 2. Notes
 # default to current-notes.md and the curated file to current-curated.json, both
 # beside the page. Every write is atomic (temp file plus rename), so a server
-# reading the page never sees a partial file.
+# reading the page never sees a partial file. An optional `page_url=<path>` line
+# (for example `/deck/`) names the URL path the page is served at on a server
+# whose root is the page's folder: the page then resolves its relative links
+# against that root, redirects any other path it is opened at to page_url, and
+# uses it as the home-screen start URL.
+#
+# Inbox (with answers on): the INBOX button in the top bar opens a thread to
+# Main, full screen on a phone. It shows the captain's notes and his answers from
+# the page, each with Main's reply, and sends new notes through
+# bin/fm-current-answers.sh's POST /note (one bin/fm-inbox.sh note each).
 #
 # Sources, read only: every state/*.meta (task, kind, project and token, host,
 # backend endpoint, recorded PR) with the last line of its state/*.status;

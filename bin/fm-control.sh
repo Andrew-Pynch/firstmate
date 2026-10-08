@@ -5,7 +5,7 @@
 # Usage: fm-control.sh <task-id> interrupt
 #        fm-control.sh <task-id> exit
 #        fm-control.sh <task-id> relaunch [--harness <name>] [--model <name>]
-#                                         [--effort <level>]
+#                                         [--effort <level>] [--code-root <dir>]
 #                                         (--note <text> | --note-file <path>)
 #
 # Why this exists, and how it differs from fm-send.sh. bin/fm-send.sh is the
@@ -72,6 +72,12 @@
 #              already recorded for it.
 #              A prefixed raw-command basename cannot reconstruct its launch
 #              command, so relaunch requires an explicit --harness for it.
+#              A secondmate may also be relaunched with --code-root <dir>, the
+#              checkout its own code and supervision extensions should run from
+#              (bin/fm-spawn.sh owns the path validation and records it as
+#              code_root= so later relaunches keep it). Without the flag a
+#              secondmate stays on the code root its record already names, or on
+#              its home when it names none.
 #              --note is required for a ship or scout, whose replacement
 #              inherits the local copy but none of the conversation; a
 #              secondmate reconciles its own home's records at startup, so its
@@ -227,11 +233,13 @@ fi
 NEW_HARNESS=
 NEW_MODEL=
 NEW_EFFORT=
+NEW_CODE_ROOT=
 HARNESS_SET=0
 MODEL_SET=0
 EFFORT_SET=0
 NOTE=
 NOTE_SET=0
+CODE_ROOT_SET=0
 control_want_value=
 for control_arg in "$@"; do
   if [ -n "$control_want_value" ]; then
@@ -242,6 +250,7 @@ for control_arg in "$@"; do
       harness) NEW_HARNESS=$control_arg; HARNESS_SET=1 ;;
       model) NEW_MODEL=$control_arg; MODEL_SET=1 ;;
       effort) NEW_EFFORT=$control_arg; EFFORT_SET=1 ;;
+      code_root) NEW_CODE_ROOT=$control_arg; CODE_ROOT_SET=1 ;;
       note) NOTE=$control_arg; NOTE_SET=1 ;;
       note_file)
         [ -f "$control_arg" ] || die "--note-file '$control_arg' is not a readable file"
@@ -259,6 +268,8 @@ for control_arg in "$@"; do
     --model=*) NEW_MODEL=${control_arg#--model=}; MODEL_SET=1 ;;
     --effort) control_want_value=effort ;;
     --effort=*) NEW_EFFORT=${control_arg#--effort=}; EFFORT_SET=1 ;;
+    --code-root) control_want_value=code_root ;;
+    --code-root=*) NEW_CODE_ROOT=${control_arg#--code-root=}; CODE_ROOT_SET=1 ;;
     --note) control_want_value=note ;;
     --note=*) NOTE=${control_arg#--note=}; NOTE_SET=1 ;;
     --note-file) control_want_value=note_file ;;
@@ -277,11 +288,13 @@ fi
 
 if [ "$VERB" != relaunch ]; then
   [ "$HARNESS_SET" = 0 ] && [ "$MODEL_SET" = 0 ] && [ "$EFFORT_SET" = 0 ] && [ "$NOTE_SET" = 0 ] \
-    || die "--harness, --model, --effort, and --note apply to 'relaunch' only"
+    && [ "$CODE_ROOT_SET" = 0 ] \
+    || die "--harness, --model, --effort, --code-root, and --note apply to 'relaunch' only"
 fi
 [ "$HARNESS_SET" = 0 ] || [ -n "$NEW_HARNESS" ] || die "--harness requires a non-empty value"
 [ "$MODEL_SET" = 0 ] || [ -n "$NEW_MODEL" ] || die "--model requires a non-empty value"
 [ "$EFFORT_SET" = 0 ] || [ -n "$NEW_EFFORT" ] || die "--effort requires a non-empty value"
+[ "$CODE_ROOT_SET" = 0 ] || [ -n "$NEW_CODE_ROOT" ] || die "--code-root requires a non-empty value"
 case "$NEW_EFFORT" in
   ''|default|low|medium|high|xhigh|max|ultra) ;;
   *) die "--effort must be one of default, low, medium, high, xhigh, max, ultra" ;;
@@ -1021,6 +1034,9 @@ do_relaunch() {
   spawn_args=("$ID" --relaunch --harness "$TARGET_HARNESS")
   [ "$TARGET_MODEL" = default ] || spawn_args+=(--model "$TARGET_MODEL")
   [ "$TARGET_EFFORT" = default ] || spawn_args+=(--effort "$TARGET_EFFORT")
+  # A secondmate's launch root, so a mate already moved onto a patched checkout
+  # stays there across this relaunch (bin/fm-spawn.sh owns the validation).
+  [ "$CODE_ROOT_SET" = 0 ] || spawn_args+=(--code-root "$NEW_CODE_ROOT")
   if FM_CONTROL_RELAUNCH_TX="$RELAUNCH_TX" \
       "$SCRIPT_DIR/fm-spawn.sh" "${spawn_args[@]}" >/dev/null; then
     RELAUNCH_META_PUBLISHED=1

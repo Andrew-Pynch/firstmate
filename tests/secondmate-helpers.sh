@@ -73,6 +73,10 @@ EOF
   display-message)
     case "$*" in
       *'#{cursor_y}'*) printf '0\n' ;;
+      # Two knobs so a suite can describe the pane's foreground process and cwd;
+      # the defaults are what this fake has always answered.
+      *'#{pane_current_command}'*) printf '%s\n' "${FM_FAKE_TMUX_PANE_COMMAND:-firstmate}" ;;
+      *'#{pane_current_path}'*) printf '%s\n' "${FM_FAKE_TMUX_PANE_PATH:-firstmate}" ;;
       *) printf 'firstmate\n' ;;
     esac
     exit 0

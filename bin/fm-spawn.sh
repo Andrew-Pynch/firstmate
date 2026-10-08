@@ -3,7 +3,7 @@
 # secondmate in its isolated firstmate home.
 # Usage: fm-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>]
 #        fm-spawn.sh <task-id> <project-dir> --scout [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>]
-#        fm-spawn.sh <task-id> [<firstmate-home>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] --secondmate
+#        fm-spawn.sh <task-id> [<firstmate-home>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] --secondmate [--code-root <dir>]
 #   --mode and --yolo are this task's delivery contract, REQUIRED for every ship
 #   spawn and refused on --scout and --secondmate spawns. Firstmate resolves both
 #   per task at intake (AGENTS.md section 7); data/projects.md holds the captain's
@@ -211,6 +211,24 @@
 #   --scout records kind=scout in the task's meta (report deliverable, scratch worktree;
 #   see AGENTS.md task lifecycle); --secondmate records kind=secondmate and launches in a
 #   provisioned firstmate home; the default is kind=ship.
+#   --code-root <dir> is a secondmate-only override of the CHECKOUT a mate's own code
+#   and supervision extensions come from. A mate's home keeps its own job either way:
+#   state, data, projects, and the charter all still resolve through it, and it stays
+#   what FM_HOME points at. The flag moves only the launch root - the directory the
+#   pane and the agent start in, which is also the directory a harness that discovers
+#   its extensions from the working directory (omp) reads them from - so a patched
+#   checkout can run a persistent mate without writing into the home
+#   (bin/fm-farm-patch.sh owns the fleet's patched content and its replay). The
+#   override is refused unless the path is a git worktree root carrying
+#   bin/fm-session-start.sh, and it is recorded as code_root= in state/<id>.meta, so a
+#   relaunch keeps the mate where it was moved instead of silently returning it to its
+#   home. FM_SECONDMATE_CODE_ROOT carries the same value for a launcher that cannot add
+#   a flag (the remote secondmate leg); an explicit --code-root wins over it. The one
+#   refused pairing is a harness whose launch pre-registers workspace trust for the
+#   mate home (claude): that registration does not cover a code root, so a claude mate
+#   still launches from its home. Moving an ALREADY-RUNNING mate onto a code root is a
+#   herdr operation, because only there is a pane told once to move and then re-read;
+#   tmux refuses a pane sitting outside the recorded launch root rather than relocating it.
 #   Before a secondmate launch, the home is fast-forwarded to the primary's
 #   default-branch commit when safe: directly for a local home, or through the
 #   configured host for a remote home. Skipped syncs warn and launch unchanged.
@@ -588,6 +606,9 @@ BACKEND_ARG=
 MODE=
 YOLO=
 TRACEPARENT_ARG=
+SECONDMATE_CODE_ROOT=${FM_SECONDMATE_CODE_ROOT:-}
+CODE_ROOT_SET=0
+PANE_CWD=
 HARNESS_SET=0
 MODEL_SET=0
 EFFORT_SET=0
@@ -634,6 +655,10 @@ for a in "$@"; do
     traceparent)
       TRACEPARENT_ARG=$a
       TRACEPARENT_SET=1
+      ;;
+    code_root)
+      SECONDMATE_CODE_ROOT=$a
+      CODE_ROOT_SET=1
       ;;
     *)
       echo "error: internal parser state for --$want_value" >&2
@@ -688,6 +713,11 @@ for a in "$@"; do
     TRACEPARENT_ARG=${a#--traceparent=}
     TRACEPARENT_SET=1
     ;;
+  --code-root) want_value=code_root ;;
+  --code-root=*)
+    SECONDMATE_CODE_ROOT=${a#--code-root=}
+    CODE_ROOT_SET=1
+    ;;
   *) POS+=("$a") ;;
   esac
 done
@@ -723,6 +753,10 @@ done
   echo "error: --traceparent requires a non-empty value" >&2
   exit 1
 }
+[ "$CODE_ROOT_SET" -eq 0 ] || [ -n "$SECONDMATE_CODE_ROOT" ] || {
+  echo "error: --code-root requires a non-empty value" >&2
+  exit 1
+}
 # A parent-delivered carrier replaces this home's own resolution, so it is
 # refused unless it is a secondmate spawn carrying a strictly valid W3C value.
 # Nothing else may reach the pane's TRACEPARENT export.
@@ -733,6 +767,16 @@ if [ "$TRACEPARENT_SET" -eq 1 ]; then
   }
   fm_trace_context_valid "$TRACEPARENT_ARG" || {
     echo "error: --traceparent is not a valid W3C traceparent" >&2
+    exit 1
+  }
+fi
+# Only a secondmate has a home whose state is separable from the checkout its
+# code runs from, so a code root is refused everywhere else rather than ignored.
+# A relaunch resolves its kind from the task's own record further down, so that
+# case is checked there too.
+if [ "$CODE_ROOT_SET" -eq 1 ]; then
+  [ "$KIND" = secondmate ] || [ "$RELAUNCH" -eq 1 ] || {
+    echo "error: --code-root applies only to --secondmate spawns; a ship or scout runs in its own task worktree" >&2
     exit 1
   }
 fi
@@ -1672,6 +1716,12 @@ if [ "$RELAUNCH" -eq 1 ]; then
   if [ "$RELAUNCH_REBIND" -eq 1 ] && [ "$KIND" = secondmate ]; then
     echo "error: secondmate $ID's recorded endpoint is gone; its recovery is owned by the secondmate respawn path, not by relaunch (run bin/fm-spawn.sh $ID --secondmate, or let the session-start liveness sweep do it)" >&2
     exit 1
+  fi
+  if [ "$CODE_ROOT_SET" -eq 1 ]; then
+    [ "$KIND" = secondmate ] || {
+      echo "error: --code-root applies only to a secondmate; task $ID is kind=$KIND" >&2
+      exit 1
+    }
   fi
   MODE=$(fm_meta_get "$RELAUNCH_META" mode)
   YOLO=$(fm_meta_get "$RELAUNCH_META" yolo)
@@ -2741,7 +2791,42 @@ if [ "$KIND" = secondmate ]; then
     fi
     SECONDMATE_PROJECTS=$SECONDMATE_REGISTRY_MATCH_PROJECTS
   fi
+  # The launch root: the directory the pane and the launch command start in, and
+  # the directory a working-directory-scoped extension discovery reads. It is the
+  # home unless a patched code root was named for this mate. The home keeps its
+  # own job either way - state, data, projects, and the charter all still resolve
+  # through PROJ_ABS - so this only moves which CHECKOUT the mate's code runs from.
   WT="$PROJ_ABS"
+  if [ "$RELAUNCH" -eq 1 ] && [ -z "$SECONDMATE_CODE_ROOT" ]; then
+    SECONDMATE_CODE_ROOT=$(fm_meta_get "$RELAUNCH_META" code_root)
+  fi
+  if [ -n "$SECONDMATE_CODE_ROOT" ]; then
+    WT=$(cd "$SECONDMATE_CODE_ROOT" 2>/dev/null && pwd -P) || {
+      echo "error: --code-root is not a readable directory: $SECONDMATE_CODE_ROOT" >&2
+      exit 1
+    }
+    if [ "$WT" = "$PROJ_ABS" ]; then
+      # The home is already the checkout to run from; nothing moves.
+      WT="$PROJ_ABS"
+    else
+      case "$HARNESS" in
+      claude*)
+        echo "error: a claude secondmate cannot launch from a code root: its workspace-trust pre-registration is scoped to the mate home, and Claude Code would wedge on the trust dialog in a directory it has not seen. Launch this mate from its home, or select a harness whose supervision does not need that registration" >&2
+        exit 1
+        ;;
+      esac
+      [ "$(git -C "$WT" rev-parse --show-toplevel 2>/dev/null)" = "$WT" ] || {
+        echo "error: --code-root must be a git worktree root, so the mate's own scripts and extensions resolve predictably: $SECONDMATE_CODE_ROOT" >&2
+        exit 1
+      }
+      [ -f "$WT/bin/fm-session-start.sh" ] || {
+        echo "error: --code-root is not a firstmate checkout (no bin/fm-session-start.sh): $WT" >&2
+        exit 1
+      }
+      echo "notice: secondmate $ID runs its code from $WT with its home at $PROJ_ABS; state, data, and projects stay in the home" >&2
+    fi
+  fi
+  PANE_CWD=$WT
   # Local-HEAD sync: before launch, fast-forward this secondmate's worktree to the
   # PRIMARY checkout's current default-branch commit, so a freshly spawned or
   # recovery-respawned secondmate always runs the primary's version (AGENTS.md
@@ -2802,6 +2887,7 @@ if [ "$KIND" = secondmate ]; then
 else
   PROJ_ABS="$(cd "$(resolve_project_dir_arg "$PROJ")" && pwd)"
   WT=""
+  PANE_CWD=$PROJ_ABS
   BRIEF="$DATA/$ID/brief.md"
 fi
 if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
@@ -3340,7 +3426,7 @@ else
     # treehouse cd's into the worktree. WT_TARGET carries that stable id for the
     # rename-critical worktree-detection steps below; the persisted window= handle
     # stays $T (the name form), which is safe now that rename is disabled.
-    WID=$(fm_backend_tmux_create_task "$SES" "$W" "$PROJ_ABS") || exit 1
+    WID=$(fm_backend_tmux_create_task "$SES" "$W" "$PANE_CWD") || exit 1
     WT_TARGET="$WID"
     ;;
   herdr)
@@ -3502,7 +3588,7 @@ else
       HERDR_SEEDED_DEFAULT_TAB_ID=${HERDR_CONTAINER_RAW#*$'\t'}
       HERDR_SES=${CONTAINER%%:*}
       HERDR_WORKSPACE_ID=${CONTAINER#*:}
-      HERDR_TASK_IDS=$(FM_HOME="$HERDR_LABEL_HOME" fm_backend_herdr_create_task "$CONTAINER" "$W" "$PROJ_ABS" "$HERDR_SEEDED_DEFAULT_TAB_ID") || exit 1
+      HERDR_TASK_IDS=$(FM_HOME="$HERDR_LABEL_HOME" fm_backend_herdr_create_task "$CONTAINER" "$W" "$PANE_CWD" "$HERDR_SEEDED_DEFAULT_TAB_ID") || exit 1
       read -r HERDR_TAB_ID HERDR_PANE_ID <<EOF
 $HERDR_TASK_IDS
 EOF
@@ -3515,7 +3601,7 @@ EOF
     ;;
   zellij)
     ZELLIJ_SES=$(fm_backend_zellij_container_ensure) || exit 1
-    ZELLIJ_TASK_IDS=$(fm_backend_zellij_create_task "$ZELLIJ_SES" "$W" "$PROJ_ABS") || exit 1
+    ZELLIJ_TASK_IDS=$(fm_backend_zellij_create_task "$ZELLIJ_SES" "$W" "$PANE_CWD") || exit 1
     read -r ZELLIJ_TAB_ID ZELLIJ_PANE_ID <<EOF
 $ZELLIJ_TASK_IDS
 EOF
@@ -4556,7 +4642,7 @@ SPAWN_META_PATH=$SPAWN_META_TMP
 preserve_relaunch_meta() {
   awk -F= '
     BEGIN {
-      split("window endpoint_task_id worktree project harness kind mode yolo tasktmp model effort busy_gen spawn_gen traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id home projects control_relaunch_tx", keys, " ")
+      split("window endpoint_task_id worktree project harness kind mode yolo tasktmp model effort busy_gen spawn_gen traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id home code_root projects control_relaunch_tx", keys, " ")
       for (i in keys) owned[keys[i]] = 1
     }
     !($1 in owned)
@@ -4565,7 +4651,14 @@ preserve_relaunch_meta() {
 {
   echo "window=$META_WINDOW"
   echo "endpoint_task_id=$ID"
-  echo "worktree=$WT"
+  # A mate's work lives in its home, which is what worktree= has always meant for
+  # one; code_root= below names the checkout its code runs from when that is a
+  # different directory. For every other kind this is the isolated task worktree.
+  if [ "$KIND" = secondmate ]; then
+    echo "worktree=$PROJ_ABS"
+  else
+    echo "worktree=$WT"
+  fi
   echo "project=$PROJ_ABS"
   echo "harness=$HARNESS"
   echo "kind=$KIND"
@@ -4602,6 +4695,10 @@ preserve_relaunch_meta() {
   fi
   if [ "$KIND" = secondmate ]; then
     echo "home=$PROJ_ABS"
+    # The checkout this mate's own code and extensions run from. Equal to the
+    # home unless a patched code root was named, and persisted so the next
+    # relaunch keeps the mate there instead of silently returning it home.
+    echo "code_root=$WT"
     echo "projects=$SECONDMATE_PROJECTS"
   fi
   if [ "$RELAUNCH" -eq 1 ]; then

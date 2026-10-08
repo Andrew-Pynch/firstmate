@@ -29,6 +29,11 @@
 #      stands down when the payload already carries stop_hook_active.
 #   7. The watch extension arms through fm_watch_arm_omp and delivers an
 #      actionable close as one follow-up.
+#   8. A secondmate launch proves both preconditions of the auto-discovery it
+#      depends on: an installed omp at or past the verified release, and a home
+#      that carries both tracked .omp/extensions files.
+#   9. Both legs of a remote secondmate launch accept omp and keep every other
+#      refusal: the adapter allowlist has one owner across the transport.
 set -u
 
 # shellcheck source=tests/fixtures.sh
@@ -106,19 +111,40 @@ test_lock_identity_and_liveness_classification() {
 
 # --- 2. Launch ---------------------------------------------------------------
 
-# A fake omp that answers `models --json` with a two-provider catalog and exits
-# 0 for everything else (the launch itself is only recorded by the fake tmux).
-make_fake_omp() {  # <fakebin>
-  cat > "$1/omp" <<'SH'
+# A fake omp that answers `models --json` with a two-provider catalog, prints
+# the requested version banner (empty = a build that answers `--version` with
+# nothing), and exits 0 for everything else (the launch itself is only recorded
+# by the fake tmux).
+make_fake_omp() {  # <fakebin> [version]
+  local version=${2-18.1.18}
+  cat > "$1/omp" <<SH
 #!/usr/bin/env bash
-case "$1" in
+case "\$1" in
   models)
     printf '%s\n' '{"models":[{"provider":"openai-codex","id":"gpt-6-astra","selector":"openai-codex/gpt-6-astra"},{"provider":"ollama","id":"qwen3:8b","selector":"ollama/qwen3:8b"}]}'
+    ;;
+  --version)
+    [ -z '$version' ] || printf 'omp v%s\n' '$version'
     ;;
 esac
 exit 0
 SH
   chmod +x "$1/omp"
+}
+
+# A seeded secondmate home, including the two tracked supervision extensions a
+# real Firstmate home carries: omp loads a secondmate's watcher and turn-end
+# guard only by auto-discovering that directory.
+seed_omp_secondmate_home() {  # <home> <id> [--no-extensions]
+  local home=$1 id=$2 mode=${3-}
+  mkdir -p "$home/bin" "$home/data"
+  printf '# Firstmate\n' > "$home/AGENTS.md"
+  printf '%s\n' "$id" > "$home/.fm-secondmate-home"
+  printf 'charter\n' > "$home/data/charter.md"
+  [ "$mode" = --no-extensions ] && return 0
+  mkdir -p "$home/.omp/extensions"
+  printf '// watch\n' > "$home/.omp/extensions/fm-primary-omp-watch.ts"
+  printf '// turnend\n' > "$home/.omp/extensions/fm-primary-turnend-guard.ts"
 }
 
 make_spawn_case() {  # <name> <harness> <id>
@@ -208,41 +234,56 @@ test_spawn_model_validation_scoped_to_listed_providers() {
   pass "fm-spawn: omp model validation is scoped to providers the listing can prove"
 }
 
+# FM_BACKEND=tmux pins the fake tmux even where the developer shell carries a
+# live Herdr environment; without it auto-detection would spawn a real pane.
+run_secondmate_spawn() {  # <world> <fakebin> <launch-log> <spawn-args...>
+  local world=$1 fakebin=$2 launchlog=$3
+  shift 3
+  PATH="$fakebin:$PATH" TMUX='fake,1,0' FM_BACKEND=tmux CLAUDECODE=1 \
+    FM_ROOT_OVERRIDE='' FM_HOME="$world/home" \
+    FM_STATE_OVERRIDE="$world/home/state" FM_DATA_OVERRIDE="$world/home/data" \
+    FM_PROJECTS_OVERRIDE="$world/home/projects" FM_CONFIG_OVERRIDE="$world/home/config" \
+    FM_SPAWN_NO_GUARD=1 FM_FAKE_LAUNCH_LOG="$launchlog" \
+    "$ROOT/bin/fm-spawn.sh" "$@" --secondmate 2>&1
+}
+
+make_secondmate_world() {  # <name> [omp-version] [--no-extensions] -> "<world>|<home>|<fakebin>|<launch-log>"
+  local name=$1 version=${2-18.1.18} mode=${3-} world home fakebin
+  world="$TMP_ROOT/$name"
+  home="$world/sm"
+  mkdir -p "$world/home/state" "$world/home/data" "$world/home/config"
+  seed_omp_secondmate_home "$home" sm "$mode"
+  fakebin=$(make_spawn_fakebin "$world/fake" claude)
+  make_fake_omp "$fakebin" "$version"
+  : > "$world/launch.log"
+  printf '%s|%s|%s|%s\n' "$world" "$home" "$fakebin" "$world/launch.log"
+}
+
+read_secondmate_world() {
+  IFS='|' read -r SM_WORLD SM_HOME SM_FAKEBIN SM_LAUNCH_LOG <<EOF
+$1
+EOF
+}
+
 test_secondmate_launch_relies_on_discovery() {
   # A seeded secondmate home, launched for real through fm-spawn on omp: the
   # launch must carry the posture overlay and pin --cwd to the home, and must
   # name NO -e, because omp auto-discovers the home's tracked .omp/extensions
   # and a file named both ways loads twice.
-  local world home fakebin launchlog out status launch
-  world="$TMP_ROOT/secondmate"
-  home="$world/sm"
-  mkdir -p "$world/home/state" "$world/home/data" "$world/home/config" "$home/bin" "$home/data"
-  printf '# Firstmate\n' > "$home/AGENTS.md"
-  printf 'sm\n' > "$home/.fm-secondmate-home"
-  printf 'charter\n' > "$home/data/charter.md"
-  fakebin=$(make_spawn_fakebin "$world/fake" claude)
-  make_fake_omp "$fakebin"
-  launchlog="$world/launch.log"
-  : > "$launchlog"
-  # FM_BACKEND=tmux pins the fake tmux even where the developer shell carries a
-  # live Herdr environment; without it auto-detection would spawn a real pane.
-  out=$(PATH="$fakebin:$PATH" TMUX='fake,1,0' FM_BACKEND=tmux CLAUDECODE=1 \
-    FM_ROOT_OVERRIDE='' FM_HOME="$world/home" \
-    FM_STATE_OVERRIDE="$world/home/state" FM_DATA_OVERRIDE="$world/home/data" \
-    FM_PROJECTS_OVERRIDE="$world/home/projects" FM_CONFIG_OVERRIDE="$world/home/config" \
-    FM_SPAWN_NO_GUARD=1 FM_FAKE_LAUNCH_LOG="$launchlog" \
-    "$ROOT/bin/fm-spawn.sh" sm "$home" omp --secondmate 2>&1)
+  local out status launch
+  read_secondmate_world "$(make_secondmate_world secondmate)"
+  out=$(run_secondmate_spawn "$SM_WORLD" "$SM_FAKEBIN" "$SM_LAUNCH_LOG" sm "$SM_HOME" omp)
   status=$?
   expect_code 0 "$status" "omp secondmate spawn should succeed: $out"
-  assert_grep "harness=omp" "$world/home/state/sm.meta" "secondmate meta missing harness=omp"
-  launch=$(cat "$launchlog")
+  assert_grep "harness=omp" "$SM_WORLD/home/state/sm.meta" "secondmate meta missing harness=omp"
+  launch=$(cat "$SM_LAUNCH_LOG")
   case "$launch" in
     *" -e "*) fail "an omp secondmate launch must name no -e: omp auto-discovers .omp/extensions and a file named both ways loads twice: $launch" ;;
   esac
-  assert_contains "$launch" "--config '$ROOT/.omp/fm-worker-overlay.yml' --auto-approve --cwd '$home'" "secondmate launch lost the posture overlay or the pinned home directory: $launch"
-  assert_contains "$launch" "FM_OMP_HARNESS=omp OMP_SKIP_SETUP=1 '$fakebin/omp'" "secondmate launch lost the omp marker or executable"
+  assert_contains "$launch" "--config '$ROOT/.omp/fm-worker-overlay.yml' --auto-approve --cwd '$SM_HOME'" "secondmate launch lost the posture overlay or the pinned home directory: $launch"
+  assert_contains "$launch" "FM_OMP_HARNESS=omp OMP_SKIP_SETUP=1 '$SM_FAKEBIN/omp'" "secondmate launch lost the omp marker or executable"
   assert_contains "$launch" "FM_SUPERVISION_MODEL=extension" "an omp secondmate must run the extension supervision model"
-  assert_absent "$world/home/state/sm.omp-ext.ts" "a secondmate must not receive a per-task worker extension"
+  assert_absent "$SM_WORLD/home/state/sm.omp-ext.ts" "a secondmate must not receive a per-task worker extension"
   pass "fm-spawn: a real omp secondmate launch relies on auto-discovery while crewmates load one -e"
 }
 
@@ -251,31 +292,74 @@ test_secondmate_config_pinned_model_is_validated() {
   # primary's config/secondmate-harness rather than the command line: the
   # durable pin lands on MODEL after the harness case arm, so an unlisted id
   # under a listed provider must still be refused before endpoint creation.
-  local world home fakebin launchlog out status
-  world="$TMP_ROOT/secondmate-config-model"
-  home="$world/sm"
-  mkdir -p "$world/home/state" "$world/home/data" "$world/home/config" "$home/bin" "$home/data"
-  printf '# Firstmate\n' > "$home/AGENTS.md"
-  printf 'sm\n' > "$home/.fm-secondmate-home"
-  printf 'charter\n' > "$home/data/charter.md"
-  printf 'omp openai-codex/gpt-nope\n' > "$world/home/config/secondmate-harness"
-  fakebin=$(make_spawn_fakebin "$world/fake" claude)
-  make_fake_omp "$fakebin"
-  launchlog="$world/launch.log"
-  : > "$launchlog"
-  out=$(PATH="$fakebin:$PATH" TMUX='fake,1,0' FM_BACKEND=tmux CLAUDECODE=1 \
-    FM_ROOT_OVERRIDE='' FM_HOME="$world/home" \
-    FM_STATE_OVERRIDE="$world/home/state" FM_DATA_OVERRIDE="$world/home/data" \
-    FM_PROJECTS_OVERRIDE="$world/home/projects" FM_CONFIG_OVERRIDE="$world/home/config" \
-    FM_SPAWN_NO_GUARD=1 FM_FAKE_LAUNCH_LOG="$launchlog" \
-    "$ROOT/bin/fm-spawn.sh" sm "$home" --secondmate 2>&1)
+  local out status
+  read_secondmate_world "$(make_secondmate_world secondmate-config-model)"
+  printf 'omp openai-codex/gpt-nope\n' > "$SM_WORLD/home/config/secondmate-harness"
+  out=$(run_secondmate_spawn "$SM_WORLD" "$SM_FAKEBIN" "$SM_LAUNCH_LOG" sm "$SM_HOME")
   status=$?
   expect_code 1 "$status" "a config-pinned unlisted omp model must refuse the secondmate spawn: $out"
   assert_contains "$out" "omp model 'openai-codex/gpt-nope' is not listed by 'omp models --json' although provider 'openai-codex' is" \
     "the refusal did not name the config-pinned model under its listed provider: $out"
-  assert_absent "$world/home/state/sm.meta" "a refused secondmate spawn must publish no sm.meta"
-  [ ! -s "$launchlog" ] || fail "a refused secondmate spawn must record no launch: $(cat "$launchlog")"
+  assert_absent "$SM_WORLD/home/state/sm.meta" "a refused secondmate spawn must publish no sm.meta"
+  [ ! -s "$SM_LAUNCH_LOG" ] || fail "a refused secondmate spawn must record no launch: $(cat "$SM_LAUNCH_LOG")"
   pass "fm-spawn: the config/secondmate-harness model pin is validated against the omp catalog before launch"
+}
+
+# A secondmate names no -e, so auto-discovery is the ONLY path its watcher and
+# turn-end guard can load by. Both preconditions of that discovery are proven
+# per launch: a home that actually carries the tracked extensions, and an
+# installed omp at or past the release where the discovery itself was verified.
+# Either one missing would otherwise stand up an unsupervised firstmate
+# instance and report success - the exact failure a remote route cannot see.
+test_secondmate_requires_discoverable_supervision_extensions() {
+  local out status
+  read_secondmate_world "$(make_secondmate_world secondmate-no-extensions 18.1.18 --no-extensions)"
+  out=$(run_secondmate_spawn "$SM_WORLD" "$SM_FAKEBIN" "$SM_LAUNCH_LOG" sm "$SM_HOME" omp)
+  status=$?
+  expect_code 1 "$status" "an omp secondmate home without the tracked extensions must refuse: $out"
+  assert_contains "$out" "is missing .omp/extensions/fm-primary-omp-watch.ts, .omp/extensions/fm-primary-turnend-guard.ts" \
+    "the refusal did not name both missing supervision extensions: $out"
+  assert_absent "$SM_WORLD/home/state/sm.meta" "a refused secondmate spawn must publish no sm.meta"
+  [ ! -s "$SM_LAUNCH_LOG" ] || fail "a refused secondmate spawn must record no launch: $(cat "$SM_LAUNCH_LOG")"
+
+  read_secondmate_world "$(make_secondmate_world secondmate-half-extensions)"
+  rm -f "$SM_HOME/.omp/extensions/fm-primary-turnend-guard.ts"
+  out=$(run_secondmate_spawn "$SM_WORLD" "$SM_FAKEBIN" "$SM_LAUNCH_LOG" sm "$SM_HOME" omp)
+  status=$?
+  expect_code 1 "$status" "a home carrying only one supervision extension must refuse: $out"
+  assert_contains "$out" "is missing .omp/extensions/fm-primary-turnend-guard.ts" \
+    "the refusal did not name the one missing extension: $out"
+  case "$out" in
+    *fm-primary-omp-watch.ts*) fail "the refusal named an extension the home actually carries: $out" ;;
+  esac
+  pass "fm-spawn: an omp secondmate refuses a home whose supervision extensions cannot be auto-discovered"
+}
+
+test_secondmate_refuses_unverified_omp_and_states_an_unreadable_one() {
+  local out status launch
+  read_secondmate_world "$(make_secondmate_world secondmate-old-omp 17.9.9)"
+  out=$(run_secondmate_spawn "$SM_WORLD" "$SM_FAKEBIN" "$SM_LAUNCH_LOG" sm "$SM_HOME" omp)
+  status=$?
+  expect_code 1 "$status" "an omp older than the verified auto-discovery release must refuse: $out"
+  assert_contains "$out" "omp 17.9.9 is installed" "the refusal did not name the installed version: $out"
+  assert_contains "$out" "older than omp 18.1.11" "the refusal did not name the verified floor: $out"
+  assert_absent "$SM_WORLD/home/state/sm.meta" "a refused secondmate spawn must publish no sm.meta"
+  [ ! -s "$SM_LAUNCH_LOG" ] || fail "a refused secondmate spawn must record no launch: $(cat "$SM_LAUNCH_LOG")"
+
+  # An equal version is the floor itself, not older than it.
+  read_secondmate_world "$(make_secondmate_world secondmate-floor-omp 18.1.11)"
+  out=$(run_secondmate_spawn "$SM_WORLD" "$SM_FAKEBIN" "$SM_LAUNCH_LOG" sm "$SM_HOME" omp)
+  expect_code 0 $? "the verified floor version itself must launch: $out"
+
+  # A build that prints no version proves nothing either way: say so and launch.
+  read_secondmate_world "$(make_secondmate_world secondmate-silent-omp '')"
+  out=$(run_secondmate_spawn "$SM_WORLD" "$SM_FAKEBIN" "$SM_LAUNCH_LOG" sm "$SM_HOME" omp)
+  status=$?
+  expect_code 0 "$status" "an unreadable omp version must not refuse the spawn: $out"
+  assert_contains "$out" "printed no recognizable version" "an unreadable version was not reported: $out"
+  launch=$(cat "$SM_LAUNCH_LOG")
+  assert_contains "$launch" "FM_OMP_HARNESS=omp OMP_SKIP_SETUP=1 '$SM_FAKEBIN/omp'" "the unconfirmed-version launch did not happen: $launch"
+  pass "fm-spawn: an omp secondmate refuses an unverified omp and reports one whose version it cannot read"
 }
 
 # --- 3. Busy state -------------------------------------------------------------
@@ -574,14 +658,109 @@ EOF
   pass ".omp watch extension: fm_watch_arm_omp arms once, repeats as a no-op, and delivers an actionable close as one follow-up"
 }
 
+# --- 7. Remote secondmate placement -------------------------------------------
+
+# bin/fm-remote-readiness-lib.sh owns the one adapter allowlist both legs of a
+# remote launch read, so these cases drive the parent gate and the host-local
+# gate through their executables and assert they agree on omp. Neither reaches
+# a real host: the parent leg stops at its readiness gate over a fake SSH
+# boundary, and the host leg stops at its endpoint and backend checks.
+
+make_remote_control_home() {  # <dir> <id> -> <home>
+  local home=$1 id=$2
+  seed_omp_secondmate_home "$home" "$id"
+  mkdir -p "$home/state" "$home/config"
+  printf '%s\n' "$home"
+}
+
+remote_control() {  # <home> <args...>
+  local home=$1
+  shift
+  FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" \
+    "$ROOT/bin/fm-remote-secondmate-control.sh" "$@" 2>&1
+}
+
+test_remote_host_leg_accepts_omp() {
+  local home out status
+  home=$(make_remote_control_home "$TMP_ROOT/remote-host-leg/sm" rsm)
+
+  out=$(remote_control "$home" relaunch rsm notaharness default default)
+  status=$?
+  expect_code 1 "$status" "an unverified runtime must still refuse a remote restart: $out"
+  assert_contains "$out" "unverified remote secondmate harness: notaharness" \
+    "the host leg did not refuse an unverified runtime: $out"
+
+  # omp passes the adapter gate and stops at the endpoint requirement instead,
+  # which is the next check a real restart reaches.
+  out=$(remote_control "$home" relaunch rsm omp default default)
+  status=$?
+  expect_code 1 "$status" "a restart with no endpoint must still refuse: $out"
+  case "$out" in
+    *"unverified remote secondmate harness"*) fail "the host leg refused omp as an unverified runtime: $out" ;;
+  esac
+  assert_contains "$out" "endpoint metadata is invalid" \
+    "the omp restart did not reach the endpoint check: $out"
+
+  # The Herdr pin outranks the adapter gate for a launch, so an omp launch on
+  # another backend refuses for the backend rather than the runtime.
+  out=$(remote_control "$home" launch rsm omp - - tmux)
+  status=$?
+  expect_code 1 "$status" "a non-herdr remote launch must refuse: $out"
+  assert_contains "$out" "a remote secondmate runs only on the herdr backend, not 'tmux'" \
+    "the omp launch did not reach the backend pin: $out"
+  pass "fm-remote-secondmate-control: the host-local launch and restart gates accept omp and keep every other refusal"
+}
+
+test_remote_parent_leg_accepts_omp() {
+  local dir parent fakebin out status
+  dir="$TMP_ROOT/remote-parent-leg"
+  parent="$dir/parent"
+  mkdir -p "$parent/data" "$parent/state" "$parent/config" "$parent/projects"
+  touch "$parent/state/.last-watcher-beat"
+  cat > "$parent/data/secondmates.md" <<'EOF'
+- rsm - Remote omp delivery (host: omp-host; root: /remote/root; home: /remote/home; scope: remote omp work; projects: none; added 2026-09-12)
+EOF
+  fakebin=$(fm_fakebin "$dir")
+  cat > "$fakebin/fake-ssh" <<'SH'
+#!/usr/bin/env bash
+printf 'check herdr-server=human: no Aqua login session exists\n'
+printf 'error: this host is not ready for a remote second mate; unresolved: herdr-server\n' >&2
+exit 1
+SH
+  chmod +x "$fakebin/fake-ssh"
+
+  out=$(FM_HOME="$parent" FM_ROOT_OVERRIDE="$ROOT" FM_SSH_BIN="$fakebin/fake-ssh" \
+    FM_SPAWN_NO_GUARD=1 "$ROOT/bin/fm-spawn.sh" rsm --secondmate --harness omp 2>&1)
+  status=$?
+  expect_code 1 "$status" "the remote spawn should stop at its readiness gate: $out"
+  case "$out" in
+    *"requires a verified harness adapter"*) fail "the parent gate refused omp before reaching readiness: $out" ;;
+  esac
+  assert_contains "$out" "host omp-host is not ready for a remote second mate" \
+    "the omp remote spawn did not reach the host readiness gate: $out"
+  assert_absent "$parent/state/rsm.meta" "a refused remote spawn must publish no task record"
+
+  out=$(FM_HOME="$parent" FM_ROOT_OVERRIDE="$ROOT" FM_SSH_BIN="$fakebin/fake-ssh" \
+    FM_SPAWN_NO_GUARD=1 "$ROOT/bin/fm-spawn.sh" rsm --secondmate --harness muse 2>&1)
+  status=$?
+  expect_code 1 "$status" "a crewmate-only adapter must refuse a remote secondmate spawn: $out"
+  assert_contains "$out" "remote secondmate spawn requires a verified harness adapter" \
+    "the parent gate accepted an adapter with no primary supervision protocol: $out"
+  pass "fm-spawn: the parent remote-secondmate gate accepts omp and still refuses an adapter without a supervision protocol"
+}
+
 test_detection_anchored_name_and_marker_precedence
 test_lock_identity_and_liveness_classification
 test_spawn_launch_line_and_worker_wiring
 test_spawn_model_validation_scoped_to_listed_providers
 test_secondmate_launch_relies_on_discovery
 test_secondmate_config_pinned_model_is_validated
+test_secondmate_requires_discoverable_supervision_extensions
+test_secondmate_refuses_unverified_omp_and_states_an_unreadable_one
 test_busy_extension_lifecycle
 test_control_composer_and_model_tables
 test_ownership_proof_is_omp_keyed
 test_turnend_guard_extension_compels_one_continuation
 test_watch_extension_arms_and_delivers
+test_remote_host_leg_accepts_omp
+test_remote_parent_leg_accepts_omp

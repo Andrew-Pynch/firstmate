@@ -2264,3 +2264,34 @@ A throwaway scout was spawned through `bin/fm-spawn.sh --scout --harness omp --m
 6. `bin/fm-control.sh <id> exit` stopped the agent and `bin/fm-teardown.sh` returned the worktree and closed the item.
 
 `FM_OMP_LIVE_E2E=1 tests/fm-omp-primary-live-e2e.test.sh` refreshes the primary evidence; the worker path above is refreshed by repeating the scout dispatch after any omp upgrade.
+
+### 2026-09-12 secondmate placement and remote routing
+
+Verified with omp 18.1.18 on Linux (Arch, kernel 7.2.3, x86_64) through the Herdr backend in an isolated `fm-lab-*` session, model `openai-codex/gpt-5.6-sol`.
+The secondmate home was a clone of this repository plus the branch's pending edits, seeded with `.fm-secondmate-parent`, `.fm-secondmate-home`, and a charter; the parent home pinned `config/secondmate-harness`.
+Refresh both after any omp upgrade:
+
+```sh
+FM_OMP_SECONDMATE_LIVE_E2E=1 bin/fm-test-run.sh tests/fm-omp-secondmate-live-e2e.test.sh
+bin/fm-test-run.sh tests/fm-omp-harness.test.sh
+```
+
+Observed output:
+
+```text
+ok - omp omp/18.1.18: a seeded secondmate home loads both tracked supervision extensions by auto-discovery alone
+ok - omp omp/18.1.18: a durable steering instruction reached the live secondmate and its completion landed on the parent channel
+ok - omp omp/18.1.18: the live secondmate stays controllable and its supported relaunch reloads supervision in the same endpoint
+ok - omp omp/18.1.18: live secondmate placement verified end to end in an isolated Herdr lab
+```
+
+Facts that run established:
+
+- a seeded secondmate home loads `.omp/extensions/fm-primary-omp-watch.ts` and `.omp/extensions/fm-primary-turnend-guard.ts` by auto-discovery alone, with no `-e` on the launch line, which is why `bin/fm-spawn.sh` refuses an omp secondmate whose home lacks those files or whose installed omp predates 18.1.11;
+- a durable steering record plus its doorbell reached the live mate, it ran the named command, `bin/fm-secondmate-report.sh` published the correlated completion into the parent home's `state/<id>.status`, and the mate moved the record into `handled/`;
+- `bin/fm-control.sh <id> interrupt` cancelled the turn and left the agent alive, and `relaunch` stopped the previous agent, launched the replacement into the same recorded endpoint, and the replacement re-loaded both extensions.
+
+One unresolved observation, carried into the real-host smoke test rather than claimed either way: a standalone `bin/fm-control.sh <id> exit` against that settled replacement returned `exit-delivered <id> interrupt=not-needed exit-command=delivered agent-state=alive exit=unconfirmed` after its 30-second wait, twice, including once immediately after refreshing the home's watcher beacon.
+The stop path itself is exercised in the same run, because relaunch stops the previous agent through the same plane before launching its replacement, so this is specific to a standalone exit of a relaunched secondmate and the control plane reported the uncertainty instead of claiming a stop.
+
+Remote placement is covered deterministically by `tests/fm-remote-secondmate-lifecycle-e2e.test.sh`, `tests/fm-remote-doctor.test.sh`, and the remote cases in `tests/fm-omp-harness.test.sh`; real-host proof on a second Linux machine and on macOS remains an operator smoke test and is not claimed here.

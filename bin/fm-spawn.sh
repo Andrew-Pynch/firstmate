@@ -186,6 +186,14 @@
 #   all and relies on omp auto-discovering the home's tracked .omp/extensions/
 #   (verified, omp 18.1.11: a file named both ways loads twice, and discovery is
 #   cwd-only with no trust dialog).
+#   Because that discovery is a secondmate's ONLY path to its watcher and
+#   turn-end guard, an omp --secondmate spawn refuses before any endpoint when
+#   the installed omp is older than the release whose auto-discovery is
+#   verified or does not print a recognizable version, and refuses after the
+#   guarded home sync when the home does not carry both tracked
+#   .omp/extensions files. A remote secondmate runs this same host-local
+#   path, so the refusal reaches the parent as that launch's own error rather
+#   than as a silently unsupervised remote mate.
 #   config/secondmate-harness may also carry an optional model and effort as extra
 #   whitespace-separated tokens ("<harness> [<model>] [<effort>]"). For a
 #   --secondmate spawn, those tokens apply only when this spawn also resolves its
@@ -849,15 +857,12 @@ spawn_remote_secondmate() {
   else
     harness=$("$FM_ROOT/bin/fm-harness.sh" secondmate)
   fi
-  case "$harness" in
-  claude | codex | opencode | pi | pi-signed | grok | kimi | cursor) ;;
-  *)
+  if ! fm_remote_secondmate_harness_supported "$harness"; then
     fm_lock_release "$registry_lock" || true
     fm_lock_release "$SPAWN_TASK_LOCK" || true
     echo "error: remote secondmate spawn requires a verified harness adapter, not a raw launch command: $harness" >&2
     return 1
-    ;;
-  esac
+  fi
   model=${MODEL:--}
   effort=${EFFORT:--}
   if [ -z "$HARNESS_ARG" ] && [ -z "$positional" ]; then
@@ -1819,6 +1824,70 @@ agy_model_validate() {  # <agy-bin> <model>
   return 1
 }
 
+# The omp release whose cwd-only extension auto-discovery is verified (see
+# .agents/skills/harness-adapters/references/harness/omp.md). A SECONDMATE
+# launch names no -e at all, so that discovery is the ONLY path its watcher and
+# turn-end guard can load by; an older omp would start a firstmate instance
+# with no supervision at all and still report a successful launch.
+OMP_SECONDMATE_MIN_VERSION=18.1.11
+
+# Print the first <major>.<minor>.<patch> in `omp --version`, or nothing when
+# the installed binary answers with something else.
+omp_version() {  # <omp-bin>
+  OMP_SKIP_SETUP=1 "$1" --version 2>/dev/null \
+    | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+' \
+    | head -n 1
+}
+
+# True when dotted version <a> is strictly older than dotted version <b>.
+omp_version_lt() {  # <a> <b>
+  local a=$1 b=$2 i left right
+  for i in 1 2 3; do
+    left=$(printf '%s' "$a" | cut -d. -f"$i")
+    right=$(printf '%s' "$b" | cut -d. -f"$i")
+    [ -n "$left" ] || left=0
+    [ -n "$right" ] || right=0
+    [ "$left" -lt "$right" ] && return 0
+    [ "$left" -gt "$right" ] && return 1
+  done
+  return 1
+}
+
+# Refuse an omp secondmate launch unless the binary prints a release at or past
+# the one whose auto-discovery is verified. Version evidence is load-bearing
+# here, not advisory model-catalog evidence: without it Firstmate cannot prove
+# that the secondmate's only watcher and turn-end-guard load path exists.
+omp_secondmate_version_ok() {  # <omp-bin>
+  local bin=$1 version
+  version=$(omp_version "$bin")
+  if [ -z "$version" ]; then
+    echo "error: '$bin --version' printed no recognizable version; Firstmate cannot prove this omp provides the extension auto-discovery an omp secondmate requires. Install omp $OMP_SECONDMATE_MIN_VERSION or newer on this host, or select another verified secondmate harness." >&2
+    return 1
+  fi
+  omp_version_lt "$version" "$OMP_SECONDMATE_MIN_VERSION" || return 0
+  echo "error: omp $version is installed at $bin, older than omp $OMP_SECONDMATE_MIN_VERSION; a secondmate loads its watcher and turn-end guard only through omp's own extension auto-discovery, which is unverified on that release. Upgrade omp on this host or select another verified secondmate harness." >&2
+  return 1
+}
+
+# An omp secondmate's supervision extensions reach it only through omp's
+# cwd-only auto-discovery of <dir>/.omp/extensions, where <dir> is the launch
+# root: the mate home, or the code root a spawn named for it. A checkout whose
+# tracked copy predates them would run unsupervised. Proven after the guarded
+# sync, so a home the sync advances is judged on what it actually holds at
+# launch.
+omp_secondmate_extensions_present() {  # <launch-dir>
+  local home=$1 name missing=
+  for name in fm-primary-omp-watch.ts fm-primary-turnend-guard.ts; do
+    if [ -f "$home/.omp/extensions/$name" ] && [ ! -L "$home/.omp/extensions/$name" ]; then
+      continue
+    fi
+    missing="${missing:+$missing, }.omp/extensions/$name"
+  done
+  [ -n "$missing" ] || return 0
+  echo "error: omp secondmate launch directory $home is missing $missing; omp loads a secondmate's supervision extensions only by auto-discovering that directory, so this launch would leave it with no watcher and no turn-end guard. Advance that checkout to a firstmate commit that carries them, then launch again." >&2
+  return 1
+}
+
 # The verified launch command per adapter. The knowledge half of each adapter
 # (busy-state source, exit command, dialogs, quirks) lives in the harness-adapters skill.
 launch_template() {
@@ -2193,6 +2262,9 @@ omp)
     echo "error: omp worker posture overlay missing at $OMP_WORKER_CFG; a worker launched without it can park on the captain's own approval or plan-mode settings" >&2
     exit 1
   }
+  if [ "$KIND" = secondmate ]; then
+    omp_secondmate_version_ok "$OMP_BIN" || exit 1
+  fi
   ;;
 agy)
   AGY_BIN=$(resolve_pi_executable agy) || {
@@ -2696,6 +2768,11 @@ if [ "$KIND" = secondmate ]; then
     esac
   else
     echo "warning: secondmate $ID sync skipped before launch: primary default-branch commit cannot be resolved" >&2
+  fi
+  if [ "$HARNESS" = omp ]; then
+    # The launch root, not PROJ_ABS: a mate moved onto a code root carries its
+    # extensions there, and omp discovers them from the directory it starts in.
+    omp_secondmate_extensions_present "$WT" || exit 1
   fi
   mkdir -p "$PROJ_ABS/state" || {
     echo "error: could not create secondmate state directory for $PROJ_ABS" >&2

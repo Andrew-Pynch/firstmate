@@ -32,6 +32,11 @@
 # (bin/fm-captain-hold.sh `open` owns that predicate), because the policy holds
 # the very work item a question gates and cleanup must never retire the
 # captain's own question.
+# A row whose acceptance record (bin/fm-dod-lib.sh owns its grammar) still
+# records an UNMET evidence gate takes that same retention: the work shipped a
+# subset of what the captain accepted, so cleanup keeps the row open and names
+# the outstanding artifact instead of closing the omitted remainder with it. A
+# brief with no record at all, or a malformed one, never strands a cleanup.
 # NOTE: this uses `open`'s silent default and depends only on its unchanged
 # 0/1/2 exit-code contract. The optional `--identity` output that bin/fm-watch.sh
 # asks for prints only on an exit 0 and changes nothing read here.
@@ -300,6 +305,8 @@ SUB_HOME_MARKER=".fm-secondmate-home"
 SUB_HOME_PARENT_MARKER=".fm-secondmate-parent"
 # shellcheck source=bin/fm-tasks-axi-lib.sh
 . "$SCRIPT_DIR/fm-tasks-axi-lib.sh"
+# shellcheck source=bin/fm-dod-lib.sh
+. "$SCRIPT_DIR/fm-dod-lib.sh"
 # shellcheck source=bin/fm-backlog-transition-lib.sh
 . "$SCRIPT_DIR/fm-backlog-transition-lib.sh"
 # shellcheck source=bin/fm-backend.sh
@@ -556,6 +563,8 @@ fi
 # Cleanup never closes a captain call (see the header). Asked here, before any
 # destructive step, so "cannot tell" can refuse while everything is intact.
 TEARDOWN_BACKLOG_TRANSITION=close
+TEARDOWN_ACCEPTANCE_GATE_ARTIFACT=
+TEARDOWN_ACCEPTANCE_RECORD=
 if [ "$TEARDOWN_BACKLOG_APPLIES" = 1 ]; then
   TEARDOWN_CAPTAIN_OPEN_STATUS=0
   TEARDOWN_CAPTAIN_OPEN_OUT=$(FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" \
@@ -570,6 +579,24 @@ if [ "$TEARDOWN_BACKLOG_APPLIES" = 1 ]; then
       exit 1
       ;;
   esac
+  # The acceptance record (bin/fm-dod-lib.sh owns its grammar) gates the close
+  # exactly as it gates the dispatch: a row whose recorded evidence gate is still
+  # unmet shipped a subset of what the captain accepted, so closing it would
+  # silently close the omitted remainder too. Cleanup retains it instead, the same
+  # transition a captain-held row takes, and names the outstanding artifact. A
+  # record that is merely absent (a brief predating the record) or malformed is
+  # never a reason to strand a cleanup, so only a recorded UNMET gate retains.
+  if [ "$TEARDOWN_BACKLOG_TRANSITION" = close ] \
+     && [ -f "$DATA/$ID/brief.md" ] && [ ! -L "$DATA/$ID/brief.md" ]; then
+    fm_acceptance_record_validate "$DATA/$ID/brief.md" || true
+    if [ "$FM_ACCEPTANCE_RECORD_GATE" = unmet ]; then
+      TEARDOWN_BACKLOG_TRANSITION=retain
+      TEARDOWN_ACCEPTANCE_GATE_ARTIFACT=$FM_ACCEPTANCE_RECORD_GATE_ARTIFACT
+    fi
+  fi
+  if [ -f "$DATA/$ID/brief.md" ] && [ ! -L "$DATA/$ID/brief.md" ]; then
+    TEARDOWN_ACCEPTANCE_RECORD=$(fm_acceptance_record_summary "$DATA/$ID/brief.md") || TEARDOWN_ACCEPTANCE_RECORD=
+  fi
 fi
 
 REMOTE_HANDOFF_DIR_PRESENT=0
@@ -1567,11 +1594,20 @@ backlog_refresh_reminder() {
     backlog_display="${DATA%/}/backlog.md"
   fi
   if [ "$BACKLOG_CLOSED" = 1 ] && [ "$BACKLOG_TRANSITION" = retain ]; then
-    printf '%s\n' "Backlog: $ID stays open in $backlog_display, still held for the captain with its deliverable recorded. Relay the question and close it only with bin/fm-captain-hold.sh answer."
+    if [ -n "$TEARDOWN_ACCEPTANCE_GATE_ARTIFACT" ]; then
+      printf '%s\n' "Backlog: $ID stays open in $backlog_display with its deliverable recorded, because its acceptance record still waits on $TEARDOWN_ACCEPTANCE_GATE_ARTIFACT: what shipped is a subset of what the captain accepted, so the remainder must not close with it. Hold the remainder for the captain with bin/fm-captain-hold.sh hold $ID --reason \"awaiting $TEARDOWN_ACCEPTANCE_GATE_ARTIFACT\" and close it only with bin/fm-captain-hold.sh answer."
+    else
+      printf '%s\n' "Backlog: $ID stays open in $backlog_display, still held for the captain with its deliverable recorded. Relay the question and close it only with bin/fm-captain-hold.sh answer."
+    fi
   elif [ "$BACKLOG_CLOSED" = 1 ]; then
     printf '%s\n' "Backlog: $ID is closed in $backlog_display. Run bin/fm-tasks-axi.sh ready for dependency-cleared candidates, check date gates, and dispatch only work whose blockers are gone and date is due."
   else
     printf '%s\n' "Backlog: $ID just finished ($BACKLOG_SKIP_REASON). Update $backlog_display - move $ID to Done, keep Done to the 10 most recent, then re-scan Queued and dispatch only work whose blockers are gone and date is due."
+  fi
+  # The recorded outcome is what the captain accepted, so a completion report
+  # names it rather than reporting whatever happened to ship.
+  if [ -n "$TEARDOWN_ACCEPTANCE_RECORD" ]; then
+    printf '%s\n' "Acceptance record for $ID: $TEARDOWN_ACCEPTANCE_RECORD"
   fi
 }
 

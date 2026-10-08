@@ -53,6 +53,11 @@ Exercise backend dispatch for $2.
 
 ## Firstmate spec
 Verify backend selection without changing task intent.
+
+## Acceptance record
+Accept when: backend dispatch is exercised for $2
+Proof: the recorded backend selection
+Evidence gate: NONE
 EOF
 }
 

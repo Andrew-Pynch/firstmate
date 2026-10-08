@@ -91,6 +91,11 @@ Exercise settled-worktree detection for $id.
 
 ## Firstmate spec
 Record only the pane's stable worktree.
+
+## Acceptance record
+Accept when: the pane's settled worktree is detected for $id
+Proof: the recorded pane worktree read
+Evidence gate: NONE
 EOF
   touch "$home/state/.last-watcher-beat"
   printf '%s\n' "$case_dir|$home|$proj|$wt|$stale|$fakebin|$countfile|$stale_reads"

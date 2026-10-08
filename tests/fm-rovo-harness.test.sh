@@ -148,6 +148,11 @@ Exercise Rovo dispatch.
 
 ## Firstmate spec
 Verify launch and delivery behavior.
+
+## Acceptance record
+Accept when: Rovo dispatch is exercised
+Proof: the recorded launch and delivery behavior
+Evidence gate: NONE
 EOF
   printf 'rovo\n' > "$home/config/crew-harness"
   fm_git_worktree "$proj" "$wt" "wt-$name"

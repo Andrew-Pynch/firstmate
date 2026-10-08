@@ -46,9 +46,17 @@ write_brief() {  # <home> <id> [<recorded-mode>]
   local home=$1 id=$2 mode=${3:-}
   mkdir -p "$home/data/$id"
   {
-    printf 'You are a crewmate.\n\n# Task\n## Captain'\''s intent\nExercise the delivery contract.\n\n## Firstmate spec\nVerify the selected delivery behavior.\n\n# Definition of done\n'
+    printf 'You are a crewmate.\n\n# Task\n## Captain'\''s intent\n%s\n\n## Firstmate spec\n%s\n\n%s\n\n# Definition of done\n' \
+      'Exercise the delivery contract.' 'Verify the selected delivery behavior.' "$(acceptance_record)"
     [ -z "$mode" ] || printf 'Delivery contract: mode=%s\n' "$mode"
   } > "$home/data/$id/brief.md"
+}
+
+# The acceptance record every fresh ship or scout dispatch must carry
+# (bin/fm-dod-lib.sh owns its grammar). Fixtures write it through this helper so
+# the record keeps one shape across the cases below.
+acceptance_record() {
+  printf '## Acceptance record\nAccept when: the delivery contract under test is honored\nProof: the recorded spawn or promotion behavior\nEvidence gate: NONE'
 }
 
 fill_brief_subsections() {  # <file> <intent> <spec>
@@ -56,6 +64,9 @@ fill_brief_subsections() {  # <file> <intent> <spec>
   content=$(cat "$file")
   content=${content//'{TASK}'/$intent}
   content=${content//'{FIRSTMATE_SPEC}'/$spec}
+  content=${content//'{ACCEPT_WHEN}'/"the delivery contract under test is honored"}
+  content=${content//'{ACCEPT_PROOF}'/"the recorded spawn or promotion behavior"}
+  content=${content//'{ACCEPT_GATE}'/NONE}
   printf '%s\n' "$content" > "$file"
 }
 
@@ -481,6 +492,11 @@ Example intent
 Example specification
 ```
 
+## Acceptance record
+Accept when: the delivery contract under test is honored
+Proof: the recorded spawn or promotion behavior
+Evidence gate: NONE
+
 # Definition of done
 Delivery contract: mode=direct-PR
 EOF
@@ -496,6 +512,11 @@ EOF
 # Task
 [captain] Fix the legacy dispatch boundary.
 Do not copy this Firstmate-authored constraint into intent.
+
+## Acceptance record
+Accept when: the delivery contract under test is honored
+Proof: the recorded spawn or promotion behavior
+Evidence gate: NONE
 
 # Definition of done
 Delivery contract: mode=no-mistakes
@@ -528,6 +549,11 @@ Fix the migrated dispatch boundary.
 ## Firstmate spec
 Preserve the existing compatibility path.
 
+## Acceptance record
+Accept when: the delivery contract under test is honored
+Proof: the recorded spawn or promotion behavior
+Evidence gate: NONE
+
 # Definition of done
 Delivery contract: mode=no-mistakes
 Pass the entire Task and every Firstmate requirement as --intent.
@@ -556,6 +582,11 @@ EOF
 # Task
 Fix the legacy dispatch boundary.
 Do not copy this Firstmate-authored constraint into intent.
+
+## Acceptance record
+Accept when: the delivery contract under test is honored
+Proof: the recorded spawn or promotion behavior
+Evidence gate: NONE
 
 # Definition of done
 Delivery contract: mode=no-mistakes
@@ -694,6 +725,11 @@ Keep this nested requirement too.
 
 Keep this closing requirement.
 
+## Acceptance record
+Accept when: the delivery contract under test is honored
+Proof: the recorded spawn or promotion behavior
+Evidence gate: NONE
+
 # Setup
 This scout-only setup must not become the spec.
 EOF
@@ -725,6 +761,11 @@ You are a crewmate.
 
 Reproduce the refusal before changing code.
 Ship the narrow session-floor fix with a regression test.
+
+## Acceptance record
+Accept when: the delivery contract under test is honored
+Proof: the recorded spawn or promotion behavior
+Evidence gate: NONE
 
 # Setup
 This is a SCOUT task: the deliverable is a written report, not a PR.
@@ -777,7 +818,7 @@ EOF
   words=$(printf '%s\n' "Keep the literal example \`Captain, hello\` in the documentation." \
     "Stop composing Captain:, Captain's words:, Captain's ask:, and Captain's intent: into PR bodies.")
   write_brief "$home" intent-literal no-mistakes
-  printf '# Task\n## Captain'"'"'s intent\n%s\n\n## Firstmate spec\nDo not paraphrase.\n\n# Definition of done\nDelivery contract: mode=no-mistakes\n' "$words" > "$home/data/intent-literal/brief.md"
+  printf '# Task\n## Captain'"'"'s intent\n%s\n\n## Firstmate spec\nDo not paraphrase.\n\n## Acceptance record\nAccept when: the delivery contract under test is honored\nProof: the recorded spawn or promotion behavior\nEvidence gate: NONE\n\n# Definition of done\nDelivery contract: mode=no-mistakes\n' "$words" > "$home/data/intent-literal/brief.md"
   out=$(run_spawn "$home" "$fakebin" intent-literal "$proj" claude --mode no-mistakes --yolo off)
   assert_not_contains "$out" "operator-address line" "labels mentioned mid-line were refused as address"
   authorized=$(awk '$0 == "## Captain intent authorized for --intent" { emit=1; next } emit { print }' "$home/data/intent-literal/launch-brief.md")
@@ -820,7 +861,7 @@ EOF
     n=$((n + 1))
     id="intent-marked-$n"
     write_brief "$home" "$id" no-mistakes
-    printf '# Task\n%s %s\nDo not include this build constraint.\n%s %s\n\n# Definition of done\nDelivery contract: mode=no-mistakes\n' \
+    printf '# Task\n%s %s\nDo not include this build constraint.\n%s %s\n\n## Acceptance record\nAccept when: the delivery contract under test is honored\nProof: the recorded spawn or promotion behavior\nEvidence gate: NONE\n\n# Definition of done\nDelivery contract: mode=no-mistakes\n' \
       "$marker" 'Keep the original request intact.' "$marker" 'Preserve its provenance.' > "$home/data/$id/brief.md"
     out=$(run_spawn "$home" "$fakebin" "$id" "$proj" claude --mode no-mistakes --yolo off)
     assert_present "$home/data/$id/launch-brief.md" "$marker: provenance was not accepted"

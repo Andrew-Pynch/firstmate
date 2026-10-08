@@ -96,6 +96,11 @@ Exercise primary-home Herdr placement.
 
 ## Firstmate spec
 Verify the crewmate uses its primary home's workspace.
+
+## Acceptance record
+Accept when: primary-home Herdr placement is exercised
+Proof: the recorded workspace the crewmate landed in
+Evidence gate: NONE
 EOF
 
 SM_HOME="$TMP_ROOT/secondmate-home"
@@ -111,6 +116,11 @@ Exercise secondmate-owned Herdr placement.
 
 ## Firstmate spec
 Verify the crewmate uses its secondmate home's workspace.
+
+## Acceptance record
+Accept when: secondmate-home Herdr placement is exercised
+Proof: the recorded workspace the crewmate landed in
+Evidence gate: NONE
 EOF
 
 make_scratch_project() {  # <dir>

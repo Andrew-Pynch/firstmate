@@ -323,6 +323,12 @@ On a `no-mistakes-prod-only` project, classify the task's surface: internal-only
 An unregistered project or absent registry resolves to `no-mistakes` with yolo off, and the registration gap goes to the captain.
 Record the resulting mode, `yolo` merge posture, and the one-line reason for any deviation in the backlog item note.
 
+A request is dispatchable only with an acceptance record: what the captain will accept, how it will be proved, and what evidence must exist first, in the brief's `## Acceptance record` subsection.
+`bin/fm-dod-lib.sh` owns that record's grammar, `bin/fm-spawn.sh` refuses a fresh dispatch without a complete record, and `bin/fm-teardown.sh` will not close a row whose recorded evidence gate is still unmet, so work that shipped a subset of what was accepted can never close the omitted remainder.
+A request whose evidence gate is unmet is never dispatched as queued work: hold it for the captain through `bin/fm-captain-hold.sh hold` with the outstanding artifact as the reason, and capture any follow-up request it produced as its own durable item before calling anything assigned.
+Recorded, queued, running, proved, and accepted are distinct: recorded work is captured with its owner, queued work has not started, running work has an endpoint, proved work satisfies the recorded proof, and accepted work has the captain's own words, so a completion report names which of them is true rather than reporting a shipped subset as the accepted outcome.
+A request whose recorded scope is unchanged is never re-approved; only a changed scope goes back to the captain.
+
 Treat file or subsystem overlap as a risk signal rather than an automatic reason to wait, and dispatch isolated work immediately with no concurrency cap when each change can be independently implemented and validated and the selected delivery path can reconcile ordinary rebases or conflicts.
 Serialize only for a true semantic dependency, shared mutable external state, incompatible concurrent migration, or another concrete condition that makes independent progress or reconciliation unsafe; same-file editing alone is insufficient, and genuine blockers remain durable.
 Write the task-specific brief under section 11 before spawning.
@@ -564,6 +570,8 @@ Preserve durable structured identifiers, dependencies, and completion artifact l
 `bin/fm-brief.sh` and its help own scaffold syntax, generated variants, status protocol, delivery-mode definitions of done, and exact safety mechanics.
 Use its scaffold as the contract, then fill `## Captain's intent` (`{TASK}`) with the captain's own ask and any boundary the captain stated, plus the context needed to read it, including the substance of any report, decision, or PR the ask refers to; never widen the ask there into a general goal or an enumerated coverage list, because the reviewer treats that subsection as acceptance criteria.
 Fill `## Firstmate spec` (`{FIRSTMATE_SPEC}`) with only the build instructions that ask requires, naming what stays out of scope when the ask is narrow; a generalization, consistency sweep, or extra hardening the captain did not ask for is follow-up work to note, not scope to add.
+Fill `## Acceptance record` (`{ACCEPT_WHEN}`, `{ACCEPT_PROOF}`, `{ACCEPT_GATE}`) before dispatch with what the captain will accept, how it will be proved, and what evidence must exist first.
+`bin/fm-dod-lib.sh` owns that record's grammar and its gate values, `bin/fm-spawn.sh` refuses a fresh dispatch without a complete record or with an unmet gate, and `bin/fm-promote.sh` carries the record into a promoted scout's ship instructions.
 `bin/fm-dod-lib.sh` owns intent authoring without added speaker labels or direct address, its provenance markers, what a no-mistakes worker may pass as `--intent`, and the string's self-sufficiency rule.
 Keep additions task-specific rather than repeating lifecycle instructions, and alter generated sections only when the task genuinely differs from the standard shape.
 

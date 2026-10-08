@@ -1333,6 +1333,9 @@ test_worker_launch_delivers_role_scope() {
       content=$(cat "$brief")
       content=${content//'{TASK}'/brief for $id}
       content=${content//'{FIRSTMATE_SPEC}'/Exercise the spawn behavior under test.}
+      content=${content//'{ACCEPT_WHEN}'/the worker role contract is delivered}
+      content=${content//'{ACCEPT_PROOF}'/the decoded launch prompt}
+      content=${content//'{ACCEPT_GATE}'/NONE}
       printf '%s\n' "$content" > "$brief"
     fi
     cp "$HOME_DIR/data/$id/brief.md" "$CASE_DIR/brief-before"

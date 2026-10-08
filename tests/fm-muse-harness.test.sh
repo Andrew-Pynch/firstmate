@@ -140,6 +140,11 @@ Exercise Muse dispatch.
 
 ## Firstmate spec
 Verify the Muse harness behavior under test.
+
+## Acceptance record
+Accept when: Muse dispatch is exercised
+Proof: the recorded harness behavior this fixture asserts
+Evidence gate: NONE
 EOF
   fm_git_worktree "$proj" "$wt" "fm/$id"
   touch "$home/state/.last-watcher-beat"

@@ -403,6 +403,11 @@ $description
 
 ## Firstmate spec
 Verify projected workspace behavior for $id.
+
+## Acceptance record
+Accept when: projected workspace behavior is exercised for $id
+Proof: the recorded projection this fixture asserts
+Evidence gate: NONE
 EOF
 }
 

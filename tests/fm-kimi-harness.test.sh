@@ -229,6 +229,11 @@ Exercise Kimi dispatch.
 
 ## Firstmate spec
 Verify launch and delivery behavior.
+
+## Acceptance record
+Accept when: Kimi dispatch is exercised
+Proof: the recorded launch and delivery behavior
+Evidence gate: NONE
 EOF
   printf 'kimi\n' > "$home/config/crew-harness"
   fm_git_worktree "$proj" "$wt" "wt-$name"

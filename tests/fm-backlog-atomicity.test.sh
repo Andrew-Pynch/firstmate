@@ -83,6 +83,11 @@ Exercise backlog dispatch for $id.
 ## Firstmate spec
 Verify the atomic backlog transition.
 
+## Acceptance record
+Accept when: the atomic backlog transition is exercised for $id
+Proof: the recorded row state after the transition
+Evidence gate: NONE
+
 # Definition of done
 Delivery contract: mode=no-mistakes
 EOF

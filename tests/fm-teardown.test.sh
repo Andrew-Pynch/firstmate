@@ -651,6 +651,62 @@ backlog_row_state() {
     sed -n 's/^  state: *//p' | head -1
 }
 
+# Write the acceptance record a case is judged by (bin/fm-dod-lib.sh owns its
+# grammar). The recorded scope is the captain's own words from the overnight
+# counterexample, so a task that shipped the Chat/Design-Panel split is judged
+# against the Component Box Detail layout he actually asked to accept.
+write_acceptance_brief() {  # <case-dir> <gate>
+  local case_dir=$1 gate=$2
+  mkdir -p "$case_dir/data/task-x1"
+  {
+    printf '# Task\n'
+    printf "## Captain's intent\nI wanted the Component Box Detail View to match the layout I asked for\n\n"
+    printf '## Firstmate spec\nBuild the layout the captain asked for.\n\n'
+    printf '## Acceptance record\n'
+    printf 'Accept when: I wanted the Component Box Detail View to match the layout I asked for\n'
+    printf 'Proof: the staging URL at 1440x1000 on the deployed revision\n'
+    printf 'Evidence gate: %s\n' "$gate"
+  } > "$case_dir/data/task-x1/brief.md"
+}
+
+# The completion half of the acceptance record contract: a row whose recorded
+# evidence gate is still unmet shipped a subset of what the captain accepted, so
+# cleanup must retain it as an open captain call naming what is still outstanding
+# rather than close the omitted remainder with it.
+test_acceptance_record_gate_decides_the_close() {
+  local case_dir met_dir out met_out state
+  case_dir=$(make_case acceptance-record-gate)
+  write_meta "$case_dir" no-mistakes ship
+  printf '%s\n' 'pr=https://github.com/example/repo/pull/7' >> "$case_dir/state/task-x1.meta"
+  write_acceptance_brief "$case_dir" 'UNMET Pilot Component-detail screenshot'
+  seed_backlog_in_flight "$case_dir"
+
+  out=$(run_teardown "$case_dir") || fail "teardown failed with an unmet acceptance gate: $out"
+  state=$(backlog_row_state "$case_dir")
+  [ "$state" != "done" ] || fail "cleanup closed a row whose recorded outcome was never accepted"
+  printf '%s\n' "$out" | grep -F 'Pilot Component-detail screenshot' >/dev/null \
+    || fail "cleanup did not name the artifact the open row waits on: $out"
+  printf '%s\n' "$out" | grep -F 'bin/fm-captain-hold.sh hold task-x1' >/dev/null \
+    || fail "cleanup did not name the hold command for the omitted remainder: $out"
+  printf '%s\n' "$out" | grep -F 'Accept when: I wanted the Component Box Detail View to match the layout I asked for' >/dev/null \
+    || fail "cleanup did not carry the captain's recorded outcome into its report: $out"
+  assert_grep 'https://github.com/example/repo/pull/7' "$case_dir/data/backlog.md" \
+    "the retained row did not record what the shipped subset delivered"
+
+  # The same recorded scope with its gate satisfied closes normally: the gate is
+  # what decides, not the presence of a record.
+  met_dir=$(make_case acceptance-record-met)
+  write_meta "$met_dir" no-mistakes ship
+  printf '%s\n' 'pr=https://github.com/example/repo/pull/8' >> "$met_dir/state/task-x1.meta"
+  write_acceptance_brief "$met_dir" 'MET Pilot Component-detail screenshot'
+  seed_backlog_in_flight "$met_dir"
+
+  met_out=$(run_teardown "$met_dir") || fail "teardown failed with a satisfied acceptance gate: $met_out"
+  [ "$(backlog_row_state "$met_dir")" = "done" ] \
+    || fail "cleanup left a row open whose recorded evidence gate was satisfied"
+  pass "teardown retains a row whose recorded evidence gate is unmet and closes a satisfied one"
+}
+
 # Build the teardown test's executable search path without lsof, regardless of
 # whether the host installs it in /usr/bin, /usr/sbin, or a package-manager bin.
 make_path_without_lsof() {  # <case-dir>
@@ -3861,6 +3917,7 @@ EOF
 
 test_local_only_fork_remote_allows
 test_teardown_closes_the_backlog_item_itself
+test_acceptance_record_gate_decides_the_close
 test_teardown_manual_backend_leaves_the_backlog_to_the_operator
 test_local_only_truly_unpushed_refuses
 test_local_only_merged_to_local_main_allows

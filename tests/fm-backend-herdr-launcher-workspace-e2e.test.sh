@@ -191,6 +191,11 @@ Exercise Herdr launcher placement for $2.
 
 ## Firstmate spec
 Verify the worker is placed in the correct workspace.
+
+## Acceptance record
+Accept when: Herdr launcher placement is exercised for $2
+Proof: the recorded workspace the worker landed in
+Evidence gate: NONE
 EOF
 }
 

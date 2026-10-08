@@ -278,6 +278,10 @@ fm_test_spawn_home() {
 }
 
 # fm_test_spawn_brief <home> <id> [captain-intent]
+# The brief carries a complete acceptance record, because bin/fm-spawn.sh
+# refuses a fresh ship or scout dispatch without one (bin/fm-dod-lib.sh owns the
+# record's grammar). A test that needs a missing, half-filled, or gated record
+# writes its own brief instead of going through this fixture.
 fm_test_spawn_brief() {
   local home=$1 id=$2 intent=${3:-brief for $2}
   mkdir -p "$home/data/$id"
@@ -288,6 +292,11 @@ $intent
 
 ## Firstmate spec
 Exercise the spawn behavior under test.
+
+## Acceptance record
+Accept when: $intent
+Proof: the spawn behavior under test is observable in the launched command
+Evidence gate: NONE
 EOF
 }
 

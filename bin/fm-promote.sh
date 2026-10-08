@@ -18,6 +18,11 @@
 # `{FIRSTMATE_SPEC}` placeholders and a `## Captain's intent` line opening with
 # a Captain label or address (bin/fm-dod-lib.sh). A pre-subsection scout
 # brief contributes only Task lines explicitly marked as captain words to intent.
+# The scout brief's acceptance record gates promotion too: it is carried verbatim
+# into the ship instructions as the recorded scope this task is accepted for, and
+# a record gated on evidence that does not exist yet refuses promotion, while a
+# legacy scout brief with no record at all warns and promotes rather than
+# stranding already-accepted work.
 # A scout records no delivery posture, so promotion is where this task's delivery
 # contract is decided: --mode and --yolo are REQUIRED and written into the meta
 # alongside the kind= flip. Firstmate resolves both at promotion time, having just
@@ -168,6 +173,25 @@ if [ -z "$(printf '%s' "$INTENT_BODY" | tr -d '[:space:]')" ]; then
   exit 1
 fi
 
+# Promotion dispatches ship work for the scope the scout was accepted for, so the
+# scout brief's acceptance record gates it too (bin/fm-dod-lib.sh owns the
+# grammar). Absence is tolerated, because the work was already accepted as a
+# scout and a legacy brief must not strand it; a record that is present but
+# half-filled, or gated on evidence that still does not exist, refuses, because
+# promotion authorizes a real build against that scope.
+ACCEPTANCE_RECORD_BODY=
+if ! fm_acceptance_record_validate "$SCOUT_BRIEF"; then
+  if [ "$FM_ACCEPTANCE_RECORD_STATE" = absent ]; then
+    echo "warning: $SCOUT_BRIEF records no acceptance record (scaffolded before briefs carried one); promoting on its recorded scope - record what the captain will accept and how it will be proved before any new dispatch of it" >&2
+  else
+    echo "error: $FM_ACCEPTANCE_RECORD_ERROR" >&2
+    exit 1
+  fi
+fi
+if [ "$FM_ACCEPTANCE_RECORD_STATE" = present ]; then
+  ACCEPTANCE_RECORD_BODY=$(fm_acceptance_record_body "$SCOUT_BRIEF")
+fi
+
 # The promoted worker must receive the same delivery contract an ordinary ship
 # brief carries, so the mode-specific Definition of done is rendered from its
 # single owner (bin/fm-dod-lib.sh) rather than summarised into a hint line. A
@@ -224,6 +248,9 @@ EOF
 $PROMOTION_SHIP_SPEC
 
 EOF
+  if [ -n "$ACCEPTANCE_RECORD_BODY" ]; then
+    printf '%s\n%s\n\n' "$FM_ACCEPTANCE_RECORD_HEADING" "$ACCEPTANCE_RECORD_BODY"
+  fi
   promote_delivery_contract
 } > "$TMP" || { echo "error: could not render ship instructions for mode=$MODE" >&2; exit 1; }
 mv "$TMP" "$INSTRUCTIONS"

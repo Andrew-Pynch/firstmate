@@ -47,6 +47,18 @@
 # fm_brief_intent_append below is the writer for a later captain change: it
 # amends that subsection in place, and bin/fm-authority-amend.sh owns amending
 # several affected tasks plus steering each owner in one step.
+
+# This file is also the one owner of the acceptance record contract: the
+# `## Acceptance record` subsection of a ship or scout `# Task`, written before
+# dispatch in the captain's words, recording what the captain will accept, how
+# it will be proved, and what evidence must exist first. bin/fm-brief.sh
+# scaffolds it, bin/fm-spawn.sh refuses to dispatch without a complete record
+# and refuses a request whose evidence gate is unmet, bin/fm-promote.sh carries
+# the record into the promoted ship instructions and refuses promotion on an
+# unmet gate, and bin/fm-teardown.sh will not close a backlog row whose recorded
+# evidence gate is still unmet, so work that shipped a subset of what was
+# accepted can never close the omitted remainder. The exact field grammar lives
+# with the parsing helpers below, which are its single implementation.
 # Every heredoc here stays outside a command substitution: `VAR=$(cat <<EOF ...)`
 # breaks parsing of the whole file on Bash 3.2 (tests/fm-brief.test.sh).
 # fm_brief_worker_role owns the ship/scout role scope. bin/fm-spawn.sh is its one
@@ -63,6 +75,22 @@
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-pr-lib.sh"
 # shellcheck source=bin/fm-classify-lib.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-classify-lib.sh"
+# The acceptance record's exact field grammar, defined once and used by every
+# reader below: the `## Acceptance record` subsection of a ship or scout
+# `# Task`, holding three labelled lines.
+#   Accept when: <the captain's own words for the outcome being accepted>
+#   Proof: <what proves it - an exact artifact, URL, viewport, command, or reading>
+#   Evidence gate: NONE | MET <artifact> | UNMET <artifact>
+# `NONE` records that nothing must exist before dispatch and `MET` names the
+# artifact that had to exist and does; `UNMET` names the artifact that must
+# exist first and refuses dispatch, because the request is then a captain
+# question rather than queued work. Any other value refuses as invalid rather
+# than passing as free text, and a record that is present but half-filled
+# refuses too, so a scaffolded record can never be dispatched unfilled.
+FM_ACCEPTANCE_RECORD_HEADING='## Acceptance record'
+FM_ACCEPTANCE_RECORD_ACCEPT_LABEL='Accept when:'
+FM_ACCEPTANCE_RECORD_PROOF_LABEL='Proof:'
+FM_ACCEPTANCE_RECORD_GATE_LABEL='Evidence gate:'
 
 fm_brief_worker_role() {  # <state-dir> <task-id>
   local state=$1 task_id=$2
@@ -102,12 +130,18 @@ fm_ship_rule_one() {  # <no-mistakes|direct-PR|local-only> <task-id>
 # Return 0 when a Task subsection still consists only of its scaffold
 # placeholder. A missing file and legacy briefs carry no such placeholders.
 fm_brief_task_placeholders_present() {  # <file>
-  local file=$1 intent spec
+  local file=$1 intent spec rec_label rec_value
   [ -f "$file" ] || return 1
   intent=$(fm_brief_task_heading_body "$file" "## Captain's intent")
   spec=$(fm_brief_task_heading_body "$file" "## Firstmate spec")
   [ "$(printf '%s' "$intent" | tr -d '[:space:]')" = '{TASK}' ] && return 0
   [ "$(printf '%s' "$spec" | tr -d '[:space:]')" = '{FIRSTMATE_SPEC}' ] && return 0
+  for rec_label in "$FM_ACCEPTANCE_RECORD_ACCEPT_LABEL" "$FM_ACCEPTANCE_RECORD_PROOF_LABEL" "$FM_ACCEPTANCE_RECORD_GATE_LABEL"; do
+    rec_value=$(fm_acceptance_record_field "$file" "$rec_label")
+    case "$rec_value" in
+      '{'*'}') return 0 ;;
+    esac
+  done
   return 1
 }
 
@@ -262,6 +296,14 @@ fm_brief_intent_address_line() {  # <file>
 # Never add a speaker label or direct address here: the heading supplies
 # provenance and the appended text is the captain's words only
 # (fm_brief_intent_address_line is the check a caller applies before this).
+# This writer extends `## Captain's intent` only. A captain change that alters
+# WHAT the captain will accept also changes the `## Acceptance record` above,
+# and this writer does not touch it: bin/fm-authority-amend.sh carries an
+# authority or scope change to several owners at once and amends intent through
+# this writer, so a scope change applied there must re-record Accept when,
+# Proof, and Evidence gate in the same pass or the stale record keeps
+# describing superseded scope while validating cleanly. Wiring that re-record
+# belongs to the amend script's owner, not here.
 fm_brief_intent_append() {  # <file> <text>
   local file=$1 text=$2 dir tmp mode body
   [ -f "$file" ] && [ -r "$file" ] || {
@@ -362,6 +404,105 @@ fm_brief_intent_append() {  # <file> <text>
   esac
   echo "error: fm_brief_intent_append: $file was rewritten but the appended words are not in its '## Captain's intent' body" >&2
   return 1
+}
+
+fm_acceptance_record_body() {  # <file>
+  fm_brief_task_heading_body "$1" "$FM_ACCEPTANCE_RECORD_HEADING"
+}
+
+# Print one labelled field's value, or nothing when that line is absent.
+fm_acceptance_record_field() {  # <file> <label>
+  local file=$1 label=$2
+  fm_acceptance_record_body "$file" | LC_ALL=C awk -v label="$label" '
+    index($0, label) == 1 {
+      value = substr($0, length(label) + 1)
+      sub(/^[[:space:]]+/, "", value)
+      sub(/[[:space:]]+$/, "", value)
+      print value
+      exit
+    }
+  '
+}
+
+# A field value is unfilled when it is empty or is still its scaffold
+# placeholder, which the scaffold writes as the whole value.
+fm_acceptance_record_field_unfilled() {  # <value>
+  local value=$1
+  [ -n "$(printf '%s' "$value" | tr -d '[:space:]')" ] || return 0
+  case "$value" in
+    '{'*'}') return 0 ;;
+  esac
+  return 1
+}
+
+# Validate a ship or scout brief's acceptance record before dispatch. Returns 0
+# for a complete record whose evidence gate permits dispatch and 1 otherwise,
+# setting:
+#   FM_ACCEPTANCE_RECORD_ERROR         the plain refusal message (no `error: ` prefix)
+#   FM_ACCEPTANCE_RECORD_STATE         present | absent
+#   FM_ACCEPTANCE_RECORD_GATE          none | met | unmet | invalid | empty
+#   FM_ACCEPTANCE_RECORD_GATE_ARTIFACT the artifact an unmet gate waits on
+# A caller continuing already-accepted work (a relaunch or a scout promotion)
+# may proceed on `absent` after warning; every fresh dispatch refuses it.
+fm_acceptance_record_validate() {  # <file>
+  local file=$1 id label value gate artifact
+  FM_ACCEPTANCE_RECORD_ERROR=
+  FM_ACCEPTANCE_RECORD_STATE=absent
+  FM_ACCEPTANCE_RECORD_GATE=empty
+  FM_ACCEPTANCE_RECORD_GATE_ARTIFACT=
+  id=$(basename "$(dirname "$file")")
+  if ! fm_brief_task_heading_present "$file" "$FM_ACCEPTANCE_RECORD_HEADING"; then
+    FM_ACCEPTANCE_RECORD_ERROR="$file has no $FM_ACCEPTANCE_RECORD_HEADING subsection; record what the captain will accept (${FM_ACCEPTANCE_RECORD_ACCEPT_LABEL}), how it will be proved (${FM_ACCEPTANCE_RECORD_PROOF_LABEL}), and what evidence must exist first (${FM_ACCEPTANCE_RECORD_GATE_LABEL}) before dispatch"
+    return 1
+  fi
+  # shellcheck disable=SC2034 # Output global, read by the sourcing callers (fm-spawn.sh, fm-promote.sh).
+  FM_ACCEPTANCE_RECORD_STATE=present
+  for label in "$FM_ACCEPTANCE_RECORD_ACCEPT_LABEL" "$FM_ACCEPTANCE_RECORD_PROOF_LABEL"; do
+    value=$(fm_acceptance_record_field "$file" "$label")
+    if fm_acceptance_record_field_unfilled "$value"; then
+      FM_ACCEPTANCE_RECORD_ERROR="$file left $label unfilled in $FM_ACCEPTANCE_RECORD_HEADING; record the captain's own words for what will be accepted and how it will be proved before dispatch"
+      return 1
+    fi
+  done
+  gate=$(fm_acceptance_record_field "$file" "$FM_ACCEPTANCE_RECORD_GATE_LABEL")
+  if fm_acceptance_record_field_unfilled "$gate"; then
+    FM_ACCEPTANCE_RECORD_ERROR="$file left $FM_ACCEPTANCE_RECORD_GATE_LABEL unfilled in $FM_ACCEPTANCE_RECORD_HEADING; record NONE, MET <artifact>, or UNMET <artifact> before dispatch"
+    return 1
+  fi
+  case "$gate" in
+    NONE) FM_ACCEPTANCE_RECORD_GATE=none ;;
+    MET\ *) FM_ACCEPTANCE_RECORD_GATE=met ;;
+    UNMET\ *)
+      FM_ACCEPTANCE_RECORD_GATE=unmet
+      artifact=$(printf '%s' "$gate" | sed -e 's/^UNMET//' -e 's/^[[:space:]]*//')
+      # shellcheck disable=SC2034 # Output global, read by the sourcing caller (fm-teardown.sh).
+      FM_ACCEPTANCE_RECORD_GATE_ARTIFACT=$artifact
+      FM_ACCEPTANCE_RECORD_ERROR="$id's $FM_ACCEPTANCE_RECORD_HEADING records an unmet evidence gate ($artifact); it is a captain question, not queued work - hold it instead of dispatching it, with bin/fm-captain-hold.sh hold $id --reason \"awaiting $artifact\""
+      return 1
+      ;;
+    *)
+      # shellcheck disable=SC2034 # Output global, read by the sourcing callers (fm-teardown.sh).
+      FM_ACCEPTANCE_RECORD_GATE=invalid
+      # shellcheck disable=SC2034 # Output global, printed by the sourcing callers as the refusal.
+      FM_ACCEPTANCE_RECORD_ERROR="$file records an $FM_ACCEPTANCE_RECORD_GATE_LABEL in $FM_ACCEPTANCE_RECORD_HEADING that is none of NONE, MET <artifact>, or UNMET <artifact> (got '$gate'); correct the record before dispatch"
+      return 1
+      ;;
+  esac
+  return 0
+}
+
+# One line carrying the whole record, for a completion that must state what was
+# accepted, how it would be proved, and what is still outstanding.
+fm_acceptance_record_summary() {  # <file>
+  local file=$1 accept proof gate
+  fm_brief_task_heading_present "$file" "$FM_ACCEPTANCE_RECORD_HEADING" || return 1
+  accept=$(fm_acceptance_record_field "$file" "$FM_ACCEPTANCE_RECORD_ACCEPT_LABEL")
+  proof=$(fm_acceptance_record_field "$file" "$FM_ACCEPTANCE_RECORD_PROOF_LABEL")
+  gate=$(fm_acceptance_record_field "$file" "$FM_ACCEPTANCE_RECORD_GATE_LABEL")
+  printf '%s %s; %s %s; %s %s\n' \
+    "$FM_ACCEPTANCE_RECORD_ACCEPT_LABEL" "$accept" \
+    "$FM_ACCEPTANCE_RECORD_PROOF_LABEL" "$proof" \
+    "$FM_ACCEPTANCE_RECORD_GATE_LABEL" "$gate"
 }
 
 # The `nm-<run>-<step>` decision key this block mandates is load-bearing beyond

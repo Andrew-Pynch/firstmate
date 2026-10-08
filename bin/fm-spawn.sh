@@ -15,6 +15,15 @@
 #   ship or scout spawn also refuses leftover `{TASK}` / `{FIRSTMATE_SPEC}`
 #   placeholders, an empty Task, an incomplete pair of Task subsections, or a
 #   `## Captain's intent` line opening with a Captain label or address.
+#   Every fresh ship or scout dispatch additionally requires the brief's
+#   acceptance record (bin/fm-dod-lib.sh owns its grammar): what the captain
+#   will accept, how it will be proved, and what evidence must exist first. A
+#   record that is missing, half-filled, or gated UNMET on evidence that does
+#   not exist yet REFUSES the dispatch, because that request is a captain
+#   question rather than queued work; the refusal names the exact
+#   bin/fm-captain-hold.sh hold command that parks it as a held decision. A
+#   relaunch, which continues work the captain already accepted, warns instead
+#   when the brief predates the record and never strands it.
 #   Every ship or scout spawn renders `launch-brief.md`; for a no-mistakes ship
 #   it also carries the current `--intent` contract and the extracted captain
 #   intent. A legacy mixed Task is accepted there only under bin/fm-dod-lib.sh's
@@ -2917,6 +2926,19 @@ if [ "$KIND" = ship ] || [ "$KIND" = scout ]; then
   if ADDRESS_LINE=$(fm_brief_intent_address_line "$BRIEF"); then
     echo "error: $BRIEF ## Captain's intent has an operator-address line: $ADDRESS_LINE; write the captain's actual words without a Captain label or address before spawn, since the heading already records provenance" >&2
     exit 1
+  fi
+  # The acceptance record gates dispatch (bin/fm-dod-lib.sh owns its grammar):
+  # a request whose recorded evidence gate is unmet is a captain question, not
+  # queued work. A relaunch continues work the captain already accepted, so a
+  # brief predating the record warns and launches instead of stranding it, while
+  # a record that is present but unusable still refuses either way.
+  if ! fm_acceptance_record_validate "$BRIEF"; then
+    if [ "$RELAUNCH" -eq 1 ] && [ "$FM_ACCEPTANCE_RECORD_STATE" = absent ]; then
+      echo "warning: $BRIEF records no acceptance record (scaffolded before briefs carried one); relaunching the existing task on its recorded scope - record what the captain will accept, how it will be proved, and what evidence must exist first before any new dispatch of it" >&2
+    else
+      echo "error: $FM_ACCEPTANCE_RECORD_ERROR" >&2
+      exit 1
+    fi
   fi
   if [ "$KIND" = ship ] && [ "$MODE" = no-mistakes ]; then
     if fm_brief_task_heading_present "$BRIEF" "## Captain's intent"; then

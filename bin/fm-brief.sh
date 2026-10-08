@@ -2,16 +2,22 @@
 # Scaffold a crewmate brief or persistent secondmate charter at
 # data/<task-id>/brief.md under the active firstmate home.
 # For ordinary tasks, the standard Setup/Rules/Definition-of-done contract is
-# filled in. Ship and scout `# Task` sections have two subsections Firstmate
+# filled in. Ship and scout `# Task` sections have three subsections Firstmate
 # fills before dispatch: `{TASK}` under `## Captain's intent` (the captain's
 # own ask plus the context needed to read it, including the substance of any
 # report, decision, or PR the ask refers to, without added speaker labels or
-# direct address) and `{FIRSTMATE_SPEC}`
+# direct address), `{FIRSTMATE_SPEC}`
 # under `## Firstmate spec` (build instructions, which are never the captain's
-# intent). bin/fm-dod-lib.sh owns the no-mistakes `--intent` contract those
-# subsections feed; bin/fm-spawn.sh refuses leftover placeholders and a
-# `## Captain's intent` line opening with a Captain label or address. Secondmate
-# charters still use a single `{TASK}` charter fill. Firstmate may adjust other
+# intent), and the acceptance record under `## Acceptance record` (`{ACCEPT_WHEN}`,
+# `{ACCEPT_PROOF}`, `{ACCEPT_GATE}`: what the captain will accept, how it will be
+# proved, and what evidence must exist first, from bin/fm-dod-lib.sh's grammar).
+# bin/fm-dod-lib.sh owns the no-mistakes `--intent` contract those
+# subsections feed; bin/fm-spawn.sh refuses leftover placeholders, a
+# `## Captain's intent` line opening with a Captain label or address, and a
+# dispatch whose acceptance record is missing, half-filled, or gated on evidence
+# that does not exist yet. Secondmate
+# charters still use a single `{TASK}` charter fill; they are not a delivery
+# contract and carry no acceptance record. Firstmate may adjust other
 # sections when the task genuinely deviates (e.g. working an existing external
 # PR instead of shipping a new one).
 # Usage: fm-brief.sh <task-id> <repo-name> --mode <no-mistakes|direct-PR|local-only> [--herdr-lab]
@@ -397,6 +403,11 @@ IFS= read -r -d '' TASK_SECTION <<'EOF' || true
 
 ## Firstmate spec
 {FIRSTMATE_SPEC}
+
+## Acceptance record
+Accept when: {ACCEPT_WHEN}
+Proof: {ACCEPT_PROOF}
+Evidence gate: {ACCEPT_GATE}
 EOF
 TASK_SECTION=${TASK_SECTION%$'\n'}
 
@@ -468,7 +479,7 @@ When the report is complete, append \`done [at=<epoch>]: {one-line conclusion}\`
 If your findings reveal work that should ship (e.g. you reproduced a bug and the fix is clear), say so in the report; firstmate may promote this task in place, and you would then receive mode-specific ship instructions as a follow-up message.
 EOF
 append_brief_include
-echo "scaffolded: $BRIEF (scout; replace {TASK} and {FIRSTMATE_SPEC})"
+echo "scaffolded: $BRIEF (scout; replace {TASK}, {FIRSTMATE_SPEC}, and the acceptance record fields)"
 exit 0
 fi
 
@@ -560,4 +571,4 @@ Keep it proportionate: skip \`AGENTS.md\` edits for trivial tasks that produced 
 $DOD
 EOF
 append_brief_include
-echo "scaffolded: $BRIEF (ship, mode=$MODE; replace {TASK} and {FIRSTMATE_SPEC})"
+echo "scaffolded: $BRIEF (ship, mode=$MODE; replace {TASK}, {FIRSTMATE_SPEC}, and the acceptance record fields)"

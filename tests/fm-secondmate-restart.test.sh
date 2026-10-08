@@ -17,7 +17,10 @@
 #      unknown outcome; none is reported as a clean reload.
 #   5. A remote mate restarts by running the SAME local control-plane relaunch on
 #      its host, over the fm-on transport, with the profile resolved from the
-#      PARENT's own pin rather than the remote home's copy of it.
+#      PARENT's own pin rather than the remote home's copy of it, and with the
+#      checkout its code runs from - also resolved from the parent's own record -
+#      carried alongside it. A record that predates that seam carries none, and
+#      the host then keeps the checkout its own endpoint record already names.
 #   6. End to end with bin/fm-update.sh: a live mate whose home needed no
 #      fast-forward is still named for restart and genuinely restarted, and one
 #      whose runtime cannot prove a restart keeps the honest re-read path with
@@ -445,6 +448,7 @@ setup_remote_case() {  # <case-dir> <id> <ssh-mode>
     echo "model=default"
     echo "effort=default"
     echo "home=$dir/$id-home"
+    echo "code_root=/srv/fm"
     echo "remote_host=remote-mac"
     echo "remote_backend=herdr"
     echo "remote_target=fm-remote:2ndmate-$id"
@@ -514,13 +518,35 @@ test_remote_mate_restarts_over_the_transport_hop() {
     "a remote restart should be reported with its host and the parent's pinned runtime"
   relaunch_line=$(grep '^fm-remote-secondmate-control.sh relaunch' "$dir/ssh.log" | head -1)
   [ -n "$relaunch_line" ] || fail "no relaunch crossed the transport hop"$'\n'"$(cat "$dir/ssh.log")"
-  [ "$relaunch_line" = "fm-remote-secondmate-control.sh relaunch sm2 codex big-model high" ] \
-    || fail "the host-local relaunch did not carry the parent's resolved profile: $relaunch_line"
+  [ "$relaunch_line" = "fm-remote-secondmate-control.sh relaunch sm2 codex big-model high --code-root /srv/fm" ] \
+    || fail "the host-local relaunch did not carry the parent's resolved profile and code root: $relaunch_line"
   # The persist request crossed the SAME hop before the restart did.
   [ "$(grep -n '^fm-remote-secondmate-control.sh send' "$dir/ssh.log" | head -1 | cut -d: -f1)" \
      -lt "$(grep -n '^fm-remote-secondmate-control.sh relaunch' "$dir/ssh.log" | head -1 | cut -d: -f1)" ] \
     || fail "the remote mate was restarted before it was asked to persist"$'\n'"$(cat "$dir/ssh.log")"
   pass "T6 a remote mate restarts through the host-local control plane over the fm-on hop"
+}
+
+# --- T6b: a mate with no recorded code root sends none -----------------------
+# A record from before the code-root seam carries no checkout. The parent then
+# passes nothing and the host keeps the checkout its own endpoint record already
+# names, so an update pass cannot silently move such a mate onto a default.
+test_remote_restart_without_a_recorded_code_root_carries_none() {
+  local dir out rc relaunch_line
+  dir=$(new_case remote-no-code-root)
+  setup_remote_case "$dir" sm2 ok
+  export FM_FAKE_ANSWER_STATUS="$dir/home/state/sm2.status"
+  printf 'codex big-model high\n' > "$dir/home/config/secondmate-harness"
+  sed -i '/^code_root=/d' "$dir/home/state/sm2.meta"
+
+  out=$(run_restart "$dir" fm-sm2); rc=$?
+  unset FM_FAKE_ANSWER_STATUS
+
+  expect_code 0 "$rc" "a remote mate without a recorded code root should restart"$'\n'"$out"
+  relaunch_line=$(grep '^fm-remote-secondmate-control.sh relaunch' "$dir/ssh.log" | head -1)
+  [ "$relaunch_line" = "fm-remote-secondmate-control.sh relaunch sm2 codex big-model high" ] \
+    || fail "an absent recorded code root must not be replaced by a default: $relaunch_line"
+  pass "T6b a mate with no recorded code root passes none, so its host keeps its own"
 }
 
 # --- T7: an unreachable host is unknown, never a claimed reload --------------
@@ -580,7 +606,7 @@ test_native_ultra_restart_keeps_local_and_remote_profiles() {
   unset FM_FAKE_ANSWER_STATUS
   expect_code 0 "$rc" "native remote restart failed: $out"
   relaunch_line=$(grep '^fm-remote-secondmate-control.sh relaunch' "$dir/ssh.log" | head -1)
-  [ "$relaunch_line" = "fm-remote-secondmate-control.sh relaunch sm2 pi-signed codex-native/gpt-6-astra ultra" ] \
+  [ "$relaunch_line" = "fm-remote-secondmate-control.sh relaunch sm2 pi-signed codex-native/gpt-6-astra ultra --code-root /srv/fm" ] \
     || fail "remote restart dropped native profile: $relaunch_line"
   pass "native Ultra survives local restart and the remote restart transport"
 }
@@ -849,6 +875,7 @@ test_refused_restart_falls_back_without_claiming_a_reload
 test_local_restart_uses_the_home_pin_and_reports_what_ran
 test_native_ultra_restart_keeps_local_and_remote_profiles
 test_remote_mate_restarts_over_the_transport_hop
+test_remote_restart_without_a_recorded_code_root_carries_none
 test_unreachable_host_is_reported_unknown
 test_concurrent_reply_cannot_release_persist_gate
 test_persist_waits_are_polled_together

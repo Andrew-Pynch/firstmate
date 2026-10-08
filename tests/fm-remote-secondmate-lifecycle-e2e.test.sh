@@ -734,6 +734,20 @@ assert_grep 'herdr_session=fm-remote' "$REMOTE_HOME/state/parent-route/ios.meta"
 assert_grep '--session fm-remote' "$HERDR_LOG" "remote launch did not target the fm-remote session"
 assert_no_grep '--session default' "$HERDR_LOG" "remote launch targeted the interactive default session"
 assert_grep 'window=remote:ios' "$PARENT/state/ios.meta" "parent metadata pretended the endpoint was local"
+# The checkout the mate's own code runs from is a HOST-side path. The parent
+# resolves it, hands it over on the launch, and both records then name it - which
+# is what keeps a later relaunch or respawn from putting the mate back in its
+# home checkout instead of the fleet's patched one.
+assert_grep "code_root=$REMOTE_ROOT" "$PARENT/state/ios.meta" \
+  "the parent route did not record the mate's code root"
+assert_grep "code_root=$REMOTE_ROOT" "$REMOTE_HOME/state/parent-route/ios.meta" \
+  "the remote host did not record the mate's code root"
+# The mate's own pane is the one labeled for it (fm-ios); its presentation
+# workspace is labeled differently and may legitimately sit at the home. What
+# must not happen is the endpoint itself starting in the home checkout.
+mate_launch=$(grep -F -- 'fm-ios' "$HERDR_LOG" || true)
+assert_contains "$mate_launch" "--cwd $REMOTE_ROOT" "the remote launch did not start the mate's pane in its code root"
+assert_not_contains "$mate_launch" "--cwd $REMOTE_HOME" "the remote launch started the mate's pane in its home"
 assert_present "$PARENT/state/procevent/remote-reply-ios.source" "remote spawn did not arm its reply source"
 publish_healthy_watcher_identity "$PARENT/state" "$PARENT" "$ROOT/bin/fm-watch.sh"
 [ "$(remote_env "$ROOT/bin/fm-on.sh" ios fm-remote-secondmate-control.sh state ios)" = alive ] \
@@ -1089,6 +1103,19 @@ RELAUNCH_CHECKPOINT=$(remote_env "$ROOT/bin/fm-on.sh" ios fm-remote-secondmate-c
   relaunch ios codex - - 2>&1) && fail "a restart with no accountable checkout should refuse"
 assert_contains "$RELAUNCH_CHECKPOINT" 'refusing to relaunch without a checkout whose unlanded work can be accounted for' \
   "the host-local restart did not reach the control plane's own pre-stop checkpoint"
+# The relaunch verb carries the mate's code root beside its profile, so an update
+# pass cannot quietly return the mate to its home checkout. A code root that is
+# present but empty is refused here rather than reaching the control plane.
+RELAUNCH_CODED=$(remote_env "$ROOT/bin/fm-on.sh" ios fm-remote-secondmate-control.sh \
+  relaunch ios codex - - --code-root "$REMOTE_ROOT" 2>&1) \
+  && fail "a restart with no accountable checkout should refuse with a code root too"
+assert_contains "$RELAUNCH_CODED" 'refusing to relaunch without a checkout whose unlanded work can be accounted for' \
+  "the relaunch verb rejected --code-root instead of forwarding it"
+RELAUNCH_EMPTY=$(remote_env "$ROOT/bin/fm-on.sh" ios fm-remote-secondmate-control.sh \
+  relaunch ios codex - - --code-root '' 2>&1) \
+  && fail "an empty code root must be refused"
+assert_contains "$RELAUNCH_EMPTY" 'requires a non-empty directory' \
+  "an empty code root was not refused by name"
 cp "$TMP_ROOT/ios-before-relaunch.meta" "$RELAUNCH_ROUTE_META"
 [ "$(remote_env "$ROOT/bin/fm-on.sh" ios fm-remote-secondmate-control.sh state ios)" = alive ] \
   || fail "a refused remote restart must leave the running agent untouched"
@@ -1292,6 +1319,13 @@ if ! wait "$spawn_retirement_pid"; then
   printf 'serialized respawn output:\n%s\n' "$(cat "$TMP_ROOT/spawn-retirement.out")" >&2
   fail "serialized remote respawn failed"
 fi
+# That respawn is the startup liveness path in miniature: it re-resolved the
+# mate's launch from this home's own durable record, not from the home directory,
+# so the mate comes back on the checkout it was launched from.
+assert_grep "code_root=$REMOTE_ROOT" "$REMOTE_HOME/state/parent-route/ios.meta" \
+  "the respawn put the mate back in its home checkout"
+resp_launch=$(grep -F -- 'fm-ios' "$HERDR_LOG" || true)
+assert_not_contains "$resp_launch" "--cwd $REMOTE_HOME" "the respawn launched the mate's pane in its home"
 sleep 0.2
 kill -0 "$teardown_pid" 2>/dev/null || fail "remote retirement bypassed an active backlog handoff"
 touch "$TMP_ROOT/handoff.release"

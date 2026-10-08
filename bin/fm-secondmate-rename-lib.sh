@@ -33,6 +33,11 @@
 #   FM_SECONDMATE_RENAME_HOME      the home path after the call
 #   FM_SECONDMATE_RENAME_MOVED     yes | no
 #   FM_SECONDMATE_RENAME_RENAMED   count of renamed home-side records
+#
+# fm_secondmate_rename_home_preflight writes nothing and publishes the same plan
+# the mutation would carry out: FM_SECONDMATE_RENAME_HOME (the home path after
+# the rename) and FM_SECONDMATE_RENAME_MOVED. A caller that must not begin a
+# mutation it cannot finish takes every refusal this file owns there first.
 
 FM_SECONDMATE_RENAME_ENDPOINT=absent
 FM_SECONDMATE_RENAME_HOME=
@@ -194,30 +199,52 @@ fm_secondmate_rename_live_children() {  # <home>
 
 # fm_secondmate_rename_rewrite_meta_refs: rewrite the two references a home's
 # own endpoint metadata carries - the absolute home path it points at, and the
-# id it is bound to (`endpoint_task_id`, and any window or task-tmp value that
-# embeds the id) - inside each named file, atomically. Every other byte is
-# preserved, because every other field belongs to another owner. Files that need
-# neither replacement are left untouched.
+# id it is bound to - inside each named file, atomically. Which field carries
+# which belongs to the writer that emits them (bin/fm-spawn.sh): the path fields
+# (worktree, project, home, code_root) carry the home path, and the id fields
+# (window, endpoint_task_id, tasktmp) carry the id. Every other byte, and every
+# other field, is preserved.
+#
+# The two rules differ, and that difference is the whole point:
+#   - a path field follows the home only when the home actually moved, so a
+#     rename that keeps its path can never point a record at a directory nobody
+#     created;
+#   - an id field is rewritten with the bounded rule this file owns in full, so
+#     the substitution cannot reach into an unrelated token.
+# Applying the id rule to every line instead is exactly how a kept home's
+# records came to name a machine-named path that never existed.
+# Files that need no replacement are left untouched.
 fm_secondmate_rename_rewrite_meta_refs() {  # <old-path> <new-path> <old-id> <new-id> <file>...
-  local old_path=$1 new_path=$2 old_id=$3 new_id=$4 file line changed=0
+  local old_path=$1 new_path=$2 old_id=$3 new_id=$4 file line key value planned changed=0 moved=no
   shift 4
+  [ "$old_path" = "$new_path" ] || moved=yes
   for file in "$@"; do
     [ -f "$file" ] && [ ! -L "$file" ] || continue
     changed=0
     while IFS= read -r line || [ -n "$line" ]; do
       case "$line" in
-        *"$old_path"*)
-          line=${line//"$old_path"/"$new_path"}
-          changed=1
+        *=*) key=${line%%=*}; value=${line#*=} ;;
+        *) printf '%s\n' "$line"; continue ;;
+      esac
+      case "$key" in
+        worktree | project | home | code_root)
+          if [ "$moved" = yes ]; then
+            planned=${value//"$old_path"/"$new_path"}
+            if [ "$planned" != "$value" ]; then
+              value=$planned
+              changed=1
+            fi
+          fi
+          ;;
+        window | endpoint_task_id | tasktmp)
+          planned=$(fm_secondmate_rename_replace_bounded "$value" "$old_id" "$new_id")
+          if [ "$planned" != "$value" ]; then
+            value=$planned
+            changed=1
+          fi
           ;;
       esac
-      case "$line" in
-        *"$old_id"*)
-          line=${line//"$old_id"/"$new_id"}
-          changed=1
-          ;;
-      esac
-      printf '%s\n' "$line"
+      printf '%s=%s\n' "$key" "$value"
     done < "$file" > "$file.fm-rename.$$" || return 1
     if [ "$changed" -eq 1 ]; then
       mv -f -- "$file.fm-rename.$$" "$file" || return 1
@@ -228,16 +255,14 @@ fm_secondmate_rename_rewrite_meta_refs() {  # <old-path> <new-path> <old-id> <ne
   return 0
 }
 
-# fm_secondmate_rename_home: rewrite one secondmate home from <old> to <new>.
-# Validates the identity pair first, renames the home's per-id state records,
-# optionally moves the home directory to its machine-named path, rewrites the
-# home paths its own worker records carry, and publishes the parent record and
-# then the identity marker. Sets FM_SECONDMATE_RENAME_HOME and
-# FM_SECONDMATE_RENAME_MOVED.
-fm_secondmate_rename_home() {  # <old-id> <new-id> <home> <keep-path: yes|no>
+# fm_secondmate_rename_home_preflight: every refusal fm_secondmate_rename_home
+# owns, taken with nothing written. <home> is expected to be absolute; this
+# resolves it either way and publishes the plan the mutation would carry out, so
+# a caller that runs this before its own mutations - and the mutation itself -
+# can never disagree about where the home ends up.
+fm_secondmate_rename_home_preflight() {  # <old-id> <new-id> <home> <keep-path: yes|no>
   local old=$1 new=$2 home=$3 keep=$4
-  local marker parent_record route parent_home parent_host base planned dest file
-  local -a move_paths=()
+  local marker parent_record base planned dest live
 
   fm_secondmate_rename_valid_id "$old" || { printf 'error: invalid secondmate id: %s\n' "$old" >&2; return 1; }
   fm_secondmate_rename_valid_id "$new" || { printf 'error: invalid secondmate id: %s\n' "$new" >&2; return 1; }
@@ -261,13 +286,6 @@ fm_secondmate_rename_home() {  # <old-id> <new-id> <home> <keep-path: yes|no>
     printf 'error: secondmate parent record is missing, unsafe, or invalid: %s\n' "$parent_record" >&2
     return 1
   }
-  route=$FM_SECONDMATE_PARENT_ROUTE
-  parent_home=$FM_SECONDMATE_PARENT_HOME
-  parent_host=$FM_SECONDMATE_PARENT_HOST
-
-  FM_SECONDMATE_RENAME_HOME=$home
-  FM_SECONDMATE_RENAME_MOVED=no
-  FM_SECONDMATE_RENAME_RENAMED=0
 
   base=$(basename "$home")
   planned=$(fm_secondmate_rename_replace_bounded "$base" "$old" "$new")
@@ -287,10 +305,6 @@ fm_secondmate_rename_home() {  # <old-id> <new-id> <home> <keep-path: yes|no>
       printf 'error: refusing to move the home to %s: %s is not writable\n' "$dest" "$(dirname "$home")" >&2
       return 1
     fi
-  fi
-
-  if [ "$dest" != "$home" ]; then
-    local live
     live=$(fm_secondmate_rename_live_children "$home")
     if [ -n "$live" ]; then
       printf 'error: refusing to move the home to %s: these child work records still report a live agent\n' "$dest" >&2
@@ -298,6 +312,37 @@ fm_secondmate_rename_home() {  # <old-id> <new-id> <home> <keep-path: yes|no>
       return 1
     fi
   fi
+
+  FM_SECONDMATE_RENAME_HOME=$dest
+  if [ "$dest" = "$home" ]; then
+    FM_SECONDMATE_RENAME_MOVED=no
+  else
+    FM_SECONDMATE_RENAME_MOVED=yes
+  fi
+  return 0
+}
+
+# fm_secondmate_rename_home: rewrite one secondmate home from <old> to <new>.
+# Takes the preflight's refusals first, then renames the home's per-id state
+# records, moves the home directory to its machine-named path when the plan says
+# so, rewrites the home paths its own worker records carry, and publishes the
+# parent record and then the identity marker. Sets FM_SECONDMATE_RENAME_HOME and
+# FM_SECONDMATE_RENAME_MOVED.
+fm_secondmate_rename_home() {  # <old-id> <new-id> <home> <keep-path: yes|no>
+  local old=$1 new=$2 home=$3 keep=$4
+  local given=$3 dest route parent_home parent_host file
+  local -a move_paths=()
+
+  home=$(cd "$given" && pwd -P) || {
+    printf 'error: secondmate home is unavailable or unsafe: %s\n' "$given" >&2
+    return 1
+  }
+  fm_secondmate_rename_home_preflight "$old" "$new" "$home" "$keep" || return 1
+  dest=$FM_SECONDMATE_RENAME_HOME
+  route=$FM_SECONDMATE_PARENT_ROUTE
+  parent_home=$FM_SECONDMATE_PARENT_HOME
+  parent_host=$FM_SECONDMATE_PARENT_HOST
+  FM_SECONDMATE_RENAME_RENAMED=0
 
   fm_secondmate_rename_sweep_dir "$home/state" "$old" "$new" || return 1
   fm_secondmate_rename_sweep_dir "$home/state/parent-route" "$old" "$new" || return 1
@@ -307,7 +352,6 @@ fm_secondmate_rename_home() {  # <old-id> <new-id> <home> <keep-path: yes|no>
       printf 'error: could not move the secondmate home to %s\n' "$dest" >&2
       return 1
     }
-    FM_SECONDMATE_RENAME_MOVED=yes
   fi
 
   for file in "$dest"/state/*.meta "$dest"/state/parent-route/*.meta; do
@@ -316,9 +360,6 @@ fm_secondmate_rename_home() {  # <old-id> <new-id> <home> <keep-path: yes|no>
   done
   if [ "${#move_paths[@]}" -gt 0 ]; then
     fm_secondmate_rename_rewrite_meta_refs "$home" "$dest" "$old" "$new" "${move_paths[@]}" || return 1
-  fi
-  if [ "$FM_SECONDMATE_RENAME_MOVED" = yes ]; then
-    FM_SECONDMATE_RENAME_HOME=$dest
   fi
 
   {

@@ -46,7 +46,11 @@
 # SAME command on its host over bin/fm-on.sh, through the host-local
 # fm-remote-secondmate-control.sh relaunch verb. The restart decision, the
 # profile, the request text, the bound, the failure vocabulary, and this report
-# are all computed here in the primary and are identical for both.
+# are all computed here in the primary and are identical for both. The launch
+# parameters a remote mate cannot resolve on its own - its harness, model, effort
+# and the checkout its code runs from - travel with the request, exactly as they
+# do at launch, so a restart never quietly moves it onto another runtime or back
+# into its own home checkout.
 #
 # Nothing here forces, stashes, or discards anything. bin/fm-control.sh owns the
 # restart transaction, its checkpoint, its journal, and its rollback; a refusal
@@ -125,6 +129,7 @@ HOST=()
 HARNESS=()
 MODEL=()
 EFFORT=()
+CODE_ROOT=()
 RESTART_PID=()
 RESTART_RESULT=()
 
@@ -161,11 +166,14 @@ report_unreached() {  # <id> <reason>
 
 restart_mate() {  # <array-index>
   local i=$1 id restart_out restart_rc restart_reason ran_on
+  local -a remote_args
   id=${IDS[$i]}
   if [ "${PLACEMENT[i]}" = remote ]; then
+    remote_args=("$id" "${HARNESS[i]}" "${MODEL[i]:-default}" "${EFFORT[i]:-default}")
+    [ -z "${CODE_ROOT[i]}" ] || remote_args+=(--code-root "${CODE_ROOT[i]}")
     restart_out=$(FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-on.sh" "$id" \
       fm-remote-secondmate-control.sh relaunch \
-      "$id" "${HARNESS[i]}" "${MODEL[i]:-default}" "${EFFORT[i]:-default}" < /dev/null 2>&1)
+      "${remote_args[@]}" < /dev/null 2>&1)
     restart_rc=$?
   else
     restart_out=$(FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" \
@@ -256,6 +264,7 @@ while [ "$i" -lt "${#IDS[@]}" ]; do
   HARNESS[i]=""
   MODEL[i]=""
   EFFORT[i]=""
+  CODE_ROOT[i]=""
   if ! fm_secondmate_restart_capable "$STATE/$id.meta"; then
     REASON[i]=$FM_SECONDMATE_RESTART_REASON
     i=$((i + 1))
@@ -273,6 +282,11 @@ while [ "$i" -lt "${#IDS[@]}" ]; do
     # pass it explicitly, so both placements land on the same decision.
     HARNESS[i]=$("$SCRIPT_DIR/fm-harness.sh" secondmate 2>/dev/null || true)
     [ -n "${HARNESS[i]}" ] || HARNESS[i]=$FM_SECONDMATE_RESTART_HARNESS
+    # The checkout that mate's own code runs from, carried by THIS home's record
+    # exactly as the profile above is. A mate launched before the parent recorded
+    # one passes nothing, and its host then keeps the code root its own endpoint
+    # record already carries, so a checkout selected by hand on that host stands.
+    CODE_ROOT[i]=$(fm_meta_get "$STATE/$id.meta" code_root)
     MODEL[i]=$("$SCRIPT_DIR/fm-harness.sh" secondmate-model 2>/dev/null || true)
     EFFORT[i]=$("$SCRIPT_DIR/fm-harness.sh" secondmate-effort 2>/dev/null || true)
     case "${EFFORT[i]}" in

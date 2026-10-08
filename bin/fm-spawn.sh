@@ -243,7 +243,13 @@
 #   bin/fm-session-start.sh, and it is recorded as code_root= in state/<id>.meta, so a
 #   relaunch keeps the mate where it was moved instead of silently returning it to its
 #   home. FM_SECONDMATE_CODE_ROOT carries the same value for a launcher that cannot add
-#   a flag (the remote secondmate leg); an explicit --code-root wins over it. The one
+#   a flag; an explicit --code-root wins over it.
+#   A REMOTE mate's code root is a path on ITS host, so the same record lives in this
+#   home's state/<id>.meta and is handed to that host on every launch: the primary's
+#   call first, then this task's recorded value, then the registry's own remote code
+#   root, which is that host's tracked Firstmate checkout. The host validates the path
+#   and records it, so both its own relaunch and the startup liveness respawn keep the
+#   mate on that checkout rather than putting it back in its home. The one
 #   refused pairing is a harness whose launch pre-registers workspace trust for the
 #   mate home (claude): that registration does not cover a code root, so a claude mate
 #   still launches from its home. Moving an ALREADY-RUNNING mate onto a code root is a
@@ -913,7 +919,7 @@ fi
 spawn_remote_secondmate() {
   local id=$1 remote host root home harness positional model effort backend out rc meta tmp
   local remote_backend remote_target remote_harness remote_herdr_session registry_lock remote_lock remote_generation
-  local remote_traceparent remote_recorded_traceparent sm_primary_head sync_out sync_rc
+  local remote_code_root remote_traceparent remote_recorded_traceparent sm_primary_head sync_out sync_rc
   local -a launch_args
   id=${POS[0]:-}
   fm_task_id_creation_valid "$id" || {
@@ -1092,8 +1098,36 @@ spawn_remote_secondmate() {
   if [ "$(fm_trace_context_session_effective "$STATE/.trace-context-effective")" = on ]; then
     remote_traceparent=$(FM_TRACE_CONTEXT=on fm_trace_context_resolve "$CONFIG" "$meta" || true)
   fi
+  # The checkout this mate's own code and extensions run from. It is a HOST-side
+  # path, so only that host can validate it, but the parent owns the durable
+  # record of it - the same reason the parent hands the profile over instead of
+  # letting the host re-resolve it. The order is the primary's own call first,
+  # then whatever this task already recorded, then the registry's remote code
+  # root: that host's tracked Firstmate checkout, which is where the fleet's
+  # patched content lives (bin/fm-farm-patch.sh owns the replay). Resolving it
+  # here is also what makes the startup liveness respawn keep the mate where it
+  # was launched instead of silently returning it to its home.
+  #
+  # A claude mate is the one harness that cannot be moved onto a code root at all
+  # (bin/fm-spawn.sh owns that refusal, because its workspace-trust
+  # pre-registration covers the mate home only), so it keeps the home as its
+  # launch root unless the primary explicitly demanded one - and that demand is
+  # then passed through to be refused there, with the host's own message, instead
+  # of being silently dropped here. The home is what gets passed and recorded
+  # either way, so this home's record and the host's agree on where it runs.
+  remote_code_root=$SECONDMATE_CODE_ROOT
+  case "$harness" in
+    claude*)
+      [ -n "$remote_code_root" ] || remote_code_root=$home
+      ;;
+    *)
+      [ -n "$remote_code_root" ] || remote_code_root=$(fm_meta_get "$meta" code_root)
+      [ -n "$remote_code_root" ] || remote_code_root=$root
+      ;;
+  esac
   launch_args=("$id" "$harness" "$model" "$effort" "$backend")
   [ -z "$remote_traceparent" ] || launch_args+=("$remote_traceparent")
+  launch_args+=(--code-root "$remote_code_root")
   if out=$("$SCRIPT_DIR/fm-on.sh" "$id" fm-remote-secondmate-control.sh launch \
     "${launch_args[@]}" </dev/null 2>&1); then
     rc=0
@@ -1157,6 +1191,7 @@ spawn_remote_secondmate() {
     echo "model=${model#-}"
     echo "effort=${effort#-}"
     echo "home=$home"
+    echo "code_root=$remote_code_root"
     echo "projects=$(secondmate_registry_field "$DATA/secondmates.md" "$id" projects)"
     echo "remote_host=$host"
     echo "remote_root=$root"

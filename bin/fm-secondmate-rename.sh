@@ -33,7 +33,8 @@
 #
 #   Ordering, and what a partial failure leaves behind:
 #     1. read-only preflight: ids, registry route, marker identity, endpoint
-#        verdict, home-move safety, and every record this helper will not rewrite
+#        verdict, the home half's own refusals (the home move and the live child
+#        work that forbids it), and every record this helper will not rewrite
 #        (an unsettled pending reply, a decision binding, a reconcile request)
 #        refuse here, before anything changes;
 #     2. the remote reply source is retired (bin/fm-procevent-remote-reply.sh,
@@ -197,10 +198,12 @@ remote_verb_probe() {
     exit 1
   fi
   # The host's own usage text is the readiness proof: an un-updated code root
-  # answers "unknown command" instead, and the rename must not begin a mutation
-  # it cannot finish on that host.
+  # answers the OLD usage line - which cannot parse the --check the read-only
+  # preflight sends - and the rename must not begin a mutation it cannot finish
+  # on that host. Matching the current line, option list included, is what keeps
+  # a half-updated host from passing this probe and failing later.
   case "$out" in
-    *"fm-remote-secondmate-control.sh rename <old-id> <new-id>"*) return 0 ;;
+    *"fm-remote-secondmate-control.sh rename <old-id> <new-id> [--keep-home-path] [--check]"*) return 0 ;;
   esac
   printf 'error: the Firstmate code root on %s (%s) does not carry the rename verb yet; update that host, then retry\n' \
     "$ROUTE_HOST" "$ROUTE_ROOT" >&2
@@ -284,6 +287,33 @@ preflight_foreign_records() {
     printf 'error: these records still name %s and this helper does not own them; settle or clear them first:\n' "$OLD" >&2
     printf 'error: %s\n' "${survivors[@]}" >&2
     exit 1
+  fi
+  return 0
+}
+
+# The home half's own refusals, taken here rather than where the home is
+# rewritten: the reply channel below is retired and migrated before that step, so
+# a refusal arriving afterwards would leave a parent channel retired for a mate
+# that was never renamed. A local route asks the home half's own preflight
+# directly; a remote one asks the mate's host, because only that host can read
+# its home and its child work.
+preflight_home_half() {
+  local out rc=0 keep_arg
+  local -a remote_args=("$OLD" "$NEW")
+  if [ "$ROUTE_REMOTE" -eq 0 ]; then
+    keep_arg=no
+    [ "$KEEP_PATH" = no ] || keep_arg=yes
+    fm_secondmate_rename_home_preflight "$OLD" "$NEW" "$OLD_HOME" "$keep_arg" || exit 1
+    return 0
+  fi
+  [ "$KEEP_PATH" = no ] || remote_args+=(--keep-home-path)
+  remote_args+=(--check)
+  out=$("$SCRIPT_DIR/fm-on.sh" "$OLD" fm-remote-secondmate-control.sh rename \
+    "${remote_args[@]}" </dev/null 2>&1) || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    printf 'error: the home half of the rename will not proceed on host %s:\n' "$ROUTE_HOST" >&2
+    [ -z "$out" ] || printf '%s\n' "$out" >&2
+    exit "$rc"
   fi
   return 0
 }
@@ -378,8 +408,12 @@ home_rewrite() {
 }
 
 # Rewrite the parent task record in place: the window handle, the endpoint task
-# binding, and the home/worktree paths it carries. Every other line is preserved
-# byte for byte, because every other line belongs to another owner.
+# binding, and the task tmp path it carries, plus the home and code-root paths.
+# The id fields use the same bounded rule the home half owns
+# (bin/fm-secondmate-rename-lib.sh), so a short id cannot reach into an unrelated
+# token in a value that merely contains it. Every other line is preserved byte
+# for byte, because every other line belongs to another owner. A code root
+# outside the home is not under the old path, so a home move leaves it where it is.
 rewrite_parent_meta() {
   local meta="$STATE/$OLD.meta" line value tmp
   [ -f "$meta" ] && [ ! -L "$meta" ] || return 0
@@ -389,19 +423,19 @@ rewrite_parent_meta() {
     case "$line" in
       window=*)
         value=${line#window=}
-        line="window=${value//"$OLD"/"$NEW"}"
+        line="window=$(fm_secondmate_rename_replace_bounded "$value" "$OLD" "$NEW")"
         ;;
       endpoint_task_id=*)
         value=${line#endpoint_task_id=}
-        line="endpoint_task_id=${value//"$OLD"/"$NEW"}"
+        line="endpoint_task_id=$(fm_secondmate_rename_replace_bounded "$value" "$OLD" "$NEW")"
         ;;
-      worktree=*|home=*)
+      worktree=*|home=*|code_root=*)
         value=${line#*=}
         line="${line%%=*}=${value//"$OLD_HOME"/"$NEW_HOME"}"
         ;;
       tasktmp=*)
         value=${line#tasktmp=}
-        line="tasktmp=${value//"$OLD"/"$NEW"}"
+        line="tasktmp=$(fm_secondmate_rename_replace_bounded "$value" "$OLD" "$NEW")"
         ;;
     esac
     printf '%s\n' "$line" >> "$tmp"
@@ -562,6 +596,7 @@ main() {
   preflight_endpoint
   preflight_foreign_records
   preflight_plan
+  preflight_home_half
   reply_source_migrate_cursors
   reply_source_retire
   reply_source_migrate_source

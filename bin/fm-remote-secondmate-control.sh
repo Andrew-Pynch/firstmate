@@ -2,8 +2,8 @@
 # Host-local lifecycle control for the remote secondmate home selected by fm-on.
 #
 # Usage:
-#   fm-remote-secondmate-control.sh launch <id> <harness> <model|-> <effort|-> herdr [traceparent]
-#   fm-remote-secondmate-control.sh relaunch <id> <harness> <model|default|-> <effort|default|->
+#   fm-remote-secondmate-control.sh launch <id> <harness> <model|-> <effort|-> herdr [traceparent] [--code-root <dir>]
+#   fm-remote-secondmate-control.sh relaunch <id> <harness> <model|default|-> <effort|default|-> [--code-root <dir>]
 #   fm-remote-secondmate-control.sh state <id>
 #   fm-remote-secondmate-control.sh route <id>
 #   fm-remote-secondmate-control.sh send <id> <message> [fire-and-forget]
@@ -13,7 +13,7 @@
 #   fm-remote-secondmate-control.sh sync <id> [<parent-commit>]
 #   fm-remote-secondmate-control.sh update <id>
 #   fm-remote-secondmate-control.sh exit <id>
-#   fm-remote-secondmate-control.sh rename <old-id> <new-id> [--keep-home-path]
+#   fm-remote-secondmate-control.sh rename <old-id> <new-id> [--keep-home-path] [--check]
 #   fm-remote-secondmate-control.sh retire <id> [--force]
 #
 # Remote placement ends here, but the second-mate agent always runs on the
@@ -170,8 +170,33 @@ cmd_route() {
 }
 
 cmd_launch() {
-  local id=$1 harness=$2 model=$3 effort=$4 selected_backend=$5 traceparent=${6:-}
+  local id=$1 harness=$2 model=$3 effort=$4 selected_backend=$5
+  local traceparent='' code_root='' arg
   local current meta out herdr_session
+
+  shift 5
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --code-root)
+        [ "$#" -ge 2 ] || usage
+        [ -n "$2" ] || die "--code-root requires a non-empty directory"
+        code_root=$2
+        shift 2
+        ;;
+      --code-root=*)
+        code_root=${1#--code-root=}
+        [ -n "$code_root" ] || die "--code-root requires a non-empty directory"
+        shift
+        ;;
+      -*) usage ;;
+      *)
+        # The optional trailing positional is the parent-resolved trace carrier.
+        [ -z "$traceparent" ] || usage
+        traceparent=$1
+        shift
+        ;;
+    esac
+  done
 
   validate_id "$id"
   validate_home "$id"
@@ -207,10 +232,18 @@ cmd_launch() {
   # already fast-forwarded this home to ITS primary commit and pushed inherited
   # local material, so this spawn must not redo either against this host's own
   # Firstmate copy, which would target the wrong checkout.
+  #
+  # --code-root is the CHECKOUT this mate's own code and extensions run from, a
+  # host-side path the parent resolved (its own durable record, or this host's
+  # code root in the secondmate registry). It is passed on every launch, so a
+  # fresh spawn records the checkout the mate actually runs from instead of
+  # recording the home and silently returning the mate home on the next one.
+  # fm-spawn validates the path here, where it is meaningful.
   ARGS=("$id" "$TARGET_HOME" --secondmate --harness "$harness" --backend "$selected_backend")
   [ "$model" = - ] || ARGS+=(--model "$model")
   [ "$effort" = - ] || ARGS+=(--effort "$effort")
   [ -z "$traceparent" ] || ARGS+=(--traceparent "$traceparent")
+  [ -z "$code_root" ] || ARGS+=(--code-root "$code_root")
   if ! out=$(HERDR_SESSION="$REMOTE_HERDR_SESSION" FM_HOME="$FM_ROOT" FM_ROOT_OVERRIDE="$FM_ROOT" \
     FM_STATE_OVERRIDE="$CONTROL_STATE" FM_DATA_OVERRIDE="$CONTROL_DATA" \
     FM_CONFIG_OVERRIDE="$TARGET_HOME/config" FM_SKIP_SECONDMATE_INHERIT=1 \
@@ -239,9 +272,33 @@ cmd_launch() {
 # the copy on this host is a different home's file, so letting the control plane
 # re-resolve it here would silently drift the mate onto another runtime. `default`
 # explicitly clears an absent parent pin; `-` remains its compatibility spelling.
+#
+# `--code-root` is the same parent-resolved checkout cmd_launch passes, for the
+# same reason: the mate must come back where it was moved rather than home.
+# Without it the control plane keeps the code root its own endpoint record
+# carries, which is what a mate launched before the parent recorded one relies on.
 cmd_relaunch() {
   local id=$1 harness=$2 model=$3 effort=$4
+  local code_root='' arg
   local -a control_args
+
+  shift 4
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --code-root)
+        [ "$#" -ge 2 ] || usage
+        [ -n "$2" ] || die "--code-root requires a non-empty directory"
+        code_root=$2
+        shift 2
+        ;;
+      --code-root=*)
+        code_root=${1#--code-root=}
+        [ -n "$code_root" ] || die "--code-root requires a non-empty directory"
+        shift
+        ;;
+      *) usage ;;
+    esac
+  done
 
   validate_id "$id"
   validate_home "$id"
@@ -256,6 +313,7 @@ cmd_relaunch() {
   [ "$model" != - ] || model=default
   [ "$effort" != - ] || effort=default
   control_args=("$id" relaunch --harness "$harness" --model "$model" --effort "$effort")
+  [ -z "$code_root" ] || control_args+=(--code-root "$code_root")
   # The same launch-boundary facts cmd_launch establishes: the endpoint lives in
   # the dedicated fm-remote session, and the parent already owns both convergence
   # legs, so the host-local spawn must not re-sync or re-inherit against this
@@ -290,14 +348,42 @@ cmd_exit() {
 # the parent reaches through bin/fm-on.sh. The endpoint is retired BEFORE the
 # home moves, because it is recorded inside this home's private parent-route
 # state.
+#
+# `--check` answers the parent's read-only half instead: the home half's own
+# refusals, including the child work that forbids a move, with nothing written.
+# The parent takes those before it retires the reply channel, so a home that
+# cannot move leaves that channel armed.
 cmd_rename() {
-  local id=$1 new=$2 keep=${3:-} keep_arg=no
+  local id='' new='' keep_arg=no check=no arg
+  for arg in "$@"; do
+    case "$arg" in
+      --keep-home-path) keep_arg=yes ;;
+      --check) check=yes ;;
+      -*) usage ;;
+      *)
+        if [ -z "$id" ]; then
+          id=$arg
+        elif [ -z "$new" ]; then
+          new=$arg
+        else
+          usage
+        fi
+        ;;
+    esac
+  done
+  [ -n "$id" ] && [ -n "$new" ] || usage
   validate_id "$id"
   validate_id "$new"
   [ "$id" != "$new" ] || die "renaming $id to itself is not a rename"
-  case "$keep" in '') ;; --keep-home-path) keep_arg=yes ;; *) usage ;; esac
   # Validates the seeded-home identity and refuses a home marked for another id.
   validate_home "$id"
+  if [ "$check" = yes ]; then
+    fm_secondmate_rename_home_preflight "$id" "$new" "$TARGET_HOME" "$keep_arg" || return 1
+    printf 'schema=fm-remote-secondmate-rename-check.v1\n'
+    printf 'home=%s\n' "$FM_SECONDMATE_RENAME_HOME"
+    printf 'moved=%s\n' "$FM_SECONDMATE_RENAME_MOVED"
+    return 0
+  fi
   fm_secondmate_rename_retire_endpoint "$CONTROL_STATE/$id.meta" "$id" || return 1
   fm_secondmate_rename_home "$id" "$new" "$TARGET_HOME" "$keep_arg" || return 1
   printf 'schema=fm-remote-secondmate-rename.v1\n'
@@ -473,10 +559,10 @@ cmd_retire() {
 }
 
 case "${1:-}" in
-  launch) shift; [ "$#" -ge 5 ] && [ "$#" -le 6 ] || usage; cmd_launch "$@" ;;
-  relaunch) shift; [ "$#" -eq 4 ] || usage; cmd_relaunch "$@" ;;
+  launch) shift; [ "$#" -ge 5 ] || usage; cmd_launch "$@" ;;
+  relaunch) shift; [ "$#" -ge 4 ] || usage; cmd_relaunch "$@" ;;
   exit) shift; [ "$#" -eq 1 ] || usage; cmd_exit "$@" ;;
-  rename) shift; { [ "$#" -eq 2 ] || [ "$#" -eq 3 ]; } || usage; cmd_rename "$@" ;;
+  rename) shift; [ "$#" -ge 2 ] || usage; cmd_rename "$@" ;;
   state) shift; [ "$#" -eq 1 ] || usage; validate_id "$1"; validate_home "$1"; state_value "$1" ;;
   route) shift; [ "$#" -eq 1 ] || usage; cmd_route "$1" ;;
   send) shift; [ "$#" -ge 2 ] && [ "$#" -le 3 ] || usage; cmd_send "$@" ;;

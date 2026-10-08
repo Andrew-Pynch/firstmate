@@ -177,10 +177,24 @@ assert_not_contains "$(page_part running-now)" 'alpha-fix-report.html' "a report
 rm -f "$HOME_DIR/data/alpha-fix/report.md" "$HOME_DIR/data/alpha-fix/leak.md"
 pass "each task's worker documents render beside the page and link from its row; briefs, secrets and outside paths do not"
 
+python3 - "$KEEP" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+d["factory"] = [{"t": "Pick the banner color now", "unblocks": "alpha banner ships tonight", "task": "call-new", "options": ["Red", "Blue"]},
+                {"t": "Confirm four prod checks", "unblocks": "Sprint 2 counts close", "links": [{"label": "STA-9", "url": "https://linear.app/x/issue/STA-9"}]}]
+json.dump(d, open(sys.argv[1], "w"))
+PY
+"$ROOT/bin/fm-current-page.sh" >/dev/null
+band=$(page_part factory)
+assert_contains "$band" 'task=call-new' "a factory row tied to an open hold sits in the band"
+assert_contains "$band" 'alpha banner ships tonight' "each factory row says what its answer unblocks"
+assert_contains "$band" 'href=https://linear.app/x/issue/STA-9' "a factory row without buttons links where the answer happens"
 "$ROOT/bin/fm-tasks-axi.sh" unhold call-new >/dev/null
 "$ROOT/bin/fm-current-page.sh" >/dev/null
 assert_not_contains "$(cat "$PAGE")" 'Pick the banner color' "an answered call leaves the page on the next render"
-pass "releasing the backlog row removes its need"
+assert_not_contains "$(page_part factory)" 'task=call-new' "a factory row leaves the band when its hold closes"
+assert_contains "$(page_part factory)" 'Confirm four prod checks' "an untied factory row stays until the keeper removes it"
+pass "releasing the backlog row removes its need and its factory row"
 
 python3 - "$KEEP" <<'PY'
 import json, sys

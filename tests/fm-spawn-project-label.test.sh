@@ -54,4 +54,61 @@ pass "the project-token flag refuses a missing, empty, split, or secondmate valu
 [ -e "$HOME_DIR/state/some-task.meta" ] && fail "a refused spawn must not write a task record"
 pass "a refused project-token spawn leaves no task record"
 
+# Run the public spawn command against a stateful Herdr protocol fixture.
+# Both homes must place the task directly outside the parent's workspace.
+# This proves Firstmate's behavior, not persistence in a live Herdr server.
+# shellcheck source=tests/fixtures.sh
+. "$ROOT/tests/fixtures.sh"
+fm_git_identity fmtest fmtest@example.invalid
+for shape in primary secondmate; do
+  dir="$TMP_ROOT/$shape"
+  home="$dir/home"
+  project="$dir/project"
+  wt="$dir/wt"
+  id="label-$shape"
+  mkdir -p "$home/state" "$home/data" "$home/config" "$home/projects"
+  # The session lock's production namespace is machine-private. Redirect only
+  # that provider boundary in an isolated code copy, never the labeling code.
+  mkdir -p "$dir/code"
+  cp -R "$ROOT/bin" "$dir/code/bin"
+  # shellcheck disable=SC2016 # Expand this variable when the copied backend runs, not while generating it.
+  printf '\nfm_backend_herdr_presentation_lock_namespace() { printf "%%s" "$FM_LABEL_STUB_LOCKS"; }\n' \
+    >> "$dir/code/bin/backends/herdr.sh"
+  mkdir -m 700 "$dir/locks"
+  fm_git_worktree "$project" "$wt" "fm-$id"
+  fm_test_spawn_brief "$home" "$id"
+  parent_label=firstmate
+  if [ "$shape" = secondmate ]; then
+    printf 'mate-label\n' > "$home/.fm-secondmate-home"
+    parent_label=2ndmate-mate-label
+  fi
+  printf '%s\n' '- project [local-only] subprojects=pilot,parts - Org/project' > "$home/data/projects.md"
+  fake=$(fm_test_make_spawn_fakebin "$dir/fake" codex)
+  cp "$ROOT/tests/assets/fm-spawn-herdr-stub.py" "$fake/herdr"
+  stub_state="$dir/herdr.json"
+  jq -n --arg label "$parent_label" '{
+    calls:[],
+    workspaces:[{workspace_id:"w1",label:$label,focused:true,active_tab_id:"w1:t1"}],
+    tabs:[{workspace_id:"w1",tab_id:"w1:t1",label:"Main",focused:true}],
+    panes:[{workspace_id:"w1",tab_id:"w1:t1",pane_id:"w1:p1"}]
+  }' > "$stub_state"
+  out=$(env -u HERDR_ENV -u HERDR_PANE_ID -u HERDR_SOCKET_PATH -u HERDR_WORKSPACE_ID \
+    FM_HOME="$home" FM_ROOT_OVERRIDE="$dir/code" FM_SPAWN_NO_GUARD=1 \
+    FM_LABEL_STUB_STATE="$stub_state" FM_LABEL_STUB_WT="$wt" FM_LABEL_STUB_LOCKS="$dir/locks" \
+    HERDR_SESSION=label-fixture PATH="$fake:$PATH" \
+    bash "$dir/code/bin/fm-spawn.sh" "$id" "$project" 'true' --harness codex \
+      --mode local-only --yolo off --backend herdr --project-token parts 2>&1) \
+    || fail "$shape project-label spawn failed: $out"
+  jq -e --arg parent "$parent_label" '
+    (.workspaces[] | select(.workspace_id == "w1") | .label == $parent and .tokens == null)
+    and (.workspaces[] | select(.workspace_id == "w2") | .tokens.project == "parts")
+    and (.panes[] | select(.pane_id == "w2:p1") | .tokens.project == "parts")
+    and ([.tabs[] | select(.workspace_id == "w1")] | length == 1)
+    and ([.calls[] | select(.[0:2] == ["tab","create"] and
+       (index("--workspace") as $i | .[$i + 1] == "w1"))] | length == 0)
+  ' "$stub_state" >/dev/null || fail "$shape spawn changed its parent or lost the explicit project token"
+  assert_grep 'project_token=parts' "$home/state/$id.meta" "explicit subproject identity was not recorded"
+  pass "$shape spawn labels its new workspace and pane without creating a worker in the parent"
+done
+
 echo "ALL TESTS PASSED"

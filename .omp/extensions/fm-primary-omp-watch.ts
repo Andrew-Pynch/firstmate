@@ -13,7 +13,7 @@
 //     actionable close persists the replacement handoff and the next owning
 //     session_start, in this process or a later one, replays it. Replaying a
 //     wake main has already drained is harmless (the queue is durable and the
-//     drain is idempotent); losing one across /new is not.
+//     drain is idempotent); losing one across a session replacement is not.
 //   - Replacement shutdown retires the established predecessor arm before the
 //     successor arms; unlike Pi, it is not retained until a distinct active
 //     successor generation commits its own arm, so omp keeps the plain
@@ -25,14 +25,29 @@
 //     /fm-watch-arm-omp; the loaded-build marker is state/.omp-watch-extension-loaded.
 //
 // Session-generation ownership (stated once here):
-// omp emits session_shutdown for ordinary same-process replacements (/new,
-// /resume, /fork) as well as terminal quit. This extension binds one generation
-// per session activation. Only the active live generation may start, stop,
-// rearm, or clear the arm child. An owning replacement session_start (or fresh
-// factory bind) arms its new generation without a model turn. A replacement
-// handoff carries actionable closes that were still pending delivery; its
-// durable state lives at state/extensions/omp-primary-watch/session-replacement-actionable.json.
+// Verified on omp 18.2.10: session_shutdown is emitted only when a session is
+// disposed - terminal quit, the end of every in-process child session, and a
+// listing such as `omp models`, which binds this factory and never emits
+// session_start. /new, /resume and /fork keep the session and emit
+// session_switch; compaction emits session_compact. Earlier releases also
+// emitted session_shutdown around same-process replacements, so the replacement
+// handling below stays. This extension binds one generation per session
+// activation. Only the active live generation may start, stop, rearm, or clear
+// the arm child. An owning replacement session_start (or fresh factory bind)
+// arms its new generation without a model turn. A replacement handoff carries
+// actionable closes that were still pending delivery; its durable state lives at
+// state/extensions/omp-primary-watch/session-replacement-actionable.json.
 // Stale callbacks from a prior generation are no-ops against the active replacement.
+// The active generation is process-global per home, not module state: omp
+// rebinds this factory for every in-process child session (the task tool, eval
+// agent(), /tan), sometimes from a re-evaluated module, and a child shares the
+// primary's pid and so passes the session-lock check. A binding whose
+// session_start finds another binding's generation live is a child for good: it
+// never activates, arms, or receives a wake, and its session_shutdown touches
+// nothing. A non-child binding whose generation stopped without a following
+// session_start while no other generation is live is orphaned, not ending: the
+// next arm call or agent start activates a fresh generation, which re-arms and
+// replays the stuck handoff tokens, and any refusal names those tokens.
 //
 // Delivery versus consumption (stated once here):
 // A main follow-up is delivered once omp accepts the hidden custom message
@@ -151,9 +166,7 @@ const repairOnlyHint = "call fm_watch_arm_omp again only after a later notificat
 const shuttingDownMessage = "watcher: not armed - omp session is shutting down";
 const watcherWakeCustomType = "firstmate-primary-omp-watcher-wake";
 
-let nextGenerationId = 0;
 let nextHandoffId = 0;
-let activeGeneration: SessionGeneration | null = null;
 let replacementHandoff: PendingActionableClose[] | null = null;
 type ReplacementActionableReceiver = (pending: PendingActionableClose) => void;
 type ActionableDeliveryClaim = {
@@ -165,6 +178,10 @@ type ReplacementCoordinator = {
   pending: PendingActionableClose[];
   nextTokenId: number;
   deliveries: Map<string, ActionableDeliveryClaim>;
+  // The session generation that owns this home's watch in this process, and
+  // the counter naming generations; see "Session-generation ownership" above.
+  activeGeneration?: SessionGeneration | null;
+  nextGenerationId?: number;
 };
 type ReplacementCoordinatorGlobal = typeof globalThis & {
   __firstmateOmpWatchReplacements?: Map<string, ReplacementCoordinator>;
@@ -230,10 +247,40 @@ function lockOwnership(): LockOwnership {
   return pidAlive(lockPid) ? "other" : "missing";
 }
 
+// The loaded marker vouches that the session holding this home's lock loaded
+// this build, and bin/fm-wake-lib.sh accepts it only when it names the lock
+// pid. So only that process, or a candidate while no live session holds the
+// lock, may write it; a descendant omp that sees the holder in its ancestry
+// (the `omp models` listing bin/fm-spawn.sh runs from the primary's own shell)
+// would otherwise record its own short-lived pid over the live primary's.
 function markLoaded(): void {
-  if (lockOwnership() === "other") return;
+  let lockPid = "";
+  try {
+    lockPid = readFileSync(`${state}/.lock`, "utf8").trim();
+  } catch {
+    lockPid = "";
+  }
+  if (lockPid) {
+    if (!/^[0-9]+$/.test(lockPid) || lockPid === "1") return;
+    if (lockPid !== String(process.pid) && pidAlive(lockPid)) return;
+  }
   mkdirSync(state, { recursive: true });
   writeFileSync(marker, `${extensionVersion}\n${process.pid}\n`);
+}
+
+// The replacement-handoff tokens still waiting for delivery, for messages that
+// must name what a stranded generation is holding. Never throws.
+function pendingHandoffTokens(): string {
+  const tokens = replacementCoordinator.pending.map((pending) => pending.token);
+  let unreadable = "";
+  try {
+    for (const pending of validateReplacementHandoff(JSON.parse(readFileSync(actionableHandoff, "utf8")))) {
+      if (!tokens.includes(pending.token)) tokens.push(pending.token);
+    }
+  } catch (error) {
+    if (nodeErrorCode(error) !== "ENOENT") unreadable = ` (handoff unreadable: ${error instanceof Error ? error.message : String(error)})`;
+  }
+  return `${tokens.length > 0 ? tokens.join(", ") : "none"}${unreadable}`;
 }
 
 function actionableLine(output: string): string {
@@ -391,8 +438,10 @@ function classifyClose(stdout: string, stderr: string, code: number | null, sign
 }
 
 function createGeneration(): SessionGeneration {
+  const id = (replacementCoordinator.nextGenerationId ?? 0) + 1;
+  replacementCoordinator.nextGenerationId = id;
   return {
-    id: ++nextGenerationId,
+    id,
     stopping: false,
     replacement: false,
     child: null,
@@ -409,11 +458,17 @@ function createGeneration(): SessionGeneration {
 }
 
 function activateGeneration(generation: SessionGeneration): void {
-  activeGeneration = generation;
+  replacementCoordinator.activeGeneration = generation;
 }
 
 function generationIsLive(generation: SessionGeneration): boolean {
-  return activeGeneration === generation && !generation.stopping;
+  return replacementCoordinator.activeGeneration === generation && !generation.stopping;
+}
+
+// The live generation another session binding in this process holds, if any.
+function liveGenerationElsewhere(own: SessionGeneration): SessionGeneration | null {
+  const active = replacementCoordinator.activeGeneration ?? null;
+  return active && active !== own && !active.stopping ? active : null;
 }
 
 function stopGeneration(generation: SessionGeneration): ChildProcess | null {
@@ -470,13 +525,16 @@ async function stopSessionGeneration(generation: SessionGeneration, replacement:
 }
 
 const cleanupOnProcessExit = () => {
-  if (activeGeneration) stopGeneration(activeGeneration);
+  if (replacementCoordinator.activeGeneration) stopGeneration(replacementCoordinator.activeGeneration);
 };
 process.once("exit", cleanupOnProcessExit);
 
 export default function (pi: ExtensionAPI) {
   let generation = createGeneration();
-  activateGeneration(generation);
+  // Provisional until session_start decides it: a binding made while another
+  // binding's generation is live is a child session and stays inactive.
+  let childSession = liveGenerationElsewhere(generation) !== null;
+  if (!childSession) activateGeneration(generation);
 
   async function sendWake(
     owner: SessionGeneration,
@@ -1036,8 +1094,60 @@ export default function (pi: ExtensionAPI) {
     return result;
   }
 
+  // A non-child binding whose generation is no longer live while no other
+  // binding's generation is: a session_shutdown ended it with no session_start
+  // after it, yet this session is still serving. Activate a fresh generation so
+  // the next arm owns the watch again and replays what the stranded one holds.
+  function recoverOrphanedGeneration(trigger: string): ArmResult {
+    const stranded = generation;
+    const tokens = pendingHandoffTokens();
+    const cause = stranded.stopping
+      ? `generation ${stranded.id} stopped at session_shutdown with no following session_start`
+      : `generation ${stranded.id} is no longer the active generation`;
+    const owner = liveGenerationElsewhere(stranded);
+    if (owner) {
+      return {
+        ok: false,
+        message: `${shuttingDownMessage}: ${cause}; pending handoff token(s): ${tokens}; recovery attempted: none, because generation ${owner.id} of another session in this process is live and owns the watcher`,
+      };
+    }
+    generation = createGeneration();
+    activateGeneration(generation);
+    return {
+      ok: true,
+      message: `watcher: recovered on ${trigger} - ${cause}; activated fresh generation ${generation.id}, which replays pending handoff token(s) ${tokens} when this session owns the lock`,
+    };
+  }
+
+  // The tool and the command share one arm path: refuse in a child session,
+  // reconcile the loaded marker, and recover an orphaned generation first.
+  function armOnRequest(trigger: string): ArmResult {
+    if (childSession) {
+      return {
+        ok: false,
+        message: `watcher: not armed - this omp session is a child session of the primary session in process ${process.pid}, whose generation ${replacementCoordinator.activeGeneration?.id ?? "none"} owns this home's watcher; pending handoff token(s): ${pendingHandoffTokens()}; recovery attempted: none, because a child session never owns the watcher - call fm_watch_arm_omp from the primary session`,
+      };
+    }
+    markLoaded();
+    if (generationIsLive(generation)) return activateOwnedWatch(generation);
+    const recovery = recoverOrphanedGeneration(trigger);
+    if (!recovery.ok) return recovery;
+    const result = activateOwnedWatch(generation);
+    return { ok: result.ok, message: `${result.message}\n${recovery.message}` };
+  }
+
   pi.on?.("before_agent_start", (event) => {
     consumeWake(generation, String((event as { prompt?: unknown })?.prompt ?? ""));
+    // A session still starting turns after a session_shutdown that no
+    // session_start followed is orphaned, not ending: re-arm without waiting
+    // for a model to notice the silence.
+    if (childSession || generationIsLive(generation)) return;
+    const recovery = recoverOrphanedGeneration("agent start");
+    if (!recovery.ok) return;
+    markLoaded();
+    if (lockOwnership() !== "owned") return;
+    const result = activateOwnedWatch(generation);
+    if (!result.ok) surfaceFailure(generation, `${result.message}\n${recovery.message}`);
   });
   pi.on?.("message_start", (event) => {
     const message: unknown = event?.message;
@@ -1055,6 +1165,8 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on?.("session_start", async () => {
+    childSession = liveGenerationElsewhere(generation) !== null;
+    if (childSession) return;
     if (generation.stopping) generation = createGeneration();
     activateGeneration(generation);
     markLoaded();
@@ -1062,6 +1174,8 @@ export default function (pi: ExtensionAPI) {
     activateOwnedWatch(generation);
   });
   pi.on?.("session_shutdown", async () => {
+    // A child session's end leaves the primary serving; it holds no generation.
+    if (childSession) return;
     // omp carries no shutdown reason (verified: `reason` is undefined), so the
     // replacement handoff is always persisted when anything is pending; a
     // terminal quit then merely replays an already-drained wake next start.
@@ -1072,7 +1186,7 @@ export default function (pi: ExtensionAPI) {
   pi.registerCommand?.("fm-watch-arm-omp", {
     description: "Arm firstmate watcher supervision through the omp extension instead of foreground bash.",
     handler: async (_args, ctx) => {
-      const result = activateOwnedWatch(generation);
+      const result = armOnRequest("/fm-watch-arm-omp");
       ctx?.ui?.notify?.(result.message, result.ok ? "info" : "warning");
     },
   });
@@ -1087,7 +1201,7 @@ export default function (pi: ExtensionAPI) {
     ],
     parameters: Type.Object({}),
     execute: async () => {
-      const result = activateOwnedWatch(generation);
+      const result = armOnRequest("fm_watch_arm_omp");
       return {
         content: [{ type: "text", text: result.message }],
         details: result,
@@ -1095,5 +1209,5 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
-  markLoaded();
+  if (!childSession) markLoaded();
 }

@@ -46,8 +46,6 @@ type ExtensionAPI = {
   sendMessage?: (message: unknown) => void;
 };
 
-type LockOwnership = "owned" | "missing" | "other";
-
 const extensionFile = fileURLToPath(import.meta.url);
 const extensionDir = dirname(extensionFile);
 const root = resolve(extensionDir, "../..");
@@ -55,12 +53,6 @@ const fmHome = process.env.FM_HOME || process.env.FM_ROOT_OVERRIDE || root;
 const state = process.env.FM_STATE_OVERRIDE || `${fmHome}/state`;
 const marker = `${state}/.omp-turnend-extension-loaded`;
 const extensionVersion = `sha256:${createHash("sha256").update(readFileSync(extensionFile)).digest("hex")}`;
-
-function parentPid(pid: string): string {
-  const result = spawnSync("ps", ["-o", "ppid=", "-p", pid], { encoding: "utf8" });
-  if (result.status !== 0) return "";
-  return result.stdout.trim();
-}
 
 function pidAlive(pid: string): boolean {
   try {
@@ -71,25 +63,24 @@ function pidAlive(pid: string): boolean {
   }
 }
 
-function lockOwnership(): LockOwnership {
+// The loaded marker vouches that the session holding this home's lock loaded
+// this build, and bin/fm-wake-lib.sh accepts it only when it names the lock
+// pid. So only that process, or a candidate while no live session holds the
+// lock, may write it; a descendant omp that sees the holder in its ancestry
+// (the `omp models` listing bin/fm-spawn.sh runs from the primary's own shell)
+// would otherwise record its own short-lived pid over the live primary's.
+function markLoaded(): void {
+  if (!existsSync(state)) return;
   let lockPid = "";
   try {
     lockPid = readFileSync(`${state}/.lock`, "utf8").trim();
   } catch {
-    return "missing";
+    lockPid = "";
   }
-  if (!/^[0-9]+$/.test(lockPid) || lockPid === "1") return "other";
-  let pid = String(process.pid);
-  for (let i = 0; i < 8; i += 1) {
-    if (pid === lockPid) return "owned";
-    pid = parentPid(pid);
-    if (!pid || pid === "1") break;
+  if (lockPid) {
+    if (!/^[0-9]+$/.test(lockPid) || lockPid === "1") return;
+    if (lockPid !== String(process.pid) && pidAlive(lockPid)) return;
   }
-  return pidAlive(lockPid) ? "other" : "missing";
-}
-
-function markLoaded(): void {
-  if (!existsSync(state) || lockOwnership() === "other") return;
   writeFileSync(marker, `${extensionVersion}\n${process.pid}\n`);
 }
 

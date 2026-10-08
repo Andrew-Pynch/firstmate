@@ -1187,6 +1187,27 @@ test_open_decision_clears_on_keyed_resolution
 test_completed_scout_report_is_pointer_not_pending
 test_parked_scout_decision_stays_pending
 test_scout_reports_include_teardown_reports
+# One argv string is capped at MAX_ARG_STRLEN (128 KiB on Linux), so a backlog
+# JSON past that size proves the contribution-input pair never rides argv.
+test_contribution_input_survives_a_large_backlog() {
+  local home out i note
+  home=$(make_home large-backlog)
+  note=$(printf 'x%.0s' $(seq 1 600))
+  {
+    printf '## Queued\n'
+    for i in $(seq 1 300); do
+      printf -- '- [ ] big-task-%s - Big Task %s (repo: alpha) (kind: ship) (since 2026-07-08)\n  %s\n' "$i" "$i" "$note"
+    done
+  } > "$home/data/backlog.md"
+  out=$(FM_HOME="$home" "$SNAPSHOT" --contribution-input 2>&1) \
+    || fail "contribution input failed on a large backlog: ${out:0:300}"
+  [ "$(printf '%s' "$out" | wc -c)" -gt 131072 ] || fail "fixture too small to exceed one argv string"
+  assert_equals "300" "$(printf '%s' "$out" | jq '.backlog.records | length')" \
+    "every backlog record reaches the contribution input"
+  pass "contribution input carries a backlog larger than one argv string"
+}
+
 test_backlog_tasks_axi_forms_and_overrides
 test_view_renders_snapshot
 test_view_renders_dead_secondmate_agent_status
+test_contribution_input_survives_a_large_backlog

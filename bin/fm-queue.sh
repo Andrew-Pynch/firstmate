@@ -43,11 +43,17 @@
 # maintenance is a separate group labelled as not the captain request.
 #
 # States, and nothing else: `queued`, `in flight`, `blocked`, `done`,
-# `waiting on you`, `unknown`.
+# `waiting on you`, `deferred`, `tracking`, `unknown`.
 #   done            the queue row is recorded Done, or the worker reads done.
-#   waiting on you  a captain hold (hold_kind=captain) the captain has not
-#                   answered, except one bucketed `blocked`, whose concrete wait
-#                   is the unresolved blocker.
+#   waiting on you  a live captain hold (hold_kind=captain) the captain has not
+#                   answered that is undated (no hold-until after today) and
+#                   carries a question, except one bucketed `blocked`, whose
+#                   concrete wait is the unresolved blocker.
+#   deferred        the same captain hold, deferred by the captain to a date
+#                   after today; it rejoins `waiting on you` on that date.
+#   tracking        the same captain hold with no question behind it: an empty
+#                   hold reason, or a reason that marks the row as tracking or
+#                   routing only (contains "tracking", or starts "routed to").
 #   unknown         nothing establishes a state: an in-flight row with no worker
 #                   record, a worker record with no proof either way, an
 #                   unreadable home. Never `done`, because a missing worker is an
@@ -82,13 +88,15 @@
 #              text comes from --text, or from stdin when --text is absent.
 #              `--close release` lifts a held decision so its gated work resumes
 #              instead of closing the task; it is refused on a row that is not a
-#              captain hold.
+#              captain hold (`waiting on you`, `deferred`, or `tracking`).
 #   -h,--help  usage
 #
 # Environment:
 #   FM_HOME           operational home whose state/, data/ and backlog are read,
 #                     and the home the answer is handed off in.
 #   FM_QUEUE_TIMEOUT  hard bound in seconds on the snapshot read (default 300).
+#   FM_QUEUE_TODAY    today as YYYY-MM-DD (default: this host's date); a hold
+#                     dated after it reads `deferred`.
 #   FM_QUEUE_SNAPSHOT when set to a readable path, read the snapshot JSON from
 #                     that file instead of invoking the canonical snapshot, so a
 #                     fixture can drive the renderer.
@@ -102,6 +110,7 @@ SNAPSHOT="$SCRIPT_DIR/fm-fleet-snapshot.sh"
 
 FM_QUEUE_TIMEOUT=${FM_QUEUE_TIMEOUT:-300}
 case "$FM_QUEUE_TIMEOUT" in ''|*[!0-9]*|0) FM_QUEUE_TIMEOUT=300 ;; esac
+FM_QUEUE_TODAY=${FM_QUEUE_TODAY:-$(date +%F)}
 
 usage() {
   cat <<'EOF'
@@ -121,6 +130,7 @@ maintenance grouped apart. The listing is read-only; it starts nothing.
   -h,--help  this help
 
 Every row carries its state (queued, in flight, blocked, done, waiting on you,
+deferred, tracking,
 unknown), its wave, its tickets, its authoritative source, freshness, owner and
 next action, plus its full text. Nothing is clipped and no bucket is capped.
 EOF
@@ -198,12 +208,28 @@ esac
 # the model already carries. The answer path reuses this exact model, so it acts
 # on the state the listing would print, never on a second classification.
 render_model() {  # <mode: human|json|answer>
-  printf '%s' "$SNAP" | jq -r --arg mode "$1" '
+  printf '%s' "$SNAP" | jq -r --arg mode "$1" --arg today "$FM_QUEUE_TODAY" '
 # ---------------------------------------------------------------------------
 # shape helpers
 # ---------------------------------------------------------------------------
 def dash: if . == null or . == "" then "-" else tostring end;
-def state_rank: {"waiting on you":0,"unknown":1,"blocked":2,"in flight":3,"queued":4,"done":5}[.] // 9;
+def state_rank: {"waiting on you":0,"unknown":1,"blocked":2,"in flight":3,"queued":4,"deferred":5,"tracking":6,"done":7}[.] // 9;
+# A captain hold asks the captain now only when it is undated (or its date has
+# arrived) and carries a question; the other two stay visible under their own label.
+def captain_state($r):
+  ($r.hold_reason // "") as $why
+  | if ($why | test("^\\s*$")) or ($why | test("tracking"; "i")) or ($why | test("^\\s*routed to"; "i")) then "tracking"
+    elif (($r.hold_until // "") != "" and $r.hold_until > $today) then "deferred"
+    else "waiting on you" end;
+def captain_why($r; $state):
+  if $state == "deferred" then "deferred by you until \($r.hold_until)"
+  elif $state == "tracking" then "tracking row; no question for you"
+  else "held for you (\($r.hold_bucket // "live") hold\(if ($r.hold_age_days // null) != null then ", \($r.hold_age_days)d old" else "" end))" end;
+def captain_next($state):
+  if $state == "deferred" then "none until the date; then answer the hold"
+  elif $state == "tracking" then "firstmate: keep or retire the tracking row"
+  else "you: answer the hold" end;
+def is_captain_state: . == "waiting on you" or . == "deferred" or . == "tracking";
 def is_cut: type == "string" and test("…$");
 
 # The canonical snapshot does not truncate this home own backlog rows, so a cut
@@ -307,7 +333,7 @@ def worker_state($t):
 def row_state($r; $t):
   ($t.current_state.state // null) as $cs
   | if $r.state == "done" or $cs == "done" then "done"
-    elif ($r.hold_kind // null) == "captain" and ($r.hold_bucket // "live") != "blocked" then "waiting on you"
+    elif ($r.hold_kind // null) == "captain" and ($r.hold_bucket // "live") != "blocked" then captain_state($r)
     elif (($r.unresolved_blocker_ids // []) | length) > 0 then "blocked"
     elif ($r.hold_kind // null) != null then "blocked"
     elif $t == null then (if $r.state == "in_flight" then "unknown" else "queued" end)
@@ -320,8 +346,7 @@ def why_of($r; $t; $state):
   ($t.current_state.state // null) as $cs
   | if $state == "done" and $r.state == "done" then "the queue row is recorded Done"
     elif $state == "done" then "the worker reads done (\($t.current_state.source))"
-    elif $state == "waiting on you"
-      then "held for you (\($r.hold_bucket // "live") hold\(if ($r.hold_age_days // null) != null then ", \($r.hold_age_days)d old" else "" end))"
+    elif ($state | is_captain_state) then captain_why($r; $state)
     elif $state == "unknown" and $t == null
       then "the row is in flight with no worker record (unknown/no-worker-record)"
     elif $state == "unknown"
@@ -339,7 +364,7 @@ def why_of($r; $t; $state):
     else "-" end;
 
 def next_of($r; $state):
-  if $state == "waiting on you" then "you: answer the hold"
+  if ($state | is_captain_state) then captain_next($state)
   elif $state == "unknown" then "firstmate: reconcile the row against its own record before anything else"
   elif $state == "blocked" and (($r.unresolved_blocker_ids // []) | length) > 0
     then "firstmate: clear \((($r.unresolved_blocker_ids // []) | join(", ")))"
@@ -482,7 +507,7 @@ def maintenance_lines:
 # array applied.
 | [ $mates[] | . as $m
     | ([ ($m.active_children // [])[] | . + {__state:"in flight", __src:"active_children"} ]
-       + [ ($m.queued // [])[] | . + {__state:(if (.hold_kind // null) == "captain" and (.hold_bucket // "live") != "blocked" then "waiting on you"
+       + [ ($m.queued // [])[] | . + {__state:(if (.hold_kind // null) == "captain" and (.hold_bucket // "live") != "blocked" then captain_state(.)
                                            elif ((.unresolved_blocker_ids // []) | length) > 0 then "blocked"
                                            elif (.hold_kind // null) != null then "blocked"
                                            else "queued" end), __src:"queued"} ]
@@ -498,7 +523,7 @@ def maintenance_lines:
        project_token:row_project_token($r),
        kind:($r.kind // null),
        state:$state,
-       why:(if $state == "waiting on you" then "held for you (\($r.hold_bucket // "live") hold)"
+       why:(if ($state | is_captain_state) then captain_why($r; $state)
             elif $state == "blocked" and (($r.unresolved_blocker_ids // []) | length) > 0
               then "waiting on \((($r.unresolved_blocker_ids // []) | join(", ")))"
             elif $state == "blocked" then "held by a hold of kind \($r.hold_kind)"
@@ -510,7 +535,7 @@ def maintenance_lines:
        freshness:(if ($m.freshness.observed_at // null) != null
                   then "\($m.freshness.status // "unknown") \($m.freshness.observed_at) (\($m.freshness.age_seconds // "?")s)"
                   else "unavailable" end),
-       next_action:(if $state == "waiting on you" then "you: answer the hold"
+       next_action:(if ($state | is_captain_state) then captain_next($state)
                     elif $state == "blocked" and (($r.unresolved_blocker_ids // []) | length) > 0
                       then "firstmate: clear \((($r.unresolved_blocker_ids // []) | join(", ")))"
                     elif $state == "blocked" and ($r.hold_kind // null) != null
@@ -701,7 +726,7 @@ cmd_answer() {  # <model-json>
     || die "row $ROW_ID belongs to $owner; answer it in that home, not this one"
   [ "$state" != "done" ] \
     || die "row $ROW_ID already reads done; there is nothing left to answer"
-  if [ "$state" = "waiting on you" ]; then
+  if [ "$state" = "waiting on you" ] || [ "$state" = deferred ] || [ "$state" = tracking ]; then
     keyed=1
   elif [ "$CLOSE_MODE" = release ]; then
     die "row $ROW_ID is not a captain hold; --close release applies only to a held decision"

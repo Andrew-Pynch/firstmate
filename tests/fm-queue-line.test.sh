@@ -27,18 +27,18 @@ TMP_ROOT=$(fm_test_tmproot fm-queue-line)
 command -v jq >/dev/null 2>&1 || { echo "skip: jq not found"; exit 0; }
 [ -x "$LINE" ] || fail "bin/fm-queue-line.sh is missing or not executable"
 
-# row <id> <title> <hold_kind|-> <hold_bucket|-> <until|-> <age|-> <state>:
+# row <id> <title> <hold_kind|-> <hold_bucket|-> <until|-> <age|-> <state> [reason]:
 # one canonical-snapshot backlog record.
-row() {  # <id> <title> <kind> <bucket> <until> <age> <state>
+row() {  # <id> <title> <kind> <bucket> <until> <age> <state> [reason]
   jq -cn --arg id "$1" --arg title "$2" --arg kind "$3" --arg bucket "$4" \
-    --arg until "$5" --arg age "$6" --arg state "$7" '
+    --arg until "$5" --arg age "$6" --arg state "$7" --arg reason "${8-Answer this one.}" '
     {order: 1, state: $state, structured: true, id: $id, title: $title, repo: "alpha", kind: "ship",
      captain_actionable: ($kind == "captain"),
      hold_kind: (if $kind == "-" then null else $kind end),
      hold_bucket: (if $bucket == "-" then null else $bucket end),
      hold_until: (if $until == "-" then null else $until end),
      hold_age_days: (if $age == "-" then null else ($age | tonumber) end),
-     hold_reason: (if $kind == "captain" then "Answer this one." else null end),
+     hold_reason: (if $kind == "captain" and $reason != "" then $reason else null end),
      blocked_by_ids: [], unresolved_blocker_ids: [], links: [], body_lines: [],
      since: "2026-01-01",
      project_resolution: {status: "resolved", project: "alpha", token: "alpha"}}'
@@ -142,6 +142,32 @@ test_longest_wait_outranks_when_nothing_is_due() {
   assert_contains "$out" "waiting on you (3)" "every waiting row is counted"
   assert_contains "$out" "(+2 more)" "the remaining count follows the named item"
   pass "with nothing due, the longest-waiting hold leads the line"
+}
+
+test_dated_deferrals_and_tracking_rows_are_not_waiting() {
+  local home snap out queue
+  home=$TMP_ROOT/deferred
+  mkdir -p "$home"
+  snap=$home/snapshot.json
+  write_fixture "$home" "$snap" "$(
+    printf '%s\n' "$(row ask-row "Ask Row" captain live - 1 queued)" \
+      "$(row due-row "Due Row" captain dated 2026-06-01 1 queued)" \
+      "$(row later-row "Later Row" captain dated 2026-07-01 40 queued)" \
+      "$(row track-row "Track Row" captain live - 50 queued "Routed to Timmy; tracking row only")" \
+      "$(row routed-row "Routed Row" captain live - 50 queued "routed to Timmy; waits on its lanes")" \
+      "$(row empty-row "Empty Row" captain live - 50 queued "")" | jq -s -c '.')"
+  out=$(run_line "$snap")
+  assert_contains "$out" "waiting on you (2)" \
+    "only the undated question and the hold whose date has arrived are waiting"
+  assert_contains "$out" "due-row" "a deferral whose date is today is due again"
+  assert_not_contains "$out" "later-row" "a hold deferred to a later date is not waiting"
+  assert_not_contains "$out" "track-row" "a tracking row is not waiting"
+  queue=$(FM_QUEUE_SNAPSHOT="$snap" FM_QUEUE_TODAY=2026-06-01 "$QUEUE" --json)
+  assert_equals "later-row" "$(printf '%s' "$queue" | jq -r '[.projects[].rows[] | select(.state == "deferred") | .id] | join(",")')" \
+    "the future-dated hold stays visible as deferred"
+  assert_equals "empty-row,routed-row,track-row" "$(printf '%s' "$queue" | jq -r '[.projects[].rows[] | select(.state == "tracking") | .id] | sort | join(",")')" \
+    "question-less holds stay visible as tracking"
+  pass "dated deferrals and tracking rows are labeled, not counted as waiting on you"
 }
 
 test_count_agrees_with_the_queue_program() {
@@ -430,6 +456,7 @@ if (handlers.size !== 0) throw new Error("a worker pane must register no handler
 test_line_absent_when_nothing_waits
 test_names_top_and_remaining_count
 test_longest_wait_outranks_when_nothing_is_due
+test_dated_deferrals_and_tracking_rows_are_not_waiting
 test_count_agrees_with_the_queue_program
 test_line_is_bounded_and_keeps_its_counts
 test_unreadable_model_is_not_an_empty_queue

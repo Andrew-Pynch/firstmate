@@ -532,8 +532,8 @@ install_omp_extension_fixture() {  # <repo>
   mkdir -p "$repo/.omp/extensions" "$repo/.pi/extensions/lib" "$repo/bin" "$repo/node_modules/typebox"
   cp "$ROOT/.omp/extensions/fm-primary-turnend-guard.ts" "$ROOT/.omp/extensions/fm-primary-omp-watch.ts" "$repo/.omp/extensions/"
   cp "$ROOT/.pi/extensions/lib/fm-operational-input.ts" "$ROOT/.pi/extensions/lib/fm-sessionstart-supervisor.mjs" "$repo/.pi/extensions/lib/"
-  cp "$ROOT/bin/fm-operational-input.sh" "$repo/bin/"
-  chmod +x "$repo/bin/fm-operational-input.sh"
+  cp "$ROOT/bin/fm-operational-input.sh" "$ROOT/bin/fm-wake-lib.sh" "$ROOT/bin/fm-wake-notify.sh" "$repo/bin/"
+  chmod +x "$repo/bin/fm-operational-input.sh" "$repo/bin/fm-wake-notify.sh"
   printf '{"name":"typebox","type":"module","exports":"./index.js"}\n' > "$repo/node_modules/typebox/package.json"
   printf 'export const Type = { Object(p) { return { type: "object", properties: p }; } };\n' > "$repo/node_modules/typebox/index.js"
 }
@@ -756,6 +756,114 @@ SH
   pass "fm-spawn: the parent remote-secondmate gate accepts omp and still refuses an adapter without a supervision protocol"
 }
 
+# The captain-visible defect: while main is busy and cannot drain, every
+# actionable watcher cycle used to inject its own follow-up, even though the
+# durable queue already coalesces and one acknowledgement retires every row a
+# drain presented. The suppressed cycle must still arm its successor and still
+# run the handling handshake; only the main injection is skipped, and only while
+# the earlier notification's rows are still unacknowledged.
+test_watch_extension_coalesces_unacknowledged_wakes() {
+  local repo home out status
+  repo="$TMP_ROOT/watch-coalesce/repo"; home="$TMP_ROOT/watch-coalesce/home"
+  install_omp_extension_fixture "$repo"
+  mkdir -p "$home/state"
+  # Each arm child queues a real durable row and closes actionably. The third
+  # waits for the test's simulated acknowledgement before it queues anything.
+  cat > "$repo/bin/fm-watch-arm.sh" <<'SH'
+#!/usr/bin/env bash
+set -u
+if [ "${1:-}" = --handling-delivered ]; then
+  printf 'handshake %s\n' "$2" >> "${FM_HOME:?}/state/.handshakes"
+  exit 0
+fi
+n=$(cat "${FM_HOME:?}/state/.arm-count" 2>/dev/null || echo 0)
+n=$((n + 1))
+printf '%s\n' "$n" > "$FM_HOME/state/.arm-count"
+printf 'watcher: started pid=%s (beacon fresh) recovery-generation=gen-%s\n' "$$" "$n"
+# shellcheck source=/dev/null
+. "${FM_ROOT_OVERRIDE:?}/bin/fm-wake-lib.sh"
+case "$n" in
+  1|2)
+    fm_wake_append signal "alpha-$n.status" "signal: cycle $n" || exit 1
+    sleep 0.3
+    printf 'signal: cycle %s\n' "$n"
+    exit 0
+    ;;
+  3)
+    i=0
+    while [ ! -e "$FM_HOME/state/.ack-done" ] && [ "$i" -lt 150 ]; do
+      sleep 0.1
+      i=$((i + 1))
+    done
+    fm_wake_append signal "alpha-3.status" "signal: cycle 3" || exit 1
+    sleep 0.3
+    printf 'signal: cycle 3\n'
+    exit 0
+    ;;
+  *) sleep 30 ;;
+esac
+SH
+  chmod +x "$repo/bin/fm-watch-arm.sh"
+  out=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$repo" FM_OMP_ARM_READY_TIMEOUT_MS=3000 FM_WATCH_REARM_RETRY_LIMIT=1 FM_WATCH_REARM_RETRY_BASE_MS=5 FM_WATCH_REARM_RETRY_MAX_MS=10 \
+    EXT="$repo/.omp/extensions/fm-primary-omp-watch.ts" node --input-type=module 2>&1 <<'EOF'
+import { pathToFileURL } from "node:url";
+import { writeFileSync, readFileSync, existsSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+const state = `${process.env.FM_HOME}/state`;
+writeFileSync(`${state}/.lock`, `${process.pid}\n`);
+const handlers = new Map(); let tool = null; const sent = [];
+const pi = {
+  on(e, h) { handlers.set(e, h); },
+  registerCommand() {},
+  registerTool(t) { tool = t; },
+  // omp sendMessage returns synchronously, not a promise.
+  sendMessage(m, o) { sent.push({ m, o }); return undefined; },
+};
+const mod = await import(pathToFileURL(process.env.EXT).href);
+mod.default(pi);
+const settle = async (predicate, label) => {
+  for (let i = 0; i < 200; i += 1) {
+    if (predicate()) return;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  throw new Error(`${label}: gave up; sent=${sent.length} arms=${armCount()} queue=${queueRows().length}`);
+};
+const armCount = () => (existsSync(`${state}/.arm-count`) ? Number(readFileSync(`${state}/.arm-count`, "utf8").trim()) : 0);
+const handshakes = () => (existsSync(`${state}/.handshakes`) ? readFileSync(`${state}/.handshakes`, "utf8").trim().split("\n").filter(Boolean) : []);
+const queueRows = () => (existsSync(`${state}/.wake-queue`) ? readFileSync(`${state}/.wake-queue`, "utf8").split("\n").filter(Boolean) : []);
+await tool.execute();
+// Cycle 1 closes actionably with one queued row: main must be told once.
+await settle(() => sent.length === 1 && armCount() >= 2, "first actionable close did not deliver one follow-up");
+// Cycle 2 queues another row while main has acknowledged nothing.
+await settle(() => armCount() >= 3, "the suppressed cycle never armed its successor");
+await new Promise((r) => setTimeout(r, 400));
+if (sent.length !== 1) throw new Error(`an unacknowledged queue took ${sent.length} follow-ups: ${JSON.stringify(sent.map((s) => s.m.slice(0, 60)))}`);
+if (queueRows().length !== 2) throw new Error(`the suppressed cycle lost its durable row: ${JSON.stringify(queueRows())}`);
+if (handshakes().length < 2) throw new Error(`the suppressed cycle skipped its handling handshake: ${JSON.stringify(handshakes())}`);
+// Main drains and acknowledges: every row the outstanding notification covered leaves the queue.
+const announced = Number(execFileSync("bash", [`${process.env.FM_ROOT_OVERRIDE}/bin/fm-wake-notify.sh`, "state"], { encoding: "utf8" }).trim());
+if (!Number.isInteger(announced) || announced < 1) throw new Error(`no announced-through sequence was recorded: ${announced}`);
+writeFileSync(`${state}/.wake-queue`, queueRows().filter((row) => Number(row.split("\t")[1]) > announced).map((r) => `${r}\n`).join(""));
+writeFileSync(`${state}/.ack-done`, "");
+// Cycle 3 queues a row above the acknowledged sequence: main must be told again.
+await settle(() => sent.length === 2, "an acknowledged queue did not reopen delivery");
+for (const wake of sent) {
+  if (wake.m.customType !== "firstmate-primary-omp-watcher-wake") throw new Error(`unexpected wake type: ${wake.m.customType}`);
+  if (wake.m.display !== false) throw new Error("watcher wake must stay hidden from the captain transcript");
+  if (!wake.m.content.startsWith("⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: signal: cycle ")) throw new Error(`unexpected wake text: ${wake.m.content}`);
+  if (wake.o?.deliverAs !== "followUp" || wake.o?.triggerTurn !== true) throw new Error("wake must be a turn-triggering follow-up");
+}
+if (sent[0].m.content === sent[1].m.content) throw new Error("the reopened delivery repeated the suppressed cycle instead of the new one");
+await handlers.get("session_shutdown")({}, {});
+process.exit(0);
+EOF
+)
+  status=$?
+  expect_code 0 "$status" "omp watch extension coalescing contract: $out"
+  [ -z "$out" ] || fail "omp watch coalescing test printed output: $out"
+  pass ".omp watch extension: one follow-up while the queue stays unacknowledged, successor and handshake preserved, delivery reopens after acknowledgement"
+}
+
 test_detection_anchored_name_and_marker_precedence
 test_lock_identity_and_liveness_classification
 test_spawn_launch_line_and_worker_wiring
@@ -769,5 +877,6 @@ test_control_composer_and_model_tables
 test_ownership_proof_is_omp_keyed
 test_turnend_guard_extension_compels_one_continuation
 test_watch_extension_arms_and_delivers
+test_watch_extension_coalesces_unacknowledged_wakes
 test_remote_host_leg_accepts_omp
 test_remote_parent_leg_accepts_omp

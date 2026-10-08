@@ -52,6 +52,21 @@ No adapter starts a replacement with shell `&`.
 
 The turn-end guard remains the final backstop rather than the normal continuity mechanism and cooperates with the auto-arm in its `--claude` mode.
 
+## Notification coalescing
+
+The durable queue already coalesces: one drain presents the newest row per key, annotates every unread status event, and one acknowledgement retires every row it presented.
+A second harness notification about rows an earlier, still-unacknowledged notification already covered therefore carries nothing a single drain would not have produced, while costing the supervisor a turn.
+The omp adapter asks `bin/fm-wake-notify.sh claim` immediately before it injects, and skips only that injection when the queue still holds a row at or below the sequence an earlier delivered notification recorded in `state/.wake-announced-through`.
+`bin/fm-wake-lib.sh`'s `fm_wake_notify_claim` owns that rule and its locked record.
+A skipped notification still queues every durable row, still arms and verifies its successor, and still confirms the handling handoff; only the injection is dropped, and the wake is reported delivered so the adapter retires it rather than replaying it after a session replacement.
+An empty queue, a restoration failure, and any claim that cannot be decided are always delivered, because a missed wake is worse than a duplicate one.
+Every wake kind is coalesced by this rule, including the two that queue no row of their own: `check: rearm-resurface` only asks for a drain the outstanding notification already points at and cannot reach a harness successor at all, and `check: inactive-outcome` reports an obligation that stays a durable `state/terminal-outcomes/<fingerprint>` record until `bin/fm-wake-drain.sh` acknowledges it, so that same drain settles it.
+Deciding per wake kind would mean sniffing reason text, and "did this cycle append a row" cannot be read from the queue because a successor arms and can append before its predecessor's claim runs.
+Acknowledgement removes the covered rows, which reopens delivery with no timer, expiry, or separate lifecycle.
+Rows appended after the supervisor's drain but before its acknowledgement are not covered by the outstanding notification, so they wait for the next watcher wake of any kind rather than for one of their own; the heartbeat cadence is the backstop when the fleet falls silent, and nothing is lost because the rows stay durable.
+Claude and Cursor need no such claim: their Stop hooks arm the watcher only at a turn boundary, so no second notification can exist while the supervisor is busy.
+The Pi adapter delivers actionable wakes to the supervision branch rather than to main, so main's composer does not accumulate them and the claim is deliberately not applied there.
+
 ## Recovery episode acknowledgement
 
 A recovery episode is one generation of `state/.watcher-down`, and it is retired only by the generation-bound acknowledgement the drain prints as `WAKE_ACK_REQUIRED`.

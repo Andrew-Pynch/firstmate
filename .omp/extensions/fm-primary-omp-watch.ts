@@ -131,6 +131,7 @@ const fmRoot = process.env.FM_ROOT_OVERRIDE || root;
 const state = process.env.FM_STATE_OVERRIDE || `${fmHome}/state`;
 const config = process.env.FM_CONFIG_OVERRIDE || `${fmHome}/config`;
 const armScript = `${fmRoot}/bin/fm-watch-arm.sh`;
+const notifyScript = `${fmRoot}/bin/fm-wake-notify.sh`;
 const marker = `${state}/.omp-watch-extension-loaded`;
 const handoffDir = `${state}/extensions/omp-primary-watch`;
 const actionableHandoff = `${handoffDir}/session-replacement-actionable.json`;
@@ -568,6 +569,7 @@ export default function (pi: ExtensionAPI) {
     message: string,
     pending: PendingActionableClose,
     recovery?: { generation: string; watcherPid: string },
+    coalescible = false,
   ): Promise<boolean> {
     if (!generationIsLive(owner)) return false;
     if (recovery) {
@@ -579,6 +581,26 @@ export default function (pi: ExtensionAPI) {
         }
         return await sendWake(owner, `${message}\n\n${confirmed.detail}`, pending);
       }
+    }
+    // The successor is armed and the handling handshake has already run; only
+    // the main injection is skipped, and only while an earlier notification
+    // still covers unacknowledged rows. The record is reported delivered so the
+    // pipeline retires it instead of replaying it: its rows are durable and the
+    // outstanding notification already sends main to the same drain. Any
+    // inability to decide delivers, because a missed wake is worse than a
+    // duplicate one.
+    if (coalescible) {
+      let claim = "";
+      try {
+        claim = (spawnSync("bash", [notifyScript, "claim"], {
+          cwd: fmRoot,
+          encoding: "utf8",
+          env: { ...process.env, FM_HOME: fmHome, FM_STATE_OVERRIDE: state, FM_ROOT_OVERRIDE: fmRoot },
+        }).stdout || "").trim();
+      } catch {
+        claim = "";
+      }
+      if (claim === "skip") return true;
     }
     // No supervision branch on omp: every actionable wake goes to main.
     return await sendWake(owner, message, pending);
@@ -696,7 +718,9 @@ export default function (pi: ExtensionAPI) {
             return;
           }
           const message = restoration.failure ? `${pending.message}\n\n${restoration.failure}` : pending.message;
-          const delivered = await deliverActionableWake(owner, message, pending, restoration.recovery);
+          // A restoration failure must always reach main, so only a clean
+          // ordinary wake is eligible for coalescing.
+          const delivered = await deliverActionableWake(owner, message, pending, restoration.recovery, !restoration.failure);
           if (!delivered) {
             settleClaim("failed");
             releaseClaim();

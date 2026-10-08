@@ -227,6 +227,46 @@ test_drain_dedupes_obvious_duplicates() {
   pass "drain collapses obvious duplicate heartbeat and signal records"
 }
 
+# A harness notification about rows an earlier, still-unacknowledged
+# notification already covered carries nothing a single drain would not have
+# produced. bin/fm-wake-notify.sh is the one place that decides this, only a
+# real acknowledgement reopens delivery, and the rule is uniform across wake
+# kinds: a repeat claim that adds no row is skipped too, because the drain the
+# outstanding notification points at is what settles every durable record.
+test_notify_claim_reopens_only_after_a_real_acknowledgement() {
+  local dir state notify err sequence generation
+  dir=$(make_case notify-claim)
+  state="$dir/state"
+  notify="$ROOT/bin/fm-wake-notify.sh"
+  err="$dir/drain.err"
+  [ "$(FM_STATE_OVERRIDE="$state" "$notify" claim)" = deliver ] \
+    || fail "an empty queue must deliver"
+  append_wake "$state" signal task.status "signal: $state/task.status" || fail "first append failed"
+  [ "$(FM_STATE_OVERRIDE="$state" "$notify" claim)" = deliver ] \
+    || fail "the first notification for a queued row was not delivered"
+  append_wake "$state" signal other.status "signal: $state/other.status" || fail "second append failed"
+  [ "$(FM_STATE_OVERRIDE="$state" "$notify" claim)" = skip ] \
+    || fail "a second notification was delivered while the first one's rows were unacknowledged"
+  [ "$(awk 'END { print NR }' "$state/.wake-queue")" -eq 2 ] \
+    || fail "skipping a notification changed the durable queue"
+  [ "$(FM_STATE_OVERRIDE="$state" "$notify" claim)" = skip ] \
+    || fail "a claim that added no row reopened delivery"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$dir/drain.out" 2> "$err" || fail "drain failed"
+  grep -F "$state/other.status" "$dir/drain.out" >/dev/null \
+    || fail "the drain did not present the row whose notification was skipped"
+  [ "$(FM_STATE_OVERRIDE="$state" "$notify" claim)" = skip ] \
+    || fail "presentation without acknowledgement reopened delivery"
+  sequence=$(sed -n 's/^WAKE_ACK_REQUIRED:.*--ack-through \([0-9][0-9]*\) --recovery-generation [A-Za-z0-9._-][A-Za-z0-9._-]*$/\1/p' "$err")
+  generation=$(sed -n 's/^WAKE_ACK_REQUIRED:.*--ack-through [0-9][0-9]* --recovery-generation \([A-Za-z0-9._-][A-Za-z0-9._-]*\)$/\1/p' "$err")
+  [ -n "$sequence" ] && [ -n "$generation" ] || fail "the drain did not name its acknowledgement command"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" --ack-through "$sequence" --recovery-generation "$generation" \
+    || fail "acknowledgement failed"
+  append_wake "$state" signal third.status "signal: $state/third.status" || fail "third append failed"
+  [ "$(FM_STATE_OVERRIDE="$state" "$notify" claim)" = deliver ] \
+    || fail "an acknowledged queue did not reopen delivery"
+  pass "a notification is skipped for every wake kind while an earlier one's rows are unacknowledged, and only a real acknowledgement reopens delivery"
+}
+
 # The drain runs at the top of every wake-handling turn, so it also asserts
 # watcher liveness via fm-guard.sh: a lapsed re-arm chain then surfaces even on a
 # plain drain-and-handle turn that runs no other supervision script. It must warn
@@ -2460,6 +2500,7 @@ test_not_working_stale_enqueue_before_suppressor
 test_check_output_is_queued
 test_atomic_double_drain
 test_drain_dedupes_obvious_duplicates
+test_notify_claim_reopens_only_after_a_real_acknowledgement
 test_drain_asserts_watcher_liveness
 test_structural_signal_enrichment_preserves_raw_rows
 test_enrichment_preserves_all_unread_lines_and_status_file_failures

@@ -1887,6 +1887,100 @@ fm_wake_queued_keys_locked() {
     "$FM_WAKE_QUEUE" 2>/dev/null || true
 }
 
+# --- outstanding-notification coalescing ------------------------------------
+#
+# The durable queue already coalesces: one drain presents the newest row per
+# key, annotates every unread status event, and one acknowledgement retires
+# every row it presented. A second harness notification about rows an earlier,
+# still-unacknowledged notification already covered therefore carries nothing a
+# single drain would not have produced, while costing the supervisor a turn.
+#
+# state/.wake-announced-through records the highest queue sequence a delivered
+# notification covered. A later notification is redundant exactly while the
+# queue still holds a row at or below that sequence, because the covered rows
+# have not been acknowledged yet. Acknowledgement removes them, which reopens
+# delivery with no timer, expiry, or separate lifecycle.
+#
+# Every wake kind is coalesced by this rule, including the two that queue no row
+# of their own. bin/fm-watch.sh's `check: rearm-resurface` only asks the
+# supervisor to drain a queue the outstanding notification already points at,
+# and it cannot even reach a harness successor, which runs with
+# FM_WATCH_HANDLING_SUCCESSOR=1. `check: inactive-outcome` reports a
+# terminal-outcome obligation that stays a durable
+# state/terminal-outcomes/<fingerprint> record until bin/fm-wake-drain.sh
+# acknowledges it, so the drain the outstanding notification sends the
+# supervisor to is the actor that settles it, and its own scan cadence re-fires
+# it regardless. Deciding per wake kind would mean sniffing reason text here,
+# and "did this cycle append a row" cannot be read from the queue: a successor
+# arms and can append before its predecessor's claim runs.
+#
+# Bounded residual: rows appended after the supervisor's drain but before its
+# acknowledgement are not covered by the outstanding notification, so they wait
+# for the next watcher wake rather than for one of their own. Every later wake
+# of any kind delivers them, because their sequences are above the recorded one,
+# and the watcher's heartbeat cadence is the backstop when the fleet falls
+# silent. Nothing is lost: the rows stay durable and the next drain presents
+# them.
+FM_WAKE_ANNOUNCED_THROUGH="${FM_WAKE_ANNOUNCED_THROUGH:-$STATE/.wake-announced-through}"
+
+# Print "<min> <max>" of the queue's row sequences, or nothing for an empty or
+# unreadable queue. A row without a numeric sequence is ignored rather than
+# treated as sequence zero, which would make every claim look covered.
+_fm_wake_queue_seq_bounds() {
+  awk -F '\t' '
+    NF >= 5 && $2 ~ /^[0-9]+$/ {
+      if (min == "" || $2 + 0 < min) min = $2 + 0
+      if ($2 + 0 > max) max = $2 + 0
+    }
+    END { if (min != "") printf "%s %s\n", min, max }
+  ' "$FM_WAKE_QUEUE" 2>/dev/null || true
+}
+
+# Print the recorded covered sequence, or nothing when the record is absent or
+# unusable. Uncertainty reads as absent, which delivers.
+_fm_wake_notify_record_read() {
+  local value
+  [ -f "$FM_WAKE_ANNOUNCED_THROUGH" ] && [ ! -L "$FM_WAKE_ANNOUNCED_THROUGH" ] || return 1
+  value=$(cat "$FM_WAKE_ANNOUNCED_THROUGH" 2>/dev/null) || return 1
+  case "$value" in ''|*[!0-9]*) return 1 ;; esac
+  printf '%s' "$value"
+}
+
+_fm_wake_notify_record_write() {  # <covered-sequence>
+  local tmp
+  tmp=$(mktemp "$STATE/.wake-announced-through.XXXXXX") || return 1
+  if ! printf '%s\n' "$1" > "$tmp" || ! chmod 0600 "$tmp" \
+    || ! _fm_atomic_replace "$tmp" "$FM_WAKE_ANNOUNCED_THROUGH"; then
+    rm -f -- "$tmp"
+    return 1
+  fi
+}
+
+# Decide, atomically, whether one more supervisor notification adds anything.
+# 0 = deliver it, and the rows it covers are now recorded as covered.
+# 1 = an earlier notification already covers unacknowledged rows; skip delivery.
+# 2 = the decision could not be made safely, which callers treat as deliver.
+# An empty queue always delivers: there is nothing for an earlier notification
+# to have covered.
+fm_wake_notify_claim() {
+  local bounds min max covered status=0
+  fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK" || return 2
+  bounds=$(_fm_wake_queue_seq_bounds)
+  if [ -z "$bounds" ]; then
+    fm_lock_release "$FM_WAKE_QUEUE_LOCK"
+    return 0
+  fi
+  min=${bounds%% *}
+  max=${bounds##* }
+  if covered=$(_fm_wake_notify_record_read) && [ "$min" -le "$covered" ]; then
+    fm_lock_release "$FM_WAKE_QUEUE_LOCK"
+    return 1
+  fi
+  _fm_wake_notify_record_write "$max" || status=2
+  fm_lock_release "$FM_WAKE_QUEUE_LOCK"
+  return "$status"
+}
+
 fm_wake_secondmate_progress_marker_write() { # <task> <observed-at> <oldest-row-key>
   local task=$1 observed_at=$2 oldest_row_key=$3 marker tmp
   case "$task" in ''|*[!A-Za-z0-9._-]*) return 1 ;; esac

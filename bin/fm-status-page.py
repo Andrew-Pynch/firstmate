@@ -85,7 +85,7 @@ def snapshot():
         return json.loads(Path(fixture).read_text())
     result = subprocess.run([str(ROOT / 'bin/fm-bearings-snapshot.sh'), '--json', '--fields', 'page',
                              '--all-in-flight', '--all-decisions', '--all-queued', '--all-landed',
-                             '--all-recorded-prs'], env={**os.environ, 'FM_HOME': str(HOME)},
+                             '--all-recorded-prs'], env={**os.environ, 'FM_HOME': str(HOME), 'FM_BEARINGS_AWAY_OK': '1'},
                             capture_output=True, check=True, timeout=90)
     return json.loads(result.stdout)
 

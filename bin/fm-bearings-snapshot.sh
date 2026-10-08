@@ -245,6 +245,12 @@ command -v jq >/dev/null 2>&1 || { echo "fm-bearings-snapshot: jq not found" >&2
 RETURN_CATCHUP=null
 GUARD_RC=0
 GUARD_ERR=$("$SCRIPT_DIR/fm-afk-return.sh" guard 2>&1 >/dev/null) || GUARD_RC=$?
+# FM_BEARINGS_AWAY_OK=1 is set only by read-only projections the captain uses
+# while away (bin/fm-status-page.sh): an active away window then collects as
+# usual instead of refusing, because that page is how the away captain answers.
+if [ "$GUARD_RC" -eq 3 ] && [ "${FM_BEARINGS_AWAY_OK:-0}" = 1 ]; then
+  GUARD_RC=0
+fi
 if [ "$GUARD_RC" -ne 0 ] && [ "$GUARD_RC" -ne 4 ]; then
   [ -z "$GUARD_ERR" ] || printf '%s\n' "$GUARD_ERR" >&2
   exit "$GUARD_RC"

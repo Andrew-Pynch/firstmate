@@ -345,6 +345,10 @@ Fill the task subsections according to section 11.
 
 When no host and no mate's scope decides where a queued row goes, `bin/fm-place.sh` owns that placement decision: the target home, the reason, and every admission gate that refused.
 `bin/fm-place.sh --item <key> --handoff` applies it by moving the queued row to the chosen mate and instructing that mate; a local decision is dispatched here with `bin/fm-spawn.sh`.
+Queued work dispatches per project: each project's tickets form their own dependency graph, and a wave is one layer of it.
+`bin/fm-wave.sh next` reports every project's dispatchable wave from the declared blocked-by edges, so one project's unfinished ticket never holds up another and the projects run their waves in parallel.
+A ticket starts as soon as its own declared blockers have landed, and an item waiting on the captain holds only the tickets that declare it.
+`bin/fm-wave-lib.sh` owns that rule and `bin/fm-wave.sh plan` shows the graph behind it.
 Spawn only through `bin/fm-spawn.sh` after the profile and backend checks in section 4.
 The spawn must resolve a genuine isolated task worktree distinct from the primary checkout; a failed isolation assertion stops the task.
 When the configured tasks-axi backlog gate applies, the spawn itself moves the work item to In flight and refuses rather than dispatching work this home has no item for, so recording the dispatch is never a separate step to remember; a manual-backend home retains the hand-editing contract in `docs/configuration.md`.
@@ -563,7 +567,7 @@ A decision is simply a task held for the captain: create the task with `bin/fm-t
 When a main-side thread such as a pending captain decision or relay reminder is worth durable tracking, file it as its own work item and hold it through that wrapper.
 Captain calls discovered by investigations or visual reviews follow `captain-hold-lifecycle`, which owns their completion gate and recorded-answer rules.
 When the automatic transition gate applies, dispatch and completion move the item themselves - `bin/fm-spawn.sh` and `bin/fm-teardown.sh` own those transitions and refuse rather than report success without them - so what remains yours is filing the item before dispatch, recording decisions, and keeping notes current; `docs/configuration.md` owns gate applicability and the manual-backend exception.
-Re-evaluate queued work after every teardown and heartbeat, dispatching items only when dependencies and time gates have cleared.
+Re-evaluate queued work after every teardown and heartbeat with `bin/fm-wave.sh next`, and dispatch only the tickets it lists whose date gates have also cleared.
 
 `.tasks.toml`, `docs/configuration.md`, and current `tasks-axi --help` own the backlog schema, compatibility, retention, and routine command syntax.
 Use compatible `tasks-axi` when the configured backend selects it, always through `bin/fm-tasks-axi.sh` so the call reaches this home's backlog from any directory, and the documented manual path otherwise; keep only the configured recent Done entries.

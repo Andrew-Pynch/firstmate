@@ -298,6 +298,13 @@ Resolve the project independently for every request.
 An explicit project wins, a clear follow-up inherits its referent, and otherwise match the request against the registry, work under way, and project code or README.
 Proceed on one confident match while naming the project in plain language; ask one concise question when multiple or no projects plausibly match.
 
+Route the request by what is still undecided before choosing a deliverable, and record that route with `bin/fm-intake.sh` (its header owns the classes, the flags, and the record format).
+Delegate when outcome, acceptance, and authority are already explicit.
+Hold the request as a captain grill through that owner when an open choice needs product judgment, an engineering assumption, protected state, or authorization.
+Research a fact the classification depends on before classifying, and never guess it.
+That call records the route and its one-line reason on the item and emits the request's one started line, never one per ticket.
+Fuzzy input, whether typed, spoken through `bin/fm-inbox.sh say`, or pasted from a meeting, enters this same path.
+
 Route by the nature of the work against each registered secondmate scope, not by a non-exclusive clone list.
 Keep `local-only` work in the main home.
 Send in-scope work to the fitting secondmate unless it is blocked or the captain explicitly redirects it; do not read the secondmate's chat because marked routed replies return through its status or referenced document.

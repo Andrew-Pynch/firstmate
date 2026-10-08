@@ -61,9 +61,12 @@
 # captain call (Needs you and Held calls) carries its options as buttons - the
 # curated "options", else lettered choices, yes/no, merge/close, or
 # approve/reject named in its words - plus a one-line text box. A first tap arms
-# an option and a second sends it; the receipt then moves from Main's inbox to
-# read to replied as the page reads /api/answers every 10 s, and answers whose
-# call left the page stay listed under Your answers. Each render publishes the
+# an option and a second sends it. Its receipt is one line: a glyph (sending,
+# in Main's inbox, read, replied), what you said, and Main's reply, which
+# expands; the page reads /api/answers every 10 s. An answer whose call left the
+# page sits in the one-row Your answers strip (newest first, with a count) while
+# Main has not replied; a reply stays 24 h, or until it has been on screen for a
+# minute. Each render publishes the
 # answerable calls with their revisions to state/.current-page/decisions.json.
 #   1 Needs you: curated needs re-checked within FM_CURRENT_PAGE_CONFIRM_HOURS
 #     (default 2), plus captain calls Main held within that window that no need

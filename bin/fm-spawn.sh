@@ -3646,7 +3646,12 @@ else
     fi
     HERDR_PRESENTATION_JOURNAL=$(fm_backend_herdr_projection_journal_path "$STATE" "$ID")
     HERDR_PROJECTED=0
+    # 1 when presentation is enabled for this ordinary task: a flat fallback below
+    # then gets its own workspace. A captain's explicit presentation opt-out keeps
+    # the documented home-workspace flat layout.
+    HERDR_FALLBACK_OWN_WORKSPACE=0
     if [ "$KIND" != secondmate ] && fm_backend_herdr_presentation_enabled "$CONFIG" "$STATE"; then
+      HERDR_FALLBACK_OWN_WORKSPACE=1
       HERDR_SES=$(fm_backend_herdr_session)
       HERDR_PARENT_LABEL=$(FM_HOME="$HERDR_LABEL_HOME" fm_backend_herdr_workspace_label)
       if [ -e "$HERDR_PRESENTATION_JOURNAL" ] || [ -L "$HERDR_PRESENTATION_JOURNAL" ]; then
@@ -3767,7 +3772,17 @@ else
       fi
     fi
     if [ "$HERDR_PROJECTED" -ne 1 ]; then
-      HERDR_CONTAINER_RAW=$(FM_HOME="$HERDR_LABEL_HOME" fm_backend_herdr_container_ensure "$PROJ_ABS" "$HERDR_LAUNCHER_RELATIONSHIP") || exit 1
+      # An ordinary task whose presentation is enabled but fell back to the flat
+      # layout (stale presentation journal on a retry, lock contention, absent
+      # parent, below-floor Herdr) gets its OWN workspace, never a tab in the
+      # launcher's home workspace (captain rule 2026-10-01). A secondmate stands
+      # up its per-home workspace, and an explicit presentation opt-out keeps the
+      # documented home-workspace flat layout.
+      if [ "$HERDR_FALLBACK_OWN_WORKSPACE" = 1 ]; then
+        HERDR_CONTAINER_RAW=$(FM_HOME="$HERDR_LABEL_HOME" fm_backend_herdr_task_workspace_create "$PROJ_ABS" "$ID") || exit 1
+      else
+        HERDR_CONTAINER_RAW=$(FM_HOME="$HERDR_LABEL_HOME" fm_backend_herdr_container_ensure "$PROJ_ABS" "$HERDR_LAUNCHER_RELATIONSHIP") || exit 1
+      fi
       # fm_backend_herdr_container_ensure echoes "<session>:<workspace_id>\t<seeded_default_tab_id>"
       # (the second field empty when this call ADOPTED a pre-existing workspace
       # rather than creating a fresh one). Split on the guaranteed single tab

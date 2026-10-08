@@ -606,8 +606,12 @@ if [ "$FLOOR_VERDICT" = 0 ]; then
 else
   [ ! -e "$DEFAULT_ON_JOURNAL" ] \
     || fail "an unconfigured home published a presentation journal on below-floor herdr $FLOOR_VERSION"
-  [ "$DEFAULT_ON_WSID" = "$FIRSTMATE_WSID" ] \
-    || fail "an unconfigured home did not land in the flat firstmate workspace on below-floor herdr $FLOOR_VERSION (got '${DEFAULT_ON_WSID:-<empty>}')"
+  # The flat fallback gives the task its OWN workspace (captain rule 2026-10-01),
+  # never a tab in the home workspace.
+  [ -n "$DEFAULT_ON_WSID" ] && [ "$DEFAULT_ON_WSID" != "$FIRSTMATE_WSID" ] \
+    || fail "an unconfigured home did not get its own workspace on below-floor herdr $FLOOR_VERSION (got '${DEFAULT_ON_WSID:-<empty>}')"
+  [ "$(lab workspace get "$DEFAULT_ON_WSID" | jq -r '.result.workspace.label // empty')" = default-on ] \
+    || fail "below-floor flat fallback did not label its own workspace with the task id"
   grep -q "$FLOOR_VERSION" "$TMP_ROOT/default-on.err" \
     || fail "the below-floor fallback did not name herdr $FLOOR_VERSION: $(cat "$TMP_ROOT/default-on.err")"
   pass "real Herdr lab: a home that configured nothing falls back flat on below-floor herdr $FLOOR_VERSION with one naming warning"
@@ -739,15 +743,30 @@ grep -F "presentation focus lock unavailable; using the ordinary flat layout wit
 LOCK_CONTENTION_META="$HOME_DIR/state/lock-contended.meta"
 remember_meta_worktree "$LOCK_CONTENTION_META" >/dev/null
 LOCK_CONTENTION_WSID=$(grep '^herdr_workspace_id=' "$LOCK_CONTENTION_META" | cut -d= -f2-)
-[ "$LOCK_CONTENTION_WSID" = "$FIRSTMATE_WSID" ] \
-  || fail "bounded lock contention did not use the ordinary flat firstmate workspace"
+[ -n "$LOCK_CONTENTION_WSID" ] && [ "$LOCK_CONTENTION_WSID" != "$FIRSTMATE_WSID" ] \
+  || fail "bounded lock contention fell back into the firstmate workspace instead of its own"
+[ "$(lab workspace get "$LOCK_CONTENTION_WSID" | jq -r '.result.workspace.label // empty')" = lock-contended ] \
+  || fail "bounded lock contention did not label its own workspace with the task id"
 [ ! -e "$HOME_DIR/state/lock-contended.herdr-presentation" ] \
   || fail "bounded lock contention published a projection journal"
 LOCK_CONTENTION_CALLS=$(sed -n "$((LOCK_CONTENTION_START + 1)),\$p" "$HERDR_CALL_LOG")
 # session list is required to resolve the shared session lock path before the
-# bounded acquire attempt; it must not unlock projection create or move.
-if printf '%s\n' "$LOCK_CONTENTION_CALLS" | grep -E $'^(workspace\tcreate|pane\tclose|api\tschema)' >/dev/null 2>&1; then
-  fail "bounded lock contention performed an unlocked projection mutation or ordering capability call"
+# bounded acquire attempt; it must not unlock projection create or move or probe
+# the ordering capability. The flat fallback now creates the task's OWN workspace
+# (--no-focus, labelled with the task id) and prunes only that workspace's seeded
+# tab, so a workspace create or pane close is allowed here only when it is that
+# one fresh workspace; any other target is an unlocked projection mutation.
+if printf '%s\n' "$LOCK_CONTENTION_CALLS" | grep -E $'^api\tschema' >/dev/null 2>&1; then
+  fail "bounded lock contention probed the ordering capability without the lock"
+fi
+if printf '%s\n' "$LOCK_CONTENTION_CALLS" | awk -F '\t' -v ws="$LOCK_CONTENTION_WSID" '
+  $1 == "workspace" && $2 == "create" {
+    line = $0
+    if (line !~ /--no-focus/ || line !~ /--label\tlock-contended/) bad = 1
+  }
+  $1 == "pane" && $2 == "close" && index($3, ws ":") != 1 { bad = 1 }
+  END { exit bad ? 0 : 1 }'; then
+  fail "bounded lock contention performed an unlocked projection mutation outside its own fresh workspace"
 fi
 [ "$(wc -l < "$MOVE_CALL_LOG" | tr -d '[:space:]')" = "$LOCK_CONTENTION_MOVE_START" ] \
   || fail "bounded lock contention invoked workspace.move"
@@ -1168,8 +1187,8 @@ grep -F "presentation focus lock unavailable; using the ordinary flat layout wit
 remember_meta_worktree "$SECOND_HOME_A/state/aflat.meta" >/dev/null
 AFLAT_WSID=$(grep '^herdr_workspace_id=' "$SECOND_HOME_A/state/aflat.meta" | cut -d= -f2-)
 AFLAT_LABEL=$(lab workspace get "$AFLAT_WSID" | jq -r '.result.workspace.label')
-[ "$AFLAT_LABEL" = 2ndmate-alpha ] \
-  || fail "cross-home lock contention did not use the ordinary secondmate home workspace: $AFLAT_LABEL"
+[ "$AFLAT_LABEL" = aflat ] \
+  || fail "cross-home lock contention did not give the task its own workspace: $AFLAT_LABEL"
 [ ! -e "$SECOND_HOME_A/state/aflat.herdr-presentation" ] \
   || fail "cross-home lock contention published a projection journal"
 assert_focus_is "$CAPTAIN_FOCUS" "cross-home lock contention flat fallback"

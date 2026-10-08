@@ -2037,6 +2037,34 @@ fm_backend_herdr_container_ensure() {  # <cwd-for-a-fresh-workspace> [<launcher-
   printf '%s:%s\t%s' "$session" "$FM_BACKEND_HERDR_WS_ID" "$FM_BACKEND_HERDR_WS_SEEDED_TAB_ID"
 }
 
+# fm_backend_herdr_task_workspace_create: the flat-layout container for ONE
+# ordinary task (never a secondmate): a fresh workspace labelled <label>, so a
+# worker that falls back from the presentation projection (stale journal on a
+# retry, lock contention, absent parent, below-floor Herdr) still gets its own
+# workspace and is never a tab in the launcher's home workspace ("first mate").
+# Captain rule 2026-10-01: every worker has its own Herdr workspace. Echoes the
+# same "<session>:<workspace_id>\t<seeded_default_tab_id>" shape as
+# fm_backend_herdr_container_ensure, so fm_backend_herdr_create_task consumes it
+# unchanged and prunes the seeded tab once the task tab exists. Always creates;
+# it never adopts an existing workspace, so a relaunch cannot inherit a recorded
+# placement. --no-focus is passed for the same focus-safety reason as the home
+# workspace create.
+fm_backend_herdr_task_workspace_create() {  # <cwd> <label> [<session>]
+  local cwd=${1:-$PWD} label=${2:-} session=${3:-} out wsid seeded
+  [ -n "$label" ] || { echo "error: herdr task workspace needs a label" >&2; return 1; }
+  fm_backend_herdr_version_check || return 1
+  [ -n "$session" ] || session=$(fm_backend_herdr_session)
+  fm_backend_herdr_server_ensure "$session" || return 1
+  out=$(fm_backend_herdr_cli "$session" workspace create --cwd "$cwd" --label "$label" --no-focus 2>/dev/null) || {
+    echo "error: failed to create herdr workspace '$label' in session '$session'" >&2
+    return 1
+  }
+  wsid=$(printf '%s' "$out" | jq -r '.result.workspace.workspace_id // empty' 2>/dev/null)
+  seeded=$(printf '%s' "$out" | jq -r '.result.tab.tab_id // empty' 2>/dev/null)
+  [ -n "$wsid" ] || { echo "error: herdr did not return a workspace id for '$label'" >&2; return 1; }
+  printf '%s:%s\t%s' "$session" "$wsid" "$seeded"
+}
+
 # fm_backend_herdr_pane_presence_state: classify one exact pane get response
 # as dead|present|unknown from its JSON body, never from process exit status.
 fm_backend_herdr_pane_presence_state() {  # <session> <pane_id>

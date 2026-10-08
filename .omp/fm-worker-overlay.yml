@@ -17,11 +17,11 @@ modelRoles:
   # (src/config/model-resolver.ts, `ROLE_PRIORITY_ALIAS`), which is a premium
   # reasoning model on the farm's hosts, so a host profile that names an
   # expensive advisor or names none at all silently bills reviews to premium
-  # quota. Pinning the role here makes every worker session's advisor cheap and
-  # identical whatever the host's own config says, and the tracked
-  # `deepseek/deepseek-v4-flash` fallback chain keeps its cross-provider
-  # recovery on openrouter, which is cheap too.
-  advisor: deepseek/deepseek-v4-flash
+  # quota. Pinning the role here makes every worker session's advisor
+  # identical whatever the host's own config says. 2026-09-26 (Andrew): the
+  # DeepSeek platform quota is exhausted, so the advisor is Grok 4.7 through
+  # the xai OAuth account, the same advisor Main uses (~/.omp/agent/config.yml).
+  advisor: xai-oauth/grok-4.7
 composer:
   # Renders a bare `❯` (U+276F) row, a glyph the shared composer classifier
   # already reads; the shipped default `band` and six other shapes are not in

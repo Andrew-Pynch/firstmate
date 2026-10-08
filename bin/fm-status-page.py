@@ -5,6 +5,7 @@ Private cursor/answer receipts stay outside the served directory. Publication us
 home-local flock, then atomic replacements; a failed collection leaves the last page.
 """
 import fcntl
+from contextlib import nullcontext
 import hashlib
 import html
 import json
@@ -112,11 +113,17 @@ def ledger_delta(previous):
         return events, {'inode': stat.st_ino, 'offset': offset + complete}
 
 
-def render():
+def valid_tokens():
+    path = PRIVATE / 'tokens.json'
+    return json.loads(path.read_text()) if path.exists() else []
+
+
+def render(lock_held=False):
     PRIVATE.mkdir(mode=0o700, parents=True, exist_ok=True)
     PUBLIC.mkdir(mode=0o700, parents=True, exist_ok=True)
-    with (PRIVATE / 'render.lock').open('a+') as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX | (fcntl.LOCK_NB if os.environ.get('FM_STATUS_BEST_EFFORT') else 0))
+    with nullcontext() if lock_held else (PRIVATE / 'render.lock').open('a+') as lock:
+        if not lock_held:
+            fcntl.flock(lock, fcntl.LOCK_EX | (fcntl.LOCK_NB if os.environ.get('FM_STATUS_BEST_EFFORT') else 0))
         old_path = PRIVATE / 'cursor.json'
         old = json.loads(old_path.read_text()) if old_path.exists() else {}
         snap = snapshot()
@@ -142,7 +149,10 @@ def render():
             labels = options(ask)
             manifest[card_id] = {'task': task, 'key': key, 'ask': ask, 'options': labels,
                                  'request_id': 'status-page-' + digest}
-            if recorded.get(card_id):
+            receipt = recorded.get(card_id)
+            if isinstance(receipt, dict):
+                action = f'<p class="saved">recorded: {H(receipt["option"])} at {H(receipt["at"])}</p>'
+            elif receipt:
                 action = '<p class="saved">recorded, waiting for Main</p>'
             else:
                 buttons = ''.join(f'<button name="option" value="{i}">{H(label)}</button>' for i, label in enumerate(labels))
@@ -240,16 +250,18 @@ def render():
             visible.append(f'<details><summary>All {len(cards) - 8} other open asks</summary>' + ''.join(item[1] for item in cards[8:]) + '</details>')
         page = '''<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="refresh" content="90"><title>Firstmate status</title><style>
 body{font:15px/1.5 system-ui,sans-serif;background:#10141a;color:#eee;max-width:1050px;margin:24px auto;padding:0 16px}h1{font-size:26px}h2{border-bottom:1px solid #404a54;padding-bottom:6px;margin-top:26px}h3{font-size:16px;margin:0}small,.meta{color:#abb8c8;font-size:13px}article{background:#1c2630;border:1px solid #394757;border-radius:8px;padding:12px;margin:10px 0}article.ask{border-left:4px solid #e7bb64}.text{white-space:pre-wrap;overflow-wrap:anywhere;margin:8px 0}a{color:#a9caff;overflow-wrap:anywhere}form{display:flex;flex-wrap:wrap;gap:9px;margin-top:12px}button,input{font:inherit;border-radius:6px;padding:8px;background:#293647;color:#fff;border:1px solid #718198}button{cursor:pointer}button:hover{background:#435872}label{display:flex;gap:6px;align-items:center;flex-wrap:wrap}.saved{color:#9ee0a4}details{margin:12px 0}summary{cursor:pointer;color:#a9caff}@media(max-width:600px){body{margin:10px auto}button{width:100%;text-align:left}form,label,input{width:100%;box-sizing:border-box}}
+.notice{background:#453521;border:1px solid #e7bb64;border-radius:8px;padding:12px;color:#fff}
 </style></head><body>'''
         page += f'<h1>Where things are</h1><p class="meta">Updated {H(datetime.fromtimestamp(now, timezone.utc).isoformat(timespec="seconds"))} · source {H(snap.get("generated"))}</p>'
         page += section('needs you', visible, count=len(cards)) + section('in flight', flight) + section('landed since last render', landed)
         page += section('waiting on others', waiting) + section('dropped in', dropped, 'Baseline established' if not old else 'No new rows or reports')
         page += '<details><summary>everything else (' + str(len(extra)) + ' parked or deferred)</summary>' + ''.join(extra) + '</details>'
         page += '<details><summary>recent status history</summary>' + history + '</details></body></html>'
-        # Publish the private form authority before HTML. A concurrent refresh
-        # may invalidate an old form; it must never accept a newer unbound one.
+        # Publish the private form authority before HTML. Retain 20 render
+        # tokens so a tab open across refreshes can still submit its card.
         atomic(PRIVATE / 'cards.json', json.dumps(manifest))
-        atomic(PRIVATE / 'token', token)
+        atomic(PRIVATE / 'tokens.json', json.dumps((valid_tokens() + [token])[-20:]))
+        (PRIVATE / 'token').unlink(missing_ok=True)
         atomic(PUBLIC / 'index.html', page)
         atomic(PRIVATE / 'cursor.json', json.dumps({'ids': sorted(rows), 'done': sorted(rid for rid, row in rows.items() if row.get('state') == 'done'),
                                                      'calls': sorted(calls), 'recent': recent, **cursor}))

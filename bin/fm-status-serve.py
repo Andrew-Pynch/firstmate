@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Loopback-only status page and captain-note capture; publish via tailnet serve."""
+import fcntl
 import importlib.util
 import json
 import os
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 import subprocess
@@ -27,17 +29,33 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def redirect(self, notice=None):
+        self.send_response(303)
+        self.send_header('Location', './' + (f'?notice={notice}' if notice else ''))
+        self.send_header('Cache-Control', 'no-store')
+        self.end_headers()
+
     def do_GET(self):
-        if urlsplit(self.path).path not in ('/', '/index.html'):
+        request = urlsplit(self.path)
+        if request.path not in ('/', '/index.html'):
             return self.send(404, b'Not found')
         try:
-            self.send(200, (PUBLIC / 'index.html').read_bytes(), 'text/html; charset=utf-8')
+            content = (PUBLIC / 'index.html').read_bytes()
+            notice = parse_qs(request.query).get('notice', [None])[0]
+            messages = {'stale': 'Page changed; reload before answering.',
+                        'unavailable': 'Decision unavailable or already recorded.',
+                        'invalid': 'Invalid decision. Check the form and try again.',
+                        'forbidden': 'Decision requests require the owner on this tailnet site.'}
+            if notice in messages:
+                banner = f'<p role="alert" class="notice">{messages[notice]}</p>'.encode()
+                content = content.replace(b'<body>', b'<body>' + banner, 1)
+            self.send(200, content, 'text/html; charset=utf-8')
         except OSError:
             self.send(503, b'Page not published')
 
     def do_POST(self):
         if urlsplit(self.path).path != '/decision':
-            return self.send(404, b'Not found')
+            return self.redirect('invalid')
         owner_file = HOME / 'config/status-page-owner'
         owner = owner_file.read_text().strip() if owner_file.is_file() else ''
         identity = self.headers.get_all('Tailscale-User-Login') or []
@@ -48,47 +66,49 @@ class Handler(BaseHTTPRequestHandler):
                 not host.endswith('.ts.net') or '/' in host or ':' in host or
                 len(origins) != 1 or origins[0] != 'https://' + host or
                 self.headers.get('Sec-Fetch-Site') != 'same-origin'):
-            return self.send(403, b'Decision requests require the owner on this tailnet site')
+            return self.redirect('forbidden')
         try:
             length = int(self.headers.get('Content-Length', '0'))
             if length < 1 or length > 4096 or self.headers.get('Content-Type', '').split(';')[0] != 'application/x-www-form-urlencoded':
-                return self.send(400, b'Invalid form')
+                return self.redirect('invalid')
             values = parse_qs(self.rfile.read(length).decode('utf-8'), strict_parsing=True, keep_blank_values=True)
             card, choice, detail, token = (values[name][0] for name in ('card', 'option', 'detail', 'token'))
             if len(detail) > 1500 or '\n' in detail or '\r' in detail:
-                return self.send(400, b'Invalid detail')
-            if not token or token != (PRIVATE / 'token').read_text():
-                return self.send(409, b'Page changed; reload before answering')
-            # Refresh before validating the form. A closed call cannot receive an answer.
-            page.render()
-            cards = json.loads((PRIVATE / 'cards.json').read_text())
-            receipt_file = PRIVATE / 'recorded.json'
-            receipts = json.loads(receipt_file.read_text()) if receipt_file.exists() else {}
-            if card not in cards or card in receipts:
-                return self.send(409, b'Decision unavailable or already recorded')
-            entry = cards[card]
-            index = int(choice)
-            if index < 0 or index >= len(entry['options']):
-                return self.send(400, b'Unknown option')
-            body = f"decision {entry['task']}" + (f" [key={entry['key']}]" if entry['key'] else '')
-            body += f" {entry['options'][index]}: {detail}".rstrip()
-            result = subprocess.run([str(ROOT / 'bin/fm-inbox.sh'), 'note', '--request-id', entry['request_id'], '--json', '--', body],
-                                    env={**os.environ, 'FM_HOME': str(HOME)}, capture_output=True, timeout=15)
-            if result.returncode not in (0, 3):
-                return self.send(503, b'Could not save answer')
-            receipt = json.loads(result.stdout)
-            if not receipt['saved'] or not receipt['announced']:
-                # An idempotent retry repairs a saved note whose wake failed.
-                subprocess.run([str(ROOT / 'bin/fm-inbox.sh'), 'announce', receipt['id']],
-                               env={**os.environ, 'FM_HOME': str(HOME)}, capture_output=True, timeout=15, check=True)
-            receipts[card] = receipt['id']
-            page.atomic(receipt_file, json.dumps(receipts))
-            page.render()
-            self.send_response(303)
-            self.send_header('Location', './')
-            self.end_headers()
+                return self.redirect('invalid')
+            with (PRIVATE / 'render.lock').open('a+') as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX)
+                if not token or token not in page.valid_tokens():
+                    return self.redirect('stale')
+                # Refresh before validating the form. A closed call cannot receive an answer.
+                page.render(lock_held=True)
+                cards = json.loads((PRIVATE / 'cards.json').read_text())
+                receipt_file = PRIVATE / 'recorded.json'
+                receipts = json.loads(receipt_file.read_text()) if receipt_file.exists() else {}
+                if card not in cards or card in receipts:
+                    return self.redirect('unavailable')
+                entry = cards[card]
+                index = int(choice)
+                if index < 0 or index >= len(entry['options']):
+                    return self.redirect('invalid')
+                body = f"decision {entry['task']}" + (f" [key={entry['key']}]" if entry['key'] else '')
+                body += f" {entry['options'][index]}: {detail}".rstrip()
+                result = subprocess.run([str(ROOT / 'bin/fm-inbox.sh'), 'note', '--request-id', entry['request_id'], '--json', '--', body],
+                                        env={**os.environ, 'FM_HOME': str(HOME)}, capture_output=True, timeout=15)
+                if result.returncode not in (0, 3):
+                    return self.send(503, b'Could not save answer')
+                receipt = json.loads(result.stdout)
+                if not receipt['saved'] or not receipt['announced']:
+                    # An idempotent retry repairs a saved note whose wake failed.
+                    subprocess.run([str(ROOT / 'bin/fm-inbox.sh'), 'announce', receipt['id']],
+                                   env={**os.environ, 'FM_HOME': str(HOME)}, capture_output=True, timeout=15, check=True)
+                receipts[card] = {'id': receipt['id'], 'option': entry['options'][index],
+                                  'at': datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}
+                page.atomic(receipt_file, json.dumps(receipts))
+                page.atomic(PRIVATE / 'tokens.json', json.dumps([value for value in page.valid_tokens() if value != token]))
+                page.render(lock_held=True)
+            self.redirect()
         except (ValueError, KeyError, IndexError, UnicodeError):
-            self.send(400, b'Invalid decision')
+            self.redirect('invalid')
         except (OSError, subprocess.SubprocessError):
             self.send(503, b'Decision service unavailable')
 

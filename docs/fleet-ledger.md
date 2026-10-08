@@ -86,7 +86,8 @@ Run `FM_HOME=<home> bin/fm-status-page.sh` once for the initial page, then `FM_H
 The server listens only on `127.0.0.1`, using `config/status-page-port` or port `8795` when absent.
 Mount it on the tailnet with `tailscale serve --bg --set-path=/fm-status 8795`; use the configured port instead of `8795` when overridden.
 Only the HTML and its decision endpoint are reachable through that mount, not the operational home's raw records.
-Read access is tailnet-only; writing an answer also requires the exact Tailscale Serve login in local `config/status-page-owner`, a current per-render form token, and a same-origin browser POST from the served `.ts.net` host.
+Read access is tailnet-only; writing an answer also requires the exact Tailscale Serve login in local `config/status-page-owner`, one of the last 20 render tokens not yet used, and a same-origin browser POST from the served `.ts.net` host.
 Serve strips caller-supplied identity headers before it adds its own; direct loopback requests without an identity header are rejected (local processes remain in the host trust boundary).
-Submitting an accepted card calls `fm-inbox.sh note --request-id` and refreshes the page; Main handles the resulting inbox check.
+Submitting an accepted card calls `fm-inbox.sh note --request-id`, consumes that form token, and refreshes the page with the recorded option and UTC time on the card; Main handles the resulting inbox check.
+Rejected decision forms redirect to the current page with an alert instead of leaving the browser on an error response.
 Do not enable Funnel or publish this route to the public internet.

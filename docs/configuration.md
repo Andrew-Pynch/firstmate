@@ -213,6 +213,13 @@ See [`trace-context.md`](trace-context.md) for carrier semantics, supported rout
 
 See [`fleet-ledger.md`](fleet-ledger.md) for the opt-in setup, record contract, and limits.
 
+## Live current page (config/current-page)
+
+The optional local, gitignored `config/current-page` names, on its first non-comment line, the HTML file `bin/fm-current-page.sh` renders for the captain; optional `notes=<path>` and `curated=<path>` lines name its human-maintained inputs, and relative paths resolve against the home.
+With it absent the command renders nothing unless given `--out`.
+The page reads this home's durable records only and never claims, acknowledges, or advances a wake, so a renderer or its `watch` trigger can run beside supervision without changing it.
+`bin/fm-current-page.sh`'s header owns the sources, the curated-file format, the trigger, and its environment knobs.
+
 ## Turn-end pane-churn absorb (config/turnend-churn-absorb)
 
 The optional local, gitignored `config/turnend-churn-absorb` presence flag opts this home into a default-off third form of positive work evidence in watcher triage.

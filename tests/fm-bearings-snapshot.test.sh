@@ -1793,6 +1793,16 @@ test_landed_accepts_only_kind_owned_delivery_artifacts() {
   "$TASKS_AXI_BIN" 'done' legacy-noted-local --note "local main" \
     --file "$main_backlog" >/dev/null \
     || fail "could not complete the kindless local delivery"
+  # A fleet that lands its own changes in the farm patch store records the
+  # recorded patch as the local-only artifact, in the same body line a
+  # local-main note uses.
+  "$TASKS_AXI_BIN" add farm-patch-local "Land the farm-recorded change" --kind ship \
+    --repo firstmate --start --file "$main_backlog" >/dev/null \
+    || fail "could not create the farm-recorded local delivery"
+  "$TASKS_AXI_BIN" 'done' farm-patch-local \
+    --note "farm patch 0014-project-registry-labels.patch" \
+    --file "$main_backlog" >/dev/null \
+    || fail "could not complete the farm-recorded local delivery"
   "$TASKS_AXI_BIN" add shipping-scout "SHIPPING parser boundary" --kind scout \
     --repo firstmate --start --file "$main_backlog" >/dev/null \
     || fail "could not create the longer-word scout"
@@ -1868,6 +1878,11 @@ EOF
   printf '%s' "$json" | jq -e \
     '.landed | any(.id == "legacy-noted-local" and .artifact == "local main")' >/dev/null \
     || failures="${failures}kindless local delivery was missing; "
+  # The farm patch a local-only landing records is a delivery artifact in its
+  # own right, not free text left in the row title.
+  printf '%s' "$json" | jq -e \
+    '.landed | any(.id == "farm-patch-local" and .artifact == "farm patch 0014-project-registry-labels.patch")' >/dev/null \
+    || failures="${failures}farm-recorded local delivery artifact was missing; "
   printf '%s' "$json" | jq -e --arg report "$shipping_report" \
     '.landed | any(.id == "shipping-scout" and .artifact == $report)' >/dev/null \
     || failures="${failures}longer-word explicit scout kind was lost; "

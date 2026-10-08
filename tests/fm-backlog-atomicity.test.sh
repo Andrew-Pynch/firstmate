@@ -1575,6 +1575,61 @@ test_completion_closes_a_local_only_ship_before_reporting_success() {
   pass "completion closes a local-only ship, with its landing note, before reporting success"
 }
 
+test_recovery_replays_a_recorded_farm_patch_note() {
+  local case_dir id marker home out
+  id=atomic-farm-patch-note-replay-b9
+  case_dir=$(make_home farm-patch-note-replay)
+  add_item "$case_dir" "$id"
+  start_item "$case_dir" "$id"
+  home=$(home_of "$case_dir")
+  marker="$home/state/$id.backlog-close"
+  # A fleet that lands its own changes in the farm patch store records that
+  # patch, not a local-main merge, as the local-only completion artifact. The
+  # marker stores the note's spaces percent-encoded.
+  printf 'id=%s\ndata=%s\nspawn_gen=spawn-farm-patch-note\narg=--note\narg=farm%%20patch%%200014-project-registry-labels.patch\n' \
+    "$id" "$home/data" > "$marker"
+
+  out=$(run_bootstrap "$case_dir")
+  [ "$(row_state "$case_dir" "$id")" = "done" ] \
+    || fail "restart did not replay the recorded farm-patch close: $out"
+  assert_grep 'farm patch 0014-project-registry-labels.patch' "$(backlog_of "$case_dir")" \
+    "the replayed close lost the farm patch artifact"
+  assert_absent "$marker" "the replayed farm-patch close marker remained"
+  pass "a recorded farm-patch note replays into the row's artifact"
+}
+
+test_recovery_refuses_a_note_outside_the_recorded_vocabulary() {
+  local case_dir id marker home out
+  id=atomic-note-vocabulary-refusal-c9
+  case_dir=$(make_home note-vocabulary-refusal)
+  home=$(home_of "$case_dir")
+  add_item "$case_dir" "$id"
+  start_item "$case_dir" "$id"
+  marker="$home/state/$id.backlog-close"
+  printf 'id=%s\ndata=%s\nspawn_gen=spawn-note-vocabulary\narg=--note\narg=free%%20text%%20the%%20marker%%20must%%20never%%20carry\n' \
+    "$id" "$home/data" > "$marker"
+
+  out=$(run_bootstrap "$case_dir")
+  assert_contains "$out" "invalid pending-close arguments" \
+    "recovery did not report the unrecorded note"
+  assert_present "$marker" "an invalid pending-close record was discarded"
+  [ "$(row_state "$case_dir" "$id")" = in_flight ] \
+    || fail "an unrecorded note changed the backlog row"
+  rm -f "$marker"
+
+  # The farm-patch note is a closed shape too: its patch file name follows
+  # bin/fm-farm-patch.sh record's four-digit-id grammar.
+  printf 'id=%s\ndata=%s\nspawn_gen=spawn-note-vocabulary\narg=--note\narg=farm%%20patch%%20001-not-four-digits.patch\n' \
+    "$id" "$home/data" > "$marker"
+  out=$(run_bootstrap "$case_dir")
+  assert_contains "$out" "invalid pending-close arguments" \
+    "recovery did not report a malformed farm patch name"
+  assert_present "$marker" "a malformed farm-patch note record was discarded"
+  [ "$(row_state "$case_dir" "$id")" = in_flight ] \
+    || fail "a malformed farm-patch note changed the backlog row"
+  pass "a note outside the recorded vocabulary never reaches a backlog row"
+}
+
 test_completion_closes_a_scout_with_its_report() {
   local case_dir id out
   id=atomic-close-b6
@@ -3044,6 +3099,8 @@ test_completion_refuses_a_legacy_record_without_an_incarnation
 test_completion_refuses_ambiguous_incarnation_metadata
 test_completion_records_a_relative_report_for_relocated_data
 test_space_containing_scout_report_marker_replays
+test_recovery_replays_a_recorded_farm_patch_note
+test_recovery_refuses_a_note_outside_the_recorded_vocabulary
 test_trailing_newline_data_path_fails_closed
 test_control_character_data_path_is_refused_before_cleanup
 test_completion_preserves_records_when_meta_removal_fails

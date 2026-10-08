@@ -902,6 +902,27 @@ fm_backlog_close_marker_path() {  # <state-dir> <id>
   printf '%s/%s.backlog-close\n' "$1" "$2"
 }
 
+# The farm patch file name a local-only close may record as its completion
+# artifact instead of a local-main merge. Its grammar is bin/fm-farm-patch.sh
+# record's: a four-digit id, a dash, a slug of lowercase letters, digits, and
+# dashes, and the .patch suffix. This is what keeps the marker's note a closed
+# vocabulary rather than free text a marker could smuggle into a backlog row.
+fm_backlog_farm_patch_file_valid() {  # <name>
+  local name=$1 slug
+  [ "${#name}" -le 200 ] || return 1
+  case "$name" in
+    [0-9][0-9][0-9][0-9]-*.patch) ;;
+    *) return 1 ;;
+  esac
+  slug=${name#????-}
+  slug=${slug%.patch}
+  [ -n "$slug" ] || return 1
+  case "$slug" in
+    *[!a-z0-9-]*) return 1 ;;
+  esac
+  return 0
+}
+
 fm_backlog_close_marker_validate() {  # <marker-path> <authorized-data-dir> <expected-id> <state-dir>
   local marker=$1 authorized_data data_resolved expected_id=$3 state=$4
   local id='' data='' marker_spawn_gen='' cleanup_incomplete=0 mode=close line raw_bytes arg_value
@@ -1001,7 +1022,18 @@ fm_backlog_close_marker_validate() {  # <marker-path> <authorized-data-dir> <exp
     0) ;;
     2)
       case "${args[0]}" in
-        --note) [ "${args[1]}" = "local%20main" ] ;;
+        --note)
+          # The note records the local-only completion artifact, so it is a
+          # closed vocabulary: a local-main merge, or the recorded farm patch
+          # that carries the work. A note's spaces are percent-encoded in the
+          # marker (see the staging function); the decoder on replay restores
+          # them. Anything else in this position stays invalid.
+          case "${args[1]}" in
+            'local%20main') true ;;
+            'farm%20patch%20'*) fm_backlog_farm_patch_file_valid "${args[1]#farm%20patch%20}" ;;
+            *) false ;;
+          esac
+          ;;
         --pr)
           arg_value=${args[1]}
           [ "${#arg_value}" -le 2048 ] \
@@ -1099,8 +1131,11 @@ fm_backlog_close_marker_stage() {  # <temporary-path> <id> <data-dir> <spawn-gen
     shift
   fi
   for arg in "$@"; do
-    if [ "$previous_arg" = --note ] && [ "$arg" = "local main" ]; then
-      serialized_args+=("local%20main")
+    # The marker is a line-oriented record, so a note's spaces are percent-encoded
+    # here and decoded on replay. The note's value stays a closed vocabulary
+    # (the validator is what enforces it).
+    if [ "$previous_arg" = --note ]; then
+      serialized_args+=("${arg// /%20}")
     else
       serialized_args+=("$arg")
     fi
@@ -1176,7 +1211,9 @@ fm_backlog_close_marker_replay() {  # <state-dir> <marker-path> <authorized-data
   [ "$mode" = close ] || mode_flags=(--retain)
   args=("${FM_BACKLOG_CLOSE_VALIDATED_ARGS[@]+"${FM_BACKLOG_CLOSE_VALIDATED_ARGS[@]}"}")
   if [ "${args[0]-}" = --note ]; then
-    args[1]="local main"
+    # The marker stores a note's spaces percent-encoded (see the staging
+    # function); the transition records the decoded artifact text.
+    args[1]=${args[1]//%20/ }
   fi
   meta="$state/$id.meta"
   if [ -e "$meta" ] || [ -L "$meta" ]; then

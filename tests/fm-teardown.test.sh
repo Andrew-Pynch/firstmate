@@ -23,6 +23,8 @@
 # Matrix:
 #   (a) local-only + HEAD on a fork remote-tracking branch     -> ALLOW  (fork fix)
 #   (b) local-only + truly unpushed work (no remote, not main) -> REFUSE (safety)
+#   (b1) local-only + commit a recorded farm patch reproduces  -> ALLOW  (patch-store fix)
+#   (b2) local-only + commit no recorded farm patch reproduces  -> REFUSE (safety)
 #   (c) local-only + merged into local main, no remote         -> ALLOW  (no regression)
 #   (d) no-mistakes + HEAD on origin remote-tracking branch    -> ALLOW  (no regression)
 #   (e) no-mistakes + unpushed, no PR, content not in default  -> REFUSE (safety)
@@ -623,13 +625,38 @@ run_teardown() {
   local case_dir=$1; shift
   # FM_DATA_OVERRIDE is pinned to the case dir because teardown closes this
   # home's backlog item itself; without it $DATA would resolve to the real
-  # repo's own home and a test could mutate live records.
+  # repo's own home and a test could mutate live records. FM_FARM_PATCH_STORE is
+  # pinned for the same reason: teardown's default store sits under the code
+  # root, so an unpinned run would read a developer's own store. Cases that want
+  # one write it at $case_dir/farm-patches.
   FM_ROOT_OVERRIDE="$ROOT" \
   FM_STATE_OVERRIDE="$case_dir/state" \
   FM_DATA_OVERRIDE="$case_dir/data" \
   FM_CONFIG_OVERRIDE="$case_dir/config" \
+  FM_FARM_PATCH_STORE="${FM_FARM_PATCH_STORE:-$case_dir/farm-patches}" \
   PATH="$case_dir/fakebin:${FM_TEARDOWN_TEST_PATH:-$PATH}" \
     "$TEARDOWN" task-x1 "$@"
+}
+
+# Record the worktree's own commit as one patch in a farm patch store, in the
+# shape bin/fm-farm-patch.sh record writes: the manifest (series record plus one
+# patch record), the patch file, and the expected.tsv a completed record or
+# replay produces. Args: case_dir [patch-file-name]
+write_farm_patch_store() {
+  local case_dir=$1 file=${2:-0001-captured.patch} store base
+  store="$case_dir/farm-patches"
+  mkdir -p "$store"
+  base=$(git -C "$case_dir/wt" rev-parse HEAD^)
+  git -C "$case_dir/wt" diff --no-color --no-ext-diff --no-renames --binary "$base" HEAD \
+    > "$store/$file"
+  {
+    printf 'series\t%s\t2026-09-16\tcaptured by the test\n' "$base"
+    printf 'patch\t0001\tcaptured\t%s\t%s\t%s\t%s\n' \
+      "$file" "$case_dir/wt" "the task's own commit" "$(git -C "$case_dir/wt" log -1 --format=%s)"
+  } > "$store/manifest"
+  git -C "$case_dir/wt" -c core.abbrev=40 diff --raw --no-renames "$base" HEAD \
+    | awk -F'\t' '{ split($1, m, " "); if (m[2] == "000000") printf "000000\t-\t%s\n", $2; else printf "%s\t%s\t%s\n", m[2], m[4], $2 }' \
+    | LC_ALL=C sort -k3 > "$store/expected.tsv"
 }
 
 # Seed a real backlog carrying task-x1 as In flight, so a teardown in this case
@@ -837,6 +864,94 @@ test_local_only_merged_to_local_main_allows() {
   expect_code 0 "$rc" "merged-main: teardown should succeed when work is merged into local main"
   ! grep -q REFUSED "$case_dir/stderr" || fail "merged-main: teardown printed a REFUSED line"
   pass "local-only worktree with work merged into local main is torn down (no regression)"
+}
+
+test_local_only_farm_patch_recorded_allows() {
+  local case_dir rc
+  case_dir=$(make_case farm-patch-recorded)
+  write_meta "$case_dir" local-only ship
+  wt_commit_file "$case_dir" landed.txt recorded "the task's work"
+  write_farm_patch_store "$case_dir"
+  seed_backlog_in_flight "$case_dir"
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "farm-patch-recorded: teardown should accept work a recorded patch reproduces"
+  ! grep -q REFUSED "$case_dir/stderr" || fail "farm-patch-recorded: teardown printed a REFUSED line"
+  [ "$(backlog_row_state "$case_dir")" = done ] \
+    || fail "farm-patch-recorded: the completed teardown left its row in $(backlog_row_state "$case_dir")"
+  assert_grep 'farm patch 0001-captured.patch' "$case_dir/data/backlog.md" \
+    "the closed row did not record the patch that carries the work"
+  assert_absent "$case_dir/state/task-x1.meta" \
+    "a completed patch-captured teardown kept the task record"
+  pass "local-only worktree whose commit a recorded farm patch reproduces is torn down, and its row names that patch"
+}
+
+test_local_only_farm_patch_uncaptured_refuses() {
+  local case_dir rc head
+  case_dir=$(make_case farm-patch-uncaptured)
+  write_meta "$case_dir" local-only ship
+  wt_commit_file "$case_dir" landed.txt recorded "the task's work"
+  write_farm_patch_store "$case_dir"
+  # A later commit on the branch is in no recorded patch, so the store no longer
+  # reproduces the branch's tip even though it holds the earlier commit.
+  wt_commit_file "$case_dir" extra.txt unrecorded "unrecorded follow-up"
+  head=$(git -C "$case_dir/wt" rev-parse HEAD)
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "farm-patch-uncaptured: a partly recorded branch must still refuse"
+  grep -q REFUSED "$case_dir/stderr" || fail "farm-patch-uncaptured: no REFUSED line in stderr"
+  grep -F "$case_dir/farm-patches" "$case_dir/stderr" >/dev/null \
+    || fail "farm-patch-uncaptured: the refusal did not name the store it read: $(cat "$case_dir/stderr")"
+  assert_refusal_retained_task_state "$case_dir" farm-patch-uncaptured "$head"
+  pass "local-only worktree with a commit no recorded farm patch reproduces is refused (safety preserved)"
+}
+
+test_local_only_farm_patch_must_be_recorded_and_settled() {
+  local case_dir rc head
+  # (i) A patch file the manifest does not record is not a recorded patch.
+  case_dir=$(make_case farm-patch-unrecorded)
+  write_meta "$case_dir" local-only ship
+  wt_commit_file "$case_dir" landed.txt recorded "the task's work"
+  write_farm_patch_store "$case_dir"
+  head=$(git -C "$case_dir/wt" rev-parse HEAD)
+  printf 'series\t%s\t2026-09-16\tcaptured by the test\n' \
+    "$(git -C "$case_dir/wt" rev-parse HEAD^)" > "$case_dir/farm-patches/manifest"
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "farm-patch-unrecorded: a patch file with no manifest record must not count as landed"
+  grep -q REFUSED "$case_dir/stderr" || fail "farm-patch-unrecorded: no REFUSED line in stderr"
+  assert_refusal_retained_task_state "$case_dir" farm-patch-unrecorded "$head"
+
+  # (ii) A store with no expected.tsv is one a conflicted record left mid-repair,
+  # so its patches describe no settled set.
+  case_dir=$(make_case farm-patch-unsettled)
+  write_meta "$case_dir" local-only ship
+  wt_commit_file "$case_dir" landed.txt recorded "the task's work"
+  write_farm_patch_store "$case_dir"
+  head=$(git -C "$case_dir/wt" rev-parse HEAD)
+  rm -f "$case_dir/farm-patches/expected.tsv"
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "farm-patch-unsettled: a patch set with no settled content description must not count as landed"
+  grep -q REFUSED "$case_dir/stderr" || fail "farm-patch-unsettled: no REFUSED line in stderr"
+  assert_refusal_retained_task_state "$case_dir" farm-patch-unsettled "$head"
+  pass "an unrecorded patch file and an unsettled patch set both refuse (the store must hold a settled, recorded set)"
 }
 
 test_no_mistakes_origin_remote_allows() {
@@ -3921,6 +4036,9 @@ test_acceptance_record_gate_decides_the_close
 test_teardown_manual_backend_leaves_the_backlog_to_the_operator
 test_local_only_truly_unpushed_refuses
 test_local_only_merged_to_local_main_allows
+test_local_only_farm_patch_recorded_allows
+test_local_only_farm_patch_uncaptured_refuses
+test_local_only_farm_patch_must_be_recorded_and_settled
 test_no_mistakes_origin_remote_allows
 test_no_mistakes_truly_unpushed_refuses
 test_local_only_force_overrides_unpushed

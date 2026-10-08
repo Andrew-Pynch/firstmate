@@ -73,7 +73,12 @@
 # Uncommitted changes are never landed.
 # local-only projects additionally accept work merged into the local default
 # branch (firstmate performs that merge after configured approval) as a fallback
-# for the common case where there is no remote at all.
+# for the common case where there is no remote at all, or work a patch recorded
+# in this fleet's farm patch store reproduces exactly, for a fleet that lands its
+# own changes there and never merges the default branch. That store is
+# FM_FARM_PATCH_STORE, defaulting to <code root>/farm-patches, and
+# bin/fm-farm-patch.sh's header owns its path default and its record formats;
+# farm_patch_captures_work below owns the proof teardown draws from it.
 # Scout tasks (kind=scout in meta) carve out of that check: their worktree is
 # declared scratch and the report at data/<task-id>/report.md is the work
 # product. Teardown proceeds only once the report exists and the shared
@@ -1553,9 +1558,82 @@ work_is_landed() {
   content_in_default
 }
 
+# The farm patch store this fleet's own local-only work lands in. Both the path
+# default and every record format are owned by bin/fm-farm-patch.sh's header, so
+# this resolves the store the same way and reads - never re-implements - the
+# manifest and expected.tsv it writes.
+fm_farm_patch_store() {
+  printf '%s\n' "${FM_FARM_PATCH_STORE:-$FM_ROOT/farm-patches}"
+}
+
+# Does a patch recorded in the farm patch store reproduce this worktree's
+# committed work exactly? True only when the store carries a settled set and one
+# of its manifest-recorded patches, applied to one of HEAD's own bases, produces
+# HEAD's tree. Both halves matter: the manifest entry is what says a patch was
+# recorded rather than merely present, and expected.tsv is what a completed
+# record or replay writes, so it distinguishes a settled set from one a
+# conflicted record left mid-repair.
+#
+# The patch is applied in a throwaway index (GIT_INDEX_FILE), never in the
+# worktree, so judging the work cannot modify it. The walk back from HEAD stops
+# at the first own base a remote-tracking branch or the farm lineage already
+# carries, which bounds a branch's own run of commits; the common single-commit
+# branch costs one base and tests every recorded patch against it. Nothing here
+# reads a branch name, a manifest comment, or an origin string: a patch counts
+# only when it reproduces the same tree, so a rebased or renamed branch is
+# accepted on content and an unrecorded, partly recorded, or since-edited branch
+# still refuses. Sets TEARDOWN_FARM_PATCH_FILE to the capturing patch file.
+FM_TEARDOWN_FARM_PATCH_SCAN_LIMIT=${FM_TEARDOWN_FARM_PATCH_SCAN_LIMIT:-32}
+TEARDOWN_FARM_PATCH_FILE=
+farm_patch_captures_work() {  # <worktree>
+  local wt=$1 store manifest tip_tree tmp index base tree file i
+  local -a patch_files=()
+  TEARDOWN_FARM_PATCH_FILE=
+  [ -d "$wt" ] || return 1
+  store=$(fm_farm_patch_store)
+  manifest=$store/manifest
+  [ -f "$manifest" ] && [ ! -L "$manifest" ] || return 1
+  [ -s "$store/expected.tsv" ] || return 1
+  while IFS= read -r file; do
+    [ -n "$file" ] || continue
+    [ -f "$store/$file" ] || return 1
+    patch_files+=("$file")
+  done < <(awk -F'\t' 'NF > 0 && $1 == "patch" { print $4 }' "$manifest")
+  [ "${#patch_files[@]}" -gt 0 ] || return 1
+  tip_tree=$(git -C "$wt" rev-parse --quiet --verify 'HEAD^{tree}' 2>/dev/null) || return 1
+  [ -n "$tip_tree" ] || return 1
+  tmp=$(umask 077; mktemp -d "${TMPDIR:-/tmp}/fm-teardown-farm-patch.XXXXXX") || return 1
+  index=$tmp/index
+  i=0
+  while [ "$i" -lt "$FM_TEARDOWN_FARM_PATCH_SCAN_LIMIT" ]; do
+    i=$((i + 1))
+    base=$(git -C "$wt" rev-parse --quiet --verify "HEAD~$i^{commit}" 2>/dev/null) || break
+    for file in "${patch_files[@]}"; do
+      rm -f "$index"
+      GIT_INDEX_FILE=$index git -C "$wt" read-tree "$base" 2>/dev/null || continue
+      GIT_INDEX_FILE=$index git -C "$wt" apply --cached --whitespace=nowarn \
+        "$store/$file" >/dev/null 2>&1 || continue
+      tree=$(GIT_INDEX_FILE=$index git -C "$wt" write-tree 2>/dev/null) || continue
+      if [ "$tree" = "$tip_tree" ]; then
+        TEARDOWN_FARM_PATCH_FILE=$file
+        rm -rf "$tmp"
+        return 0
+      fi
+    done
+    # Past a base that a remote or the farm lineage already carries, every older
+    # commit belongs to that lineage and not to this branch's own work.
+    if [ -z "$(git -C "$wt" rev-list --max-count=1 "$base" --not --remotes --glob='refs/farm-patches/*' 2>/dev/null)" ]; then
+      break
+    fi
+  done
+  rm -rf "$tmp"
+  return 1
+}
+
 # The completion links this teardown already holds locally. A scout's
-# deliverable is its report, a local-only ship lands on local main, and every
-# other ship carries the PR recorded on its own record.
+# deliverable is its report, a local-only ship lands on local main or as a
+# recorded farm patch, and every other ship carries the PR recorded on its own
+# record.
 BACKLOG_DONE_ARGS=()
 backlog_done_args() {
   local data_relative
@@ -1567,7 +1645,11 @@ backlog_done_args() {
       ;;
     *)
       if [ "$MODE" = local-only ]; then
-        BACKLOG_DONE_ARGS=(--note "local main")
+        if [ -n "$TEARDOWN_FARM_PATCH_FILE" ]; then
+          BACKLOG_DONE_ARGS=(--note "farm patch $TEARDOWN_FARM_PATCH_FILE")
+        else
+          BACKLOG_DONE_ARGS=(--note "local main")
+        fi
       elif [ -n "$PR_URL" ]; then
         BACKLOG_DONE_ARGS=(--pr "$PR_URL")
       fi
@@ -1864,11 +1946,20 @@ validate_worktree_teardown_safety() {
       return 1
     fi
     unmerged=$(printf '%s\n' "$unmerged_raw" | head -5)
-    if [ -n "$dirty" ] || [ -n "$unmerged" ]; then
-      echo "REFUSED: local-only worktree $WT has work not yet merged into $DEFAULT and not on any remote." >&2
-      [ -n "$dirty" ] && echo "uncommitted changes present" >&2
-      [ -n "$unmerged" ] && printf 'commits not yet on %s:\n%s\n' "$DEFAULT" "$unmerged" >&2
-      echo "Merge the branch into local $DEFAULT first (bin/fm-merge-local.sh after the captain approves), or push to a fork/remote, or get the captain's explicit OK to discard, then --force." >&2
+    # A fleet that lands its own changes in the farm patch store never merges the
+    # default branch, so a recorded patch reproducing this work exactly is that
+    # fleet's landed proof. Uncommitted changes are never landed, so this is about
+    # committed work only.
+    if [ -n "$dirty" ]; then
+      echo "REFUSED: local-only worktree $WT has uncommitted changes." >&2
+      echo "uncommitted changes present" >&2
+      echo "Commit them (or get the captain's explicit OK to discard, then --force)." >&2
+      return 1
+    fi
+    if [ -n "$unmerged" ] && ! farm_patch_captures_work "$WT"; then
+      echo "REFUSED: local-only worktree $WT has work not yet merged into $DEFAULT, not on any remote, and not reproduced by any patch recorded in $(fm_farm_patch_store)." >&2
+      printf 'commits not yet on %s:\n%s\n' "$DEFAULT" "$unmerged" >&2
+      echo "Merge the branch into local $DEFAULT first (bin/fm-merge-local.sh after the captain approves), record its patch with bin/fm-farm-patch.sh record, or get the captain's explicit OK to discard, then --force." >&2
       return 1
     fi
   elif [ -n "$dirty" ]; then

@@ -966,6 +966,171 @@ test_reassigned_pool_slot_finishes_own_cleanup_without_touching_the_slot() {
   pass "fm-teardown: a pool slot claimed by another task is left alone while the task's own cleanup finishes"
 }
 
+# make_endpoint_probe_tmux <case-dir> <listed-window> <pane-command>: a fake tmux
+# whose session inventory lists exactly <listed-window> and whose
+# #{pane_current_command} answers <pane-command> on a pane with no readable tty.
+# That is the shape bin/fm-backend.sh's recovery-grade classifier reads as `zsh`
+# -> dead and `claude` -> alive, which is what decides whether a record naming the
+# same pool slot can still hold a live worker. The two probe reads answer
+# silently; every other subcommand is a logged no-op success.
+make_endpoint_probe_tmux() {  # <case-dir> <listed-window> <pane-command>
+  local dir=$1 window=$2 comm=$3
+  cat > "$dir/fakebin/tmux" <<SH
+#!/usr/bin/env bash
+set -u
+case "\${1:-}" in
+  list-windows) printf '%s\n' '$window'; exit 0 ;;
+esac
+for a in "\$@"; do
+  case "\$a" in
+    *'#{pane_tty}'*) exit 0 ;;
+    *'#{pane_current_command}'*) printf '%s\n' '$comm'; exit 0 ;;
+  esac
+done
+printf 'tmux' >> "\${FM_RUNTIME_LOG:?}"
+printf ' <%s>' "\$@" >> "\${FM_RUNTIME_LOG:?}"
+printf '\n' >> "\${FM_RUNTIME_LOG:?}"
+exit 0
+SH
+  chmod +x "$dir/fakebin/tmux"
+}
+
+# The reuse collision with BOTH records still on disk, which is what leaves
+# finished records piled up: the finished task's record and the stale record that
+# named the slot before it. The claim proves which task the slot belongs to, so
+# the stale record's own cleanup must proceed record-only instead of being
+# refused by the record scan, and it must leave the claimant's record alone.
+test_reassigned_slot_record_still_tears_down_beside_the_claimants_record() {
+  local dir id=stale-task other=current-task worker rc
+
+  dir=$(make_case slot-reassigned-second-record)
+  mark_case_as_treehouse_pool "$dir"
+  fm_write_meta "$dir/home/state/$id.meta" \
+    "window=firstmate:fm-$id" "endpoint_task_id=$id" \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
+  fm_write_meta "$dir/home/state/$other.meta" \
+    "window=firstmate:fm-$other" "endpoint_task_id=$other" \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
+  claim_pool_slot "$dir" "$other" "$dir/other-home"
+  # Staged in this shell, not a command substitution: a background child of a
+  # $(...) subshell does not outlive it, and the point of this worker is to be
+  # alive in the slot while teardown runs.
+  ( cd "$dir/worktree" && exec sleep 30 ) &
+  worker=$!
+
+  set +e
+  run_case "$dir" "$id" > "$dir/stdout" 2> "$dir/stderr"
+  rc=$?
+  set -e
+
+  [ "$rc" -eq 0 ] \
+    || fail "teardown of a record whose slot another task claimed was refused by the record scan: $(cat "$dir/stderr")"
+  kill -0 "$worker" 2>/dev/null || fail "teardown killed the worker holding the reassigned pool slot"
+  assert_reassigned_slot_left_alone "$dir" "$id" "$other" "reassigned slot beside the claimant's record"
+  assert_present "$dir/home/state/$other.meta" "record-only teardown removed the claimant's record"
+  kill "$worker" 2>/dev/null || true
+  wait "$worker" 2>/dev/null || true
+
+  pass "fm-teardown: a record whose slot another task claimed tears down beside that claimant's own record"
+}
+
+# The claimant's own teardown, with the leftover record still on disk. A leftover
+# record whose endpoint is provably agent-less holds no live worker, so it is
+# reported by name and the claimant returns its own slot; the same conflict with a
+# live harness in the pane still refuses, because that could be a live worker.
+test_claimant_teardown_crosses_only_a_provably_agent_less_record() {
+  local dir id=current-task other=stale-task rc
+
+  dir=$(make_case slot-claimant-agentless-record)
+  mark_case_as_treehouse_pool "$dir"
+  fm_write_meta "$dir/home/state/$id.meta" \
+    "window=firstmate:fm-$id" "endpoint_task_id=$id" \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
+  fm_write_meta "$dir/home/state/$other.meta" \
+    "window=firstmate:fm-$other" "endpoint_task_id=$other" \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
+  claim_pool_slot "$dir" "$id"
+  make_endpoint_probe_tmux "$dir" "fm-$other" zsh
+
+  run_case "$dir" "$id" > "$dir/stdout" 2> "$dir/stderr" \
+    || fail "teardown of the slot's own claimant was refused by an agent-less leftover record: $(cat "$dir/stderr")"
+  assert_absent "$dir/home/state/$id.meta" "claimant teardown left its own record"
+  assert_absent "$dir/pool/1/.fm-slot-owner" "claimant teardown left its own spent slot claim behind"
+  assert_present "$dir/home/state/$other.meta" \
+    "claimant teardown removed the leftover record Main still has to finish"
+  assert_present "$dir/worktree/sentinel" "claimant teardown reset its own slot before returning it"
+  grep -Fq "treehouse <return>" "$dir/runtime.log" \
+    || fail "claimant teardown did not return its own pool slot: $(cat "$dir/runtime.log")"
+  assert_contains "$(cat "$dir/stderr")" "$other" \
+    "the claimant's teardown should name the leftover record by name"
+  assert_contains "$(cat "$dir/stderr")" "no agent is left behind it" \
+    "the claimant's teardown should say why the leftover record did not refuse it"
+
+  # The same conflict with a live harness command in the leftover record's pane:
+  # the claim names this task, but nothing rules out a live worker there, so the
+  # refusal stands and neither record is touched.
+  dir=$(make_case slot-claimant-live-record)
+  mark_case_as_treehouse_pool "$dir"
+  fm_write_meta "$dir/home/state/$id.meta" \
+    "window=firstmate:fm-$id" "endpoint_task_id=$id" \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
+  fm_write_meta "$dir/home/state/$other.meta" \
+    "window=firstmate:fm-$other" "endpoint_task_id=$other" \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
+  claim_pool_slot "$dir" "$id"
+  make_endpoint_probe_tmux "$dir" "fm-$other" claude
+
+  set +e
+  run_case "$dir" "$id" > "$dir/stdout" 2> "$dir/stderr"
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] \
+    || fail "teardown returned a pool slot another record could still hold a live worker in"
+  assert_present "$dir/home/state/$id.meta" "the refusal removed the claimant's own record"
+  assert_present "$dir/home/state/$other.meta" "the refusal removed the record it was protecting"
+  assert_present "$dir/worktree/sentinel" "the refusal reset the contested slot"
+  [ ! -s "$dir/runtime.log" ] \
+    || fail "the refusal reached the runtime: $(cat "$dir/runtime.log")"
+  assert_contains "$(cat "$dir/stderr")" "$other" \
+    "the refusal should name the record that could still hold a live worker"
+  assert_contains "$(cat "$dir/stderr")" "reads alive" \
+    "the refusal should state the reading that kept it"
+
+  pass "fm-teardown: the slot's own claimant crosses a leftover record only when no agent is behind it"
+}
+
+# No claim proves which record holds the slot, so two records naming it stay the
+# reuse collision itself and the scan refuses - even when both endpoints read
+# agent-less, because agent-lessness alone never says which record holds the slot.
+test_two_records_without_a_claim_still_refuse_even_when_both_endpoints_are_agent_less() {
+  local dir id=first-task other=second-task rc
+
+  dir=$(make_case slot-two-records-no-claim)
+  mark_case_as_treehouse_pool "$dir"
+  fm_write_meta "$dir/home/state/$id.meta" \
+    "window=firstmate:fm-$id" "endpoint_task_id=$id" \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
+  fm_write_meta "$dir/home/state/$other.meta" \
+    "window=firstmate:fm-$other" "endpoint_task_id=$other" \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
+  make_endpoint_probe_tmux "$dir" "fm-$other" zsh
+
+  set +e
+  run_case "$dir" "$id" > "$dir/stdout" 2> "$dir/stderr"
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "teardown returned a pool slot two records named with no claim to settle it"
+  assert_present "$dir/home/state/$id.meta" "the ambiguity refusal removed the stale task's record"
+  assert_present "$dir/home/state/$other.meta" "the ambiguity refusal removed the other task's record"
+  assert_present "$dir/worktree/sentinel" "the ambiguity refusal reset the shared slot"
+  [ ! -s "$dir/runtime.log" ] \
+    || fail "the ambiguity refusal reached the runtime: $(cat "$dir/runtime.log")"
+  assert_contains "$(cat "$dir/stderr")" "$other" \
+    "the ambiguity refusal should name the other task holding the slot"
+
+  pass "fm-teardown: two records naming one slot still refuse while no claim settles which one holds it"
+}
+
 # The two states that must never become a false refusal: the task's own claim,
 # and no claim at all (a slot taken before claims existed, or already returned).
 test_own_and_absent_slot_claims_still_tear_down() {
@@ -1386,6 +1551,9 @@ test_reused_pool_slot_refuses_before_touching_the_other_task
 test_cross_home_pool_slot_collision_refuses
 test_sole_slot_record_still_tears_down
 test_reassigned_pool_slot_finishes_own_cleanup_without_touching_the_slot
+test_reassigned_slot_record_still_tears_down_beside_the_claimants_record
+test_claimant_teardown_crosses_only_a_provably_agent_less_record
+test_two_records_without_a_claim_still_refuse_even_when_both_endpoints_are_agent_less
 test_own_and_absent_slot_claims_still_tear_down
 test_recorded_endpoint_that_changed_directory_still_tears_down
 test_project_lock_anchors_at_the_local_root_across_home_layouts

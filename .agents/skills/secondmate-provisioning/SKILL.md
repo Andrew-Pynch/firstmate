@@ -2,8 +2,8 @@
 name: secondmate-provisioning
 description: >-
   Agent-only reference for persistent secondmate setup and retirement.
-  Use when creating, seeding, validating, launching, recovering, handing backlog to, pushing inherited local material into, or retiring a secondmate home, or when editing data/secondmates.md.
-  Covers local leases, whole-home remote routes, transactional seeding, record intake for an existing or inherited domain, project clone restrictions, secondmate harness pins, inherited local-material push, idle charter, handoff helper, and teardown safety.
+  Use when creating, seeding, validating, launching, renaming, recovering, handing backlog to, pushing inherited local material into, or retiring a secondmate home, or when editing data/secondmates.md.
+  Covers local leases, whole-home remote routes, transactional seeding, record intake for an existing or inherited domain, project clone restrictions, secondmate harness pins, inherited local-material push, idle charter, handoff helper, rename, and teardown safety.
 user-invocable: false
 metadata:
   internal: true
@@ -234,6 +234,16 @@ The main firstmate reconciles only direct reports.
 Each secondmate is a firstmate in its own home, so it runs recovery on startup and reconciles its own crewmates.
 A secondmate's recovery reconciles only work that is already its own and then idles.
 It never initiates a survey or audit during recovery.
+
+## Rename
+
+A persistent second mate's id is renamed only through `bin/fm-secondmate-rename.sh <old-id> <new-id> [--stopped] [--keep-home-path]`, never by hand-editing `.fm-secondmate-home`, `.fm-secondmate-parent`, or a `data/secondmates.md` route: those are validated identity surfaces with their own parsers.
+The helper owns the whole contract, including the refusal while the mate's endpoint reports a live agent, the retirement of the stopped endpoint, the parent task, state, and reply-channel records, the machine-named home-directory move, and the survivors report.
+Stop the mate first through the control plane for its placement: `bin/fm-control.sh <id> exit` locally, or `bin/fm-on.sh <id> fm-remote-secondmate-control.sh exit <id>` for a remote route (the remote enum in [Recovery](#recovery) routes `relaunch` through the same host-local plane).
+A remote rename runs its home half through `bin/fm-on.sh <id> fm-remote-secondmate-control.sh rename ...`, so it needs this helper present in that host's own Firstmate code root and refuses with an actionable message when it is not.
+A linked worktree home (a treehouse-leased local home) refuses the home move; `--keep-home-path` renames the identity only.
+Because the rename retires the stopped endpoint, the mate returns through the ordinary recovery respawn, `bin/fm-spawn.sh <new-id> --secondmate`, which re-resolves its harness and profile from current config; a relaunch cannot adopt the retired endpoint.
+[`docs/remote-secondmates.md`](../../../docs/remote-secondmates.md#sync-update-and-retirement) owns the operator-facing command.
 
 ## Retirement and teardown
 

@@ -12,6 +12,8 @@
 #   fm-remote-secondmate-control.sh observe <id>
 #   fm-remote-secondmate-control.sh sync <id> [<parent-commit>]
 #   fm-remote-secondmate-control.sh update <id>
+#   fm-remote-secondmate-control.sh exit <id>
+#   fm-remote-secondmate-control.sh rename <old-id> <new-id> [--keep-home-path]
 #   fm-remote-secondmate-control.sh retire <id> [--force]
 #
 # Remote placement ends here, but the second-mate agent always runs on the
@@ -41,6 +43,16 @@
 # Relaunch is not a second lifecycle implementation: it runs the ORDINARY local
 # control plane here, because from this host the mate is a plain local
 # secondmate. cmd_relaunch below owns why the parent must hand it the profile.
+# `exit` is the same delegation for the stop half: it exists because
+# bin/fm-control.sh refuses a remotely placed secondmate by name, so the parent
+# has no local stop for one, and a rename needs the mate stopped.
+#
+# `rename` carries the home half of a secondmate id rename
+# (bin/fm-secondmate-rename-lib.sh, which owns every rule): the validated marker
+# pair, the home's own per-id state records, the stale endpoint, and the
+# optional machine-named home-directory move. The parent
+# (bin/fm-secondmate-rename.sh) owns the other half, and only ever reaches this
+# verb through bin/fm-on.sh with the id its registry still names.
 #
 # The optional launch traceparent is the per-task W3C trace-context carrier the
 # PARENT home resolved for this secondmate; this host only delivers it to the
@@ -59,6 +71,10 @@ REMOTE_HERDR_SESSION=fm-remote
 
 # shellcheck source=bin/fm-backend.sh
 . "$SCRIPT_DIR/fm-backend.sh"
+# shellcheck source=bin/fm-secondmate-rename-lib.sh
+. "$SCRIPT_DIR/fm-secondmate-rename-lib.sh"
+# shellcheck source=bin/fm-secondmate-parent-lib.sh
+. "$SCRIPT_DIR/fm-secondmate-parent-lib.sh"
 # shellcheck source=bin/fm-ff-lib.sh
 . "$SCRIPT_DIR/fm-ff-lib.sh"
 # shellcheck source=bin/fm-pending-reply-lib.sh
@@ -69,7 +85,7 @@ REMOTE_HERDR_SESSION=fm-remote
 . "$SCRIPT_DIR/fm-remote-readiness-lib.sh"
 
 die() { printf 'error: %s\n' "$1" >&2; exit 1; }
-usage() { sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+usage() { sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 validate_id() { case "$1" in ''|*[!A-Za-z0-9._-]*) die "invalid secondmate id: $1" ;; esac; }
 
 validate_home() { # <id> [allow-absent]
@@ -251,6 +267,45 @@ cmd_relaunch() {
     "$SCRIPT_DIR/fm-control.sh" "${control_args[@]}"
 }
 
+# Stop the second-mate agent this host runs, by executing the ORDINARY local
+# control plane here, exactly as cmd_relaunch delegates the restart half. This
+# verb exists because bin/fm-control.sh refuses a remotely placed secondmate by
+# name, so the parent would otherwise have no supported stop for one; from this
+# host the mate is a plain local secondmate whose endpoint record was written by
+# a host-local fm-spawn.
+cmd_exit() {
+  local id=$1
+  validate_id "$id"
+  validate_home "$id"
+  remote_endpoint_require "$id"
+  HERDR_SESSION="$REMOTE_HERDR_SESSION" FM_HOME="$FM_ROOT" FM_ROOT_OVERRIDE="$FM_ROOT" \
+    FM_STATE_OVERRIDE="$CONTROL_STATE" FM_DATA_OVERRIDE="$CONTROL_DATA" \
+    FM_CONFIG_OVERRIDE="$TARGET_HOME/config" \
+    "$SCRIPT_DIR/fm-control.sh" "$id" exit
+}
+
+# The home half of a rename. Identity, home state records, the stale endpoint,
+# and the optional home-directory move are owned by
+# bin/fm-secondmate-rename-lib.sh; this verb is only the host-side entry point
+# the parent reaches through bin/fm-on.sh. The endpoint is retired BEFORE the
+# home moves, because it is recorded inside this home's private parent-route
+# state.
+cmd_rename() {
+  local id=$1 new=$2 keep=${3:-} keep_arg=no
+  validate_id "$id"
+  validate_id "$new"
+  [ "$id" != "$new" ] || die "renaming $id to itself is not a rename"
+  case "$keep" in '') ;; --keep-home-path) keep_arg=yes ;; *) usage ;; esac
+  # Validates the seeded-home identity and refuses a home marked for another id.
+  validate_home "$id"
+  fm_secondmate_rename_retire_endpoint "$CONTROL_STATE/$id.meta" "$id" || return 1
+  fm_secondmate_rename_home "$id" "$new" "$TARGET_HOME" "$keep_arg" || return 1
+  printf 'schema=fm-remote-secondmate-rename.v1\n'
+  printf 'home=%s\n' "$FM_SECONDMATE_RENAME_HOME"
+  printf 'moved=%s\n' "$FM_SECONDMATE_RENAME_MOVED"
+  printf 'endpoint=%s\n' "$FM_SECONDMATE_RENAME_ENDPOINT"
+}
+
 cmd_send() {
   local id=$1 message=$2 delivery_mode=${3:-} rec ring_rc=0 meta meta_lock
   validate_id "$id"
@@ -420,6 +475,8 @@ cmd_retire() {
 case "${1:-}" in
   launch) shift; [ "$#" -ge 5 ] && [ "$#" -le 6 ] || usage; cmd_launch "$@" ;;
   relaunch) shift; [ "$#" -eq 4 ] || usage; cmd_relaunch "$@" ;;
+  exit) shift; [ "$#" -eq 1 ] || usage; cmd_exit "$@" ;;
+  rename) shift; { [ "$#" -eq 2 ] || [ "$#" -eq 3 ]; } || usage; cmd_rename "$@" ;;
   state) shift; [ "$#" -eq 1 ] || usage; validate_id "$1"; validate_home "$1"; state_value "$1" ;;
   route) shift; [ "$#" -eq 1 ] || usage; cmd_route "$1" ;;
   send) shift; [ "$#" -ge 2 ] && [ "$#" -le 3 ] || usage; cmd_send "$@" ;;

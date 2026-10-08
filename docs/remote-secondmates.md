@@ -249,6 +249,29 @@ The [`secondmate-provisioning` skill](../.agents/skills/secondmate-provisioning/
 Neither session start nor launch moves the host's own Firstmate copy, and an unsafe or unavailable target is reported and left untouched.
 A completed sync reports which watched instruction paths its advance changed, because the primary cannot diff a checkout it cannot read and needs that fact to decide whether the running remote agent must be replaced to actually reload.
 
+Stop a live remote second mate without retiring it with:
+
+```sh
+bin/fm-on.sh <id> fm-remote-secondmate-control.sh exit <id>
+```
+
+That verb delegates to the ordinary local control plane on its host, exactly as `relaunch` does, because a remotely placed secondmate is refused by name locally ([`docs/agent-control.md`](agent-control.md)).
+It stops only the agent: the endpoint, the home, and every uncommitted change stay in place.
+
+Rename a second mate, local or remote, with:
+
+```sh
+bin/fm-secondmate-rename.sh <old-id> <new-id> [--stopped] [--keep-home-path]
+```
+
+The helper refuses while the recorded endpoint reports a live agent, so stop the mate first through the control plane for its placement.
+It rewrites the identity marker pair through their own parsers, moves the home's per-id state records and the parent's route, task, and reply-channel records, retires the stopped endpoint so no pane or `2ndmate-<id>` workspace keeps the old label, and moves the home directory to the machine-named path unless its final path component does not carry the old id or `--keep-home-path` asks for the identity-only rename.
+A linked worktree home (a treehouse-leased local home) is never moved and refuses without `--keep-home-path`.
+The remote half runs through `bin/fm-on.sh <id> fm-remote-secondmate-control.sh rename <old-id> <new-id>`, so it uses that host's own code root: the helper refuses with an actionable message when that copy does not carry it yet.
+A rename retires the stopped endpoint, so the mate comes back through the ordinary recovery respawn, `bin/fm-spawn.sh <new-id> --secondmate`, which re-resolves its harness and profile from current config; the helper prints that command as its `respawn=` field.
+The registry summary and scope text are the mate's own charter prose and are left as written.
+[`bin/fm-secondmate-rename.sh`](../bin/fm-secondmate-rename.sh) owns the exact ordering, the refusals, and what a partial failure leaves behind.
+
 Retire a remote second mate with the normal guarded command:
 
 ```sh
@@ -268,6 +291,7 @@ The lifecycle test covers seeding a registered project that this machine has nev
 
 ```sh
 bin/fm-test-run.sh tests/fm-on.test.sh
+bin/fm-test-run.sh tests/fm-secondmate-rename.test.sh
 bin/fm-test-run.sh tests/fm-send-remote-delivery.test.sh
 bin/fm-test-run.sh tests/fm-secondmate-reconcile.test.sh
 bin/fm-test-run.sh tests/fm-peek-remote.test.sh

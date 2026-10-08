@@ -7,8 +7,8 @@
 # Each key below pins one setting whose captain-facing value would park an
 # unattended worker on an interactive prompt, change its pinned model under it,
 # make its composer unreadable to bin/fm-composer-lib.sh, or spend premium
-# quota on a model the worker never asked for. Verified against omp 18.1.11's
-# own settings schema (`omp config list`).
+# quota on a model the worker never asked for. Verified against omp 18.2.6's
+# own settings schema and model-role resolver (`omp config list`).
 modelRoles:
   # The advisor is a second model that reviews every turn of every worker
   # session, so what the `advisor` role resolves to is spent per session, on

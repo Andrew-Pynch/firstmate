@@ -881,7 +881,7 @@ test_local_only_farm_patch_recorded_allows() {
 
   expect_code 0 "$rc" "farm-patch-recorded: teardown should accept work a recorded patch reproduces"
   ! grep -q REFUSED "$case_dir/stderr" || fail "farm-patch-recorded: teardown printed a REFUSED line"
-  [ "$(backlog_row_state "$case_dir")" = done ] \
+  [ "$(backlog_row_state "$case_dir")" = "done" ] \
     || fail "farm-patch-recorded: the completed teardown left its row in $(backlog_row_state "$case_dir")"
   assert_grep 'farm patch 0001-captured.patch' "$case_dir/data/backlog.md" \
     "the closed row did not record the patch that carries the work"

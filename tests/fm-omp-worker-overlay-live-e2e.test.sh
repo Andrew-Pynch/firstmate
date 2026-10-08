@@ -4,11 +4,12 @@
 # What a worker session's advisor resolves to is a fact only the installed omp
 # can answer: `--config` is one config layer among several, and omp resolves an
 # unset `advisor` role through its `slow` priority chain, a premium reasoning
-# model. No fixture can prove which layer wins, so this guard gives an isolated
-# agent directory a deliberately premium advisor and asserts the tracked overlay
-# beats it twice: through omp's own config dump, and through a real session's
-# `/advisor status` report. It fails naming omp and the reported text rather than
-# degrading quietly.
+# model. No fixture can prove which layer wins, so this guard gives the live
+# agent profile a temporary, higher-priority host overlay with a deliberately
+# premium advisor, then asserts the tracked worker overlay beats it twice:
+# through omp's own config dump and through a real session's `/advisor status`
+# report. The live profile supplies only authentication and is never written.
+# It fails naming omp and the reported text instead of degrading quietly.
 #
 # The first half needs no model and no credential, so it always runs. The second
 # half is a live resolution, which omp only performs for a provider whose
@@ -52,18 +53,17 @@ cleanup() {
 }
 trap cleanup EXIT
 
-AGENT_DIR="$TMP_ROOT/agent"
-mkdir -p "$AGENT_DIR"
+HOST_OVERLAY="$TMP_ROOT/host.yml"
 printf 'advisor:\n  enabled: true\nmodelRoles:\n  advisor: %s\n  slow: %s\n' \
-  "$CONFLICT_ADVISOR" "$CONFLICT_SLOW" > "$AGENT_DIR/config.yml"
+  "$CONFLICT_ADVISOR" "$CONFLICT_SLOW" > "$HOST_OVERLAY"
 
 # The advisor role omp resolves from the config layers alone. `config get`
 # reports the merged record without calling a model or consulting a credential,
 # so this half is deterministic on any machine.
-layer_advisor() { # <PI_CONFIG_FILES value, empty for none>
+layer_advisor() { # <worker overlay, empty for host layer only>
   (
     cd "$TMP_ROOT" &&
-      PI_CODING_AGENT_DIR="$AGENT_DIR" PI_CONFIG_FILES="$1" omp config get modelRoles --json 2>/dev/null
+      PI_CONFIG_FILES="$HOST_OVERLAY${1:+:$1}" omp config get modelRoles --json 2>/dev/null
   ) | jq -r '.value.advisor // ""'
 }
 
@@ -85,17 +85,27 @@ session_advisor() {
   (
     cd "$TMP_ROOT" &&
       printf '{"id":"probe","type":"prompt","message":"/advisor status"}\n' \
-        | PI_CODING_AGENT_DIR="$AGENT_DIR" OMP_SKIP_SETUP=1 omp --mode rpc --no-session --cwd "$TMP_ROOT" --config "$OVERLAY" 2>/dev/null
-  ) | jq -r 'select(.type == "command_output") | .text | select(length > 0)' | head -1
+        | PI_CONFIG_FILES="$HOST_OVERLAY" OMP_SKIP_SETUP=1 \
+          omp --mode rpc --no-session --cwd "$TMP_ROOT" --config "$OVERLAY" 2>/dev/null
+  ) | jq -r 'select(.type == "command_output") | .text | select(length > 0)'
 }
-
 if omp token "$EXPECTED_PROVIDER" >/dev/null 2>&1; then
   reported=$(session_advisor)
   case "$reported" in
-    *"Advisor is enabled ($EXPECTED_ADVISOR)."*) ;;
-    *) fail "a session carrying the tracked overlay did not run its advisor on $EXPECTED_ADVISOR; omp $OMP_VERSION reported: $reported" ;;
+    *"($EXPECTED_PROVIDER/"*) ;;
+    *) fail "a session carrying the tracked overlay did not run an advisor on $EXPECTED_PROVIDER; omp $OMP_VERSION reported: $reported" ;;
   esac
-  pass "omp $OMP_VERSION: a session carrying the tracked overlay reports its advisor as $EXPECTED_ADVISOR"
+  while IFS= read -r line; do
+    case "$line" in
+      "  • "*"[paused]"*) ;;
+      "  • "*)
+        case "$line" in
+          *" ($EXPECTED_PROVIDER/"*) ;;
+          *) fail "a session carrying the tracked overlay ran a non-$EXPECTED_PROVIDER advisor; omp $OMP_VERSION reported: $reported" ;;
+        esac ;;
+    esac
+  done <<<"$reported"
+  pass "omp $OMP_VERSION: every running advisor in a session carrying the tracked overlay uses $EXPECTED_PROVIDER"
 else
   printf 'skip: %s is not authenticated here, so the live session advisor report is unavailable\n' "$EXPECTED_PROVIDER"
 fi

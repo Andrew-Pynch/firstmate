@@ -282,28 +282,35 @@
 #   set (its header owns the refusal). A secondmate runs in its own home and is
 #   not marked.
 #   Only after this isolation check, every fresh ship or scout requires a clean
-#   task worktree. When an origin configuration is detected, spawn fetches it,
-#   resolves the current remote default branch (or uses --base-branch, described
-#   above), and resets to its tip. When none is detected, spawn skips that remote freshness check and launches from the
-#   clean worktree's current HEAD. Relaunch reuses the recorded worktree without
-#   fetching or resetting its base. An unreachable detected origin, unresolved
-#   default branch, or non-clean worktree refuses a fresh spawn rather than
-#   risking a PR based on stale history or discarding local work.
+#   task worktree, except for the provably safe submodule drift described below.
+#   When an origin configuration is detected, spawn fetches it, resolves the
+#   current remote default branch (or uses --base-branch, described above), and
+#   resets to its tip. When none is detected, spawn skips that remote freshness
+#   check and launches from the clean worktree's current HEAD. Relaunch reuses
+#   the recorded worktree without fetching or resetting its base. An unreachable
+#   detected origin, unresolved default branch, or other non-clean worktree
+#   refuses a fresh spawn rather than risking stale history or discarding work.
 #   A slot whose only deviation is submodule drift - each entry a gitlink whose
 #   submodule work tree is clean but checked out on a different commit than the
 #   pin - is converged rather than refused, because `treehouse get` resets the
 #   superproject with read-tree and never moves submodule checkouts, so every
 #   pin move on the base would otherwise strand the next slot it hands out.
-#   Drift already present is proven before the base reset, so a refusal leaves
-#   the superproject unmoved; every drifted submodule, including one the reset
-#   itself strands, is moved onto its pin after the reset. A submodule moves only
-#   after a fresh `fetch --prune` of its own origin proves its checked-out commit
-#   is contained in an origin branch; any submodule
-#   that cannot be proven contained (an unpushed commit, no origin, a fetch or
-#   git error) refuses the spawn as uncommitted work and is left untouched.
-#   An origin-less slot cannot fetch, so its drift is still refused, reported as
-#   a stale checkout naming each submodule and both pins, with no remedy printed.
-#   Uninitialized submodules stay uninitialized.
+#   Drift already present is proven before the base reset; a failed proof leaves
+#   the superproject unmoved. After the reset, initialized submodules that differ
+#   from the new pins are checked again and converged individually.
+#   Each proof freshly fetches and prunes every origin branch with an explicit
+#   all-heads refspec, ignoring configured fetch mappings, and requires the
+#   checked-out commit to be reachable from those branch tips, excluding
+#   origin/HEAD. Other remotes and stale refs cannot vouch for convergence.
+#   A failed proof (including an unpushed commit, no submodule origin, or failed
+#   fetch) refuses launch without moving that submodule. An unavailable pin or
+#   failed pin checkout also refuses launch. A post-reset refusal does not undo
+#   the base reset or earlier submodule convergence; launch requires a clean
+#   final worktree. Uninitialized submodules stay uninitialized.
+#   With no superproject origin, drift is always refused without convergence.
+#   If every drifted commit is contained in local remote-tracking refs, the
+#   refusal names each submodule and both pins as a stale checkout; otherwise it
+#   reports uncommitted work. These refs may be stale, so no remedy is printed.
 # Batch dispatch: pass one or more `id=repo` pairs instead of a single <id> <project>, e.g.
 #     fm-spawn.sh fix-a-k3=projects/foo add-b-q7=projects/bar [--scout]
 #   Each pair re-execs this script in single-task mode, so the single path stays the only
@@ -3468,12 +3475,9 @@ EOF
   printf '%s' "$paths"
 }
 
-# An origin-less slot cannot prove a drifted checkout is pushed, so its drift is
-# only named, never converged. No remedy command is printed, deliberately: this
-# containment test reads local refs that may be stale, so an unpushed commit can
-# look contained, and a checkout command on that judgement could cost the
-# operator the commit. Anything not provably contained even locally keeps the
-# conservative uncommitted-work refusal instead of this diagnosis.
+# Diagnosis-only path for a slot without a superproject origin; see the header.
+# Buffer the report until every path qualifies, so a later failure cannot leave
+# a stale-checkout diagnosis alongside the conservative uncommitted-work verdict.
 describe_stale_submodule_pins() { # <worktree> <paths>
   local worktree=$1 paths=$2 path want have unpushed lines=
   while IFS= read -r path; do
@@ -3490,12 +3494,12 @@ EOF
   printf '%s' "$lines" >&2
 }
 
-# The containment proof convergence stands on: the submodule work tree is clean,
-# a fresh fetch of its own origin succeeds with --prune (so a deleted or rewritten
-# upstream branch cannot keep vouching for a commit), and the checked-out commit
-# is then reachable from one of origin's remote-tracking branches. Only origin is
-# consulted because only origin was just fetched; another remote's refs may be
-# stale. Nothing is moved here.
+# The header owns the convergence contract. The explicit all-heads refspec and
+# empty refmap are safety-critical: configured mappings may omit a branch whose
+# stale tracking ref would otherwise survive pruning and falsely vouch for HEAD.
+# The origin/HEAD alias is excluded because it is not a fetched branch tip.
+# Regression: tests/fm-spawn-pool-base-freshen.test.sh,
+# test_narrowed_refspec_refreshes_every_containment_branch. Nothing is moved here.
 spawn_submodule_checkout_contained() { # <worktree> <path>
   local sub=$1/$2 have unpushed
   [ -z "$(git -C "$sub" status --porcelain 2>/dev/null)" ] || return 1
@@ -3506,10 +3510,8 @@ spawn_submodule_checkout_contained() { # <worktree> <path>
   [ -z "$unpushed" ]
 }
 
-# After the base reset, move every initialized submodule that drifted onto the
-# pin the new base records, each only after its containment proof. Uninitialized
-# submodules are left alone. Fails, naming the submodule, without moving it when
-# a proof or the checkout fails.
+# Post-reset convergence under the header's contract. The proof must be repeated
+# here because the base reset can introduce drift absent from the pre-reset check.
 converge_spawn_submodules() { # <worktree>
   local worktree=$1 mode sha stage path have
   while IFS=$' \t' read -r mode sha stage path; do

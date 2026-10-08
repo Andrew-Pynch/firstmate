@@ -9,6 +9,23 @@
 # HEAD-continuity guard; see docs/architecture.md "No-mistakes gate authority boundary."
 disable_project_settings: true
 
+# Gate agents suppress the fleet identity above. Inject the trusted coding owner
+# explicitly instead of re-enabling AGENTS.md or loading another reviewer.
+# A no-mistakes run uses this only after the default-branch configuration lands.
+review:
+  path_instructions:
+    - path: "*"
+      instructions: |
+        Read .agents/skills/firstmate-coding-guidelines/SKILL.md for repository
+        coding and documentation standards, not as a fleet-supervisor role.
+        Review the complete supplied user intent and its source boundaries.
+        Identify dead weight and duplicated policy only with concrete evidence;
+        do not remove behavior the intent requires or widen the authorized task.
+        Keep findings that challenge deliberate product intent as ask-user calls.
+        Use executed, relevant behavior proof for changed paths. The existing
+        pipeline owns fixes, changed-head re-review, tests, documentation and
+        publication; do not add a second reviewer or manual approval layer.
+
 # Trusted documentation placement policy for the Document step.
 # The audience inventory and coding guideline own the detail; keep this as a
 # pointer so gate instructions cannot become a second prose policy.

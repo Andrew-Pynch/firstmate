@@ -70,19 +70,14 @@ It means "go verify the latest state", and it resolves in exactly one of two way
 The value remains reserved at the shared keyed-answer intake, which visibly refuses it from every channel and never passes it to `answer`.
 A reconcile value delivered through chat or any ordinary keyed-answer caller therefore cannot complete a task, lift a hold, write a resolution record, or create a reconcile request.
 
-Board request creation uses a separate captured-source seam.
-The board emits `fm-bearings-answer.v1` context with the slug-shaped selected option and freeform note in separate fields, so annotating Reconcile cannot turn it into an ordinary answer value.
-`bin/fm-procevent-lavish.sh answers` emits an exact non-reconcile selection, or a bare note when no option was selected, while `reconciles` emits only task ids whose structured selection is Reconcile and carries their notes as request provenance.
-Current rows require the versioned shape and the `choice` tag; a time-limited rollout branch accepts ordinary answers from the old question/answer shape but refuses its bare and separator-annotated reconcile values from both intakes because those rows do not separate the selected option from its note.
-Every other structurally uncertain capture feeds neither intake, remains announced, and cannot forge a task id from freeform prose.
-The adapter-agnostic runner pipes reconcile rows into `reconcile-requests` only for a bound source, and that intake verifies the named binding again before it creates anything.
-Failures remain best-effort and never acknowledge or suppress the captured result.
-What this captured-source intake records is a durable reconcile request under `state/reconcile-requests/`, one private record per task, carrying the requesting provenance and a UTC timestamp.
-The record exists so the obligation to re-check cannot be lost between the wake that carried the answer and the turn that acts on it.
-It is idempotent per task: repeating a reconcile keeps one request and its original timestamp.
-The supported creator is the runner carrying the captain's board selection; the binding-checked `reconcile-requests` command is that internal intake rather than an operator reconciliation outcome.
+Recording the request is a deliberate act on the surface that presented the call.
+`bin/fm-captain-hold.sh reconcile request <task-id> --source <provenance>` records the obligation after checking the task is still an open captain call, and an optional `--note` preserves the captain's typed words as request provenance.
+Because the reserved value never survives the keyed-answer intake, no chat prose, captured answer, or card-declared mode can create a request: only that command does, and it is what the agent runs when the captain selects a re-check.
+What it records is a durable reconcile request under `state/reconcile-requests/`, one private record per task, carrying the requesting provenance and a UTC timestamp.
+The record exists so the obligation to re-check cannot be lost between the selection and the turn that acts on it.
+It is idempotent per task: repeating a selection keeps one request and its original timestamp.
 
-Verification retires a request through one of two outcomes, and each one requires both the pending board-created request and the operator input that supports its claim:
+Verification retires a request through one of two outcomes, and each one requires both the pending request and the operator input that supports its claim:
 
 - `reconcile close <task-id> --evidence-file <path>` is the moot outcome.
   It writes a resolution record whose mode is `reconciled` and whose body is the supplied EVIDENCE under a `Reconciliation evidence:` label, then closes the task.
@@ -91,32 +86,10 @@ Verification retires a request through one of two outcomes, and each one require
   It appends one dated `Captain hold reconciled:` note to the task body, leaves the hold in place, and retires the request.
   The call stays the captain's, now carrying what the re-check found; a marker bound to the request timestamp, provenance, and note digest lets a matching retry finish retirement without appending again while a later request with the same finding still receives its own dated note.
 
-`reconcile list` is the read-only enumeration of pending requests filed by board answers.
+`reconcile list` is the read-only enumeration of pending requests.
 A successful normal answer also retires any pending request, because an answered call has no remaining re-check obligation.
 Every retirement is checked: if request removal fails after an answer, close, or note is already durable, the durable outcome stands but the command fails and leaves the pending request visible for retry.
 No path here closes a captain call without either the captain's words through `answer` or the evidence through `reconcile close`.
-
-## Card hygiene: a landed subject is not a live call
-
-`bin/fm-bearings-board.sh build` cross-checks every `decision` card before it publishes and drops stale subjects rather than trusting the composed inventory alone.
-
-Three checks run, all on exact identity and none on prose:
-
-- The card's key is the captain-held task id, so `bin/fm-captain-hold.sh open --distinguish-absent` is asked whether that task is still an open captain call.
-  Exit 1 - present but closed, or no longer held for the captain - drops the card.
-  Exit 2 means the answer could not be established and exit 3 means the task is absent from the main backlog, which includes a home carrying no backlog file at all; both keep the card, because a card wrongly shown is recoverable and a call wrongly hidden is not.
-- The payload's own `landed` rows are the recently-landed artifacts.
-  A decision card whose task id or `pr_url` appears among them has already shipped its subject, so it drops.
-- A version decision can carry a structured `subject` with an artifact and numeric three-part version.
-  A landed row carrying the same artifact at that version or a newer one supersedes the card without parsing prose.
-
-Dropped cards are named on stderr as `dropped-landed-card:` lines so a rebuild states what it removed rather than quietly shrinking Captain's Call.
-The landing procedure requires one immediate board rebuild to remove already-stale merged-PR and superseded-version cards without a committed migration or change-worktree state mutation.
-A subject whose state cannot be established is kept, because a wrongly shown card is safer than a wrongly hidden call.
-The validator's reservation scope must equal the adapter's reconcile-classification scope, which is all card types because the captured payload carries no card type.
-Owner-aware routing for remote-secondmate decision cards is tracked separately: that follow-up must query landedness and route reconciliation in the authoritative secondmate home while honoring the remote and local consistency principle.
-Until then, an absent main-home task passes through this hygiene check unchanged, and its Reconcile selection remains announced but cannot create a main-home request because the main intake refuses an absent task.
-For a main-home call, the reconcile option is the recovery path for whatever still slips through.
 
 ## Structured read surfaces
 
@@ -204,14 +177,12 @@ That latin-1 byte loss also reproduces natively on the fleet host carrying the o
 The markdown-to-beads migration family runs the same suite's beads fixture (bd-driven scratch graph, self-skipping on markdown-only tasks-axi installs) and proves: `verify` and `complete` resolve an attested legacy id through a migrated row's marker note, through the configured prefix when no row carries a note - naming the resolved row in the completion line - and through the marker note of a pre-collapse derived identity; a marker-noted row wins over an unrelated captain-held row occupying the bare prefix namesake; an unresolvable id is refused once naming the id (never an empty name); and the attested id stays in `decision_keys=` for idempotent re-verification.
 One case in that family needs no beads install and always runs: a stubbed tasks-axi that fails any markdown file override proves the captain-hold hold, answer, and close mutations reach a beads-configured home without one.
 
-The reconcile path is pinned in the same suite: a reconcile answer arriving through the keyed-answer intake, in the default close mode and in the `release` mode a captain-gated work card declares, is refused and leaves both tasks held with no resolution record or request; only the separately bound captured-source intake records one durable request per task idempotently across a replay.
-It also proves the two verification outcomes - an evidence-backed `reconciled` close that records the evidence under its own label and never as the captain's words, and a note that leaves the call queued, held, and dated - while both outcomes refuse without a pending board request, each durable mutation applies only once across close, probe, and request-retirement failures, a later distinct request with the same note still appends its own dated record, every failed retirement is surfaced with its pending request retained, incompatible resolution modes cannot replay as captain answers, and normal close, release, and replay paths retire pending requests.
-The captured-source coverage proves Lavish deduplicates each card before separating versioned structured selections from notes, bare and annotated Reconcile choices never reach keyed answers, genuine current and legacy choices still close normally, legacy bare and separator-annotated reconcile values feed neither intake, mixed repeated selections preserve every other card's final value, the generic runner creates a request only through a verified bound source, chat reconcile text creates none, and the resulting board request authorizes evidence-backed closure.
-The board's half is pinned in `tests/fm-bearings-board.test.sh`: every published decision card carries exactly one reconcile option, authored options reserve that value across every card type, recommendations name authored options, a decision card whose structured subject appears in the payload's landed rows is dropped while a genuinely open one is kept even when an unrelated landed id contains its key after a newline, a build requires a fresh authoritative listed-open result before binding or arming, a reopen retires the pre-reopen source generation and waits for a fresh live listener, and a rebuild of an already-armed board with no live listener starts one.
-That suite drives its Lavish session through a protocol-shaped stub, and `tests/fm-bearings-board-lavish-live-e2e.test.sh` is the default-on capability guard for the installed provider; [`verification/process-event-sources.md`](verification/process-event-sources.md) owns the version-scoped evidence.
+The reconcile path is pinned in the same suite: a reconcile answer arriving through the keyed-answer intake, in the default close mode and in the `release` mode a captain-gated work card declares, is refused and leaves both tasks held with no resolution record or request; only an explicit `reconcile request` records one durable request per task idempotently across a repeat, and it refuses a task that is not an open captain call or a request with no provenance.
+It also proves the two verification outcomes - an evidence-backed `reconciled` close that records the evidence under its own label and never as the captain's words, and a note that leaves the call queued, held, and dated - while both outcomes refuse without a pending request, each durable mutation applies only once across close, probe, and request-retirement failures, a later distinct request with the same note still appends its own dated record, every failed retirement is surfaced with its pending request retained, incompatible resolution modes cannot replay as captain answers, and normal close, release, and replay paths retire pending requests.
+The captured-answer coverage proves Lavish deduplicates each repeated key before separating versioned structured selections from notes, a reconcile selection never reaches keyed answers and creates no obligation on its own, genuine versioned and legacy deck choices still close normally, legacy bare and separator-annotated reconcile values feed no intake, mixed repeated selections preserve every other card's final value, and chat reconcile text creates none.
 [`verification/process-event-sources.md`](verification/process-event-sources.md) owns the process-event ownership and reclamation evidence exercised by `tests/fm-procevent.test.sh`.
 
 `tests/fm-classify-decision-key.test.sh` pins `status_key_closing_verb` itself: it separates a resolution from the durable-transfer close and from a still-open key, reports the last real transition across re-openings and both key positions, and treats a prose mention as no transition.
 
 Projection regressions live in `tests/fm-fleet-snapshot-view.test.sh` (the total structured-only bucket classifier, hold-until parsing, kind-independent captain actionability, undated-hold aging, and title stripping) and `tests/fm-bearings-snapshot.test.sh` (default and expanded decision-bucket membership, deferral explanations, blocker-overflow disclosure, working-hold dual surfaces, remote-summary schema invalidation, exact leading-kind inference, artifact-kind mismatch and answered-question exclusion, kind-bearing and kindless local-only landings publishing their recorded note, and scout-report precedence over competing pull-request links).
-The exact commands and their summarized outputs are recorded in the shipping PR's evidence; run the four suites above plus `tests/fm-send-resolve-key.test.sh`, `tests/fm-bearings-board.test.sh`, `tests/fm-procevent.test.sh`, and `bin/fm-lint.sh` to refresh this record, and `FM_BEARINGS_LAVISH_LIVE=1 tests/fm-bearings-board-lavish-live-e2e.test.sh` after a lavish-axi upgrade.
+The exact commands and their summarized outputs are recorded in the shipping PR's evidence; run the four suites above plus `tests/fm-send-resolve-key.test.sh`, `tests/fm-procevent.test.sh`, and `bin/fm-lint.sh` to refresh this record.

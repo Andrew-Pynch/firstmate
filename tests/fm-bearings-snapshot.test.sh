@@ -1136,13 +1136,13 @@ test_queued_item_prose_never_hides_it() {
   json=$(run "$home" "$fakebin" --json)
   printf '%s' "$json" | jq -e '
     (.gates | any(.[]; .id == "live-gate")) and (.gates | any(.[]; .id == "dead-gate"))
-  ' >/dev/null || fail "queued body prose must not hide a gate from the default board: $json"
+  ' >/dev/null || fail "queued body prose must not hide a gate from the default projection: $json"
   json=$(run "$home" "$fakebin" --json --all-queued)
   printf '%s' "$json" | jq -e '
     (.gates | any(.[]; .id == "dead-gate"))
       and (.omitted | any(.reveal == "--all-queued") | not)
   ' >/dev/null || fail "--all-queued must not advertise a suppression that no longer exists: $json"
-  pass "queued body prose never hides an item from the board"
+  pass "queued body prose never hides an item from the projection"
 }
 
 # The collapsed captain-call contract: any due, unblocked captain-held task is
@@ -1402,7 +1402,7 @@ EOF
       and (.gates | any(.id == "reveal-blocked"))
       and (.gates | any(.id == "reveal-future"))
       and (.gates | any(.id == "reveal-aged"))
-  ' >/dev/null || fail "the default board must keep deferred holds gated and show only the live call: $json"
+  ' >/dev/null || fail "the default projection must keep deferred holds gated and show only the live call: $json"
   pass "revealed deferred holds display their deferral reason while live calls stay unannotated"
 }
 
@@ -2601,7 +2601,7 @@ EOF
 }
 
 # A captain scanning Underway must be able to tell WHICH task a row is, and the
-# board orders Charted Next by the durable filed date, so both facts have to come
+# digest orders Charted Next by the durable filed date, so both facts have to come
 # out of fleet state rather than being invented at render time.
 test_underway_and_gate_rows_carry_the_durable_name_and_filed_date() {
   local home mate fakebin json

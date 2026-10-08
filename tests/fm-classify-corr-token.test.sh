@@ -61,7 +61,7 @@ test_tokened_opener_opens_and_tokened_closer_closes() {
     *) fail "a needs-decision carrying a correlation token did not open its key: $view" ;;
   esac
 
-  # CLOSER. The half that leaves an answered decision on the captain's board.
+  # CLOSER. The half that leaves an answered decision on the captain's call list.
   printf 'resolved corr=%s [key=texte-du-mur]: captain chose the third wording\n' "$CORR" \
     >> "$state/task-open.status"
   view=$(drain_open "$state" "$out")

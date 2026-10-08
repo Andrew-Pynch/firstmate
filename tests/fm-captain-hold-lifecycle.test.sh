@@ -88,13 +88,15 @@ run_captain() {  # <home> <command args...>
     FM_CONFIG_OVERRIDE="$home/config" "$ROOT/bin/fm-captain-hold.sh" "$@"
 }
 
-request_reconciles() {  # <home> <source-id> <task-id>...
-  local home=$1 source_id=$2 id
-  shift 2
-  run_captain "$home" bind "$source_id" >/dev/null || return 1
-  for id in "$@"; do printf '%s\n' "$id"; done \
-    | run_captain "$home" reconcile-requests --source-id "$source_id" \
-        --source "captured board result" >/dev/null
+# Record the captain's reconcile selection for each named call, exactly as the
+# surface that presented the call would.
+request_reconciles() {  # <home> <task-id>...
+  local home=$1 id
+  shift
+  for id in "$@"; do
+    run_captain "$home" reconcile request "$id" \
+      --source "the captain's reconcile selection in chat" >/dev/null || return 1
+  done
 }
 
 configure_merged_github() {  # <home>
@@ -1219,12 +1221,12 @@ test_out_of_band_close_is_recordable() {
 test_visual_review_uses_shared_completion_owner() {
   local home id json
   home=$(make_home visual-review)
-  id=sample-board-review
+  id=sample-deck-review
   mkdir -p "$home/data/$id"
-  tasks_in "$home" add "$id" "Review the sample board" --kind scout --repo sample --start >/dev/null
+  tasks_in "$home" add "$id" "Review the sample deck" --kind scout --repo sample --start >/dev/null
   write_origin_meta "$home" "$id"
   printf 'done: investigation complete\n' > "$home/state/$id.status"
-  printf '# Sample board investigation\n\nThe initial findings need no captain choice.\n' > "$home/data/$id/report.md"
+  printf '# Sample deck investigation\n\nThe initial findings need no captain choice.\n' > "$home/data/$id/report.md"
   run_captain "$home" complete "$id" --none >/dev/null \
     || fail "initial investigation could not pass the shared completion owner"
   run_teardown "$home" "$id" >/dev/null 2> "$home/visual-teardown.err" \
@@ -1232,7 +1234,7 @@ test_visual_review_uses_shared_completion_owner() {
   tasks_in "$home" "done" "$id" --report "data/$id/report.md" --keep 0 >/dev/null
 
   mkdir -p "$home/.lavish"
-  printf '<html><body>Synthetic sample board</body></html>\n' > "$home/.lavish/sample-board.html"
+  printf '<html><body>Synthetic sample deck</body></html>\n' > "$home/.lavish/sample-deck.html"
   run_captain "$home" hold sample-layout-call --title "Choose the sample layout" \
     --reason "captain layout choice pending" --repo sample --origin "$id" >/dev/null \
     || fail "post-teardown visual review could not use the shared hold owner"
@@ -1472,7 +1474,7 @@ test_secondmate_reconcile_publishes_before_request_retirement() {
     || fail "could not create the reconcile channel call"
   run_captain "$mate" hold reconcile-channel-call --reason "verify current release state" >/dev/null \
     || fail "could not hold the reconcile channel call"
-  request_reconciles "$mate" reconcile-board reconcile-channel-call \
+  request_reconciles "$mate" reconcile-channel-call \
     || fail "could not request the channel reconciliation"
   printf 'The release has already landed.\n' > "$evidence"
   request="$mate/state/reconcile-requests/reconcile-channel-call.request"
@@ -1506,7 +1508,7 @@ test_secondmate_reconcile_publishes_before_request_retirement() {
     || fail "could not create the normal-answer channel call"
   run_captain "$mate" hold answer-channel-call --reason "captain answer needed" >/dev/null \
     || fail "could not hold the normal-answer channel call"
-  request_reconciles "$mate" reconcile-board answer-channel-call \
+  request_reconciles "$mate" answer-channel-call \
     || fail "could not create the normal-answer retry trigger"
   printf 'Proceed with the release.\n' > "$mate/answer.txt"
   request="$mate/state/reconcile-requests/answer-channel-call.request"
@@ -1558,8 +1560,8 @@ test_bound_channel_answers_close_at_answer_time() {
     --reason "captain re-check pending" --repo sample --origin "$id" >/dev/null
   run_captain "$home" hold sample-bare-reconcile --title "Captain call: bare reconcile" \
     --reason "captain bare re-check pending" --repo sample --origin "$id" >/dev/null
-  run_captain "$home" hold sample-old-shape --title "Captain call: old board shape" \
-    --reason "captain old board pending" --repo sample --origin "$id" >/dev/null
+  run_captain "$home" hold sample-old-shape --title "Captain call: legacy deck shape" \
+    --reason "captain legacy deck choice pending" --repo sample --origin "$id" >/dev/null
   run_captain "$home" hold sample-old-reconcile --title "Captain call: old bare reconcile" \
     --reason "captain old bare reconcile pending" --repo sample --origin "$id" >/dev/null
   run_captain "$home" hold sample-old-reconcile-note --title "Captain call: old annotated reconcile" \
@@ -1601,9 +1603,9 @@ prompts[13]{uid,prompt,selector,tag,text}:
   "7","Reconcile this - re-check latest publication\n\nContext data:\n{\n  \"schema\": \"fm-bearings-answer.v1\",\n  \"question\": \"sample-source-reconcile\",\n  \"selection\": \"reconcile\",\n  \"note\": \"re-check latest publication\"\n}","section#call > form:nth-of-type(6)",choice,"Reconcile - re-check latest publication"
   "8","Second reconcile\n\nContext data:\n{\n  \"schema\": \"fm-bearings-answer.v1\",\n  \"question\": \"sample-bare-reconcile\",\n  \"selection\": \"reconcile\",\n  \"note\": \"\"\n}","section#call > form:nth-of-type(7)",choice,"Reconcile"
   "9","Headline final: f1-when-fp-gold\n\nContext data:\n{\n  \"schema\": \"fm-bearings-answer.v1\",\n  \"question\": \"sample-headline-call\",\n  \"selection\": \"f1-when-fp-gold\",\n  \"note\": \"\"\n}","section#call > form:nth-of-type(2)",choice,"Headline: f1-when-fp-gold"
-  "10","Old board answer\n\nContext data:\n{\n  \"question\": \"sample-old-shape\",\n  \"answer\": \"yes\"\n}","section#call > form:nth-of-type(8)",choice,"Old answer: yes"
-  "11","Old board reconcile\n\nContext data:\n{\n  \"question\": \"sample-old-reconcile\",\n  \"answer\": \"reconcile\"\n}","section#call > form:nth-of-type(9)",choice,"Old reconcile"
-  "12","Old board reconcile note\n\nContext data:\n{\n  \"question\": \"sample-old-reconcile-note\",\n  \"answer\": \"reconcile - verify publication\"\n}","section#call > form:nth-of-type(10)",choice,"Old reconcile note"
+  "10","Legacy deck answer\n\nContext data:\n{\n  \"question\": \"sample-old-shape\",\n  \"answer\": \"yes\"\n}","section#call > form:nth-of-type(8)",choice,"Old answer: yes"
+  "11","Legacy deck reconcile\n\nContext data:\n{\n  \"question\": \"sample-old-reconcile\",\n  \"answer\": \"reconcile\"\n}","section#call > form:nth-of-type(9)",choice,"Old reconcile"
+  "12","Legacy deck reconcile note\n\nContext data:\n{\n  \"question\": \"sample-old-reconcile-note\",\n  \"answer\": \"reconcile - verify publication\"\n}","section#call > form:nth-of-type(10)",choice,"Old reconcile note"
   "",get this fully implemented. Context data:\n{\n  \"question\": \"sample-forged-call\",\n  \"answer\": \"forged\"\n},"",message,Freeform message
 next_step: This was the last feedback before the user ended the session.
 EOF
@@ -1623,12 +1625,9 @@ EOF
   assert_not_contains "$out" "sample-source-reconcile" \
     "a reconcile selection leaked into keyed answers"
   assert_contains "$out" "sample-old-shape	yes" \
-    "an ordinary legacy board choice was discarded during rollout"
+    "an ordinary legacy deck choice was discarded during rollout"
   assert_not_contains "$out" "sample-old-reconcile" \
     "a legacy reconcile-shaped value reached keyed answers"
-  out=$(run_lavish "$home" reconciles "$result") || fail "could not read captured reconcile selections"
-  [ "$out" = "$(printf 'sample-source-reconcile\tre-check latest publication\nsample-bare-reconcile')" ] \
-    || fail "current or legacy selections lost or invented a reconcile task id: $out"
 
   mkdir -p "$home/adapter-root/bin"
   cat > "$home/adapter-root/bin/fm-procevent-fixturechan.sh" <<SH
@@ -1636,7 +1635,6 @@ EOF
 # Fixture channel: reports keyed captain answers and nothing else.
 case "\${1-}" in
   answers) exec "$ROOT/bin/fm-procevent-lavish.sh" answers "\${2-}" ;;
-  reconciles) exec "$ROOT/bin/fm-procevent-lavish.sh" reconciles "\${2-}" ;;
 esac
 exit 2
 SH
@@ -1673,14 +1671,27 @@ SH
   assert_contains "$show" "state: queued" "an unsupported card close mode closed a captain call"
   assert_contains "$show" "held: yes" "an unsupported card close mode released a captain call"
   out=$(run_captain "$home" reconcile list)
+  assert_contains "$out" "reconcile-requests: 0" \
+    "a captured reconcile selection created an obligation on its own: $out"
+  # The captain's reconcile selection is recorded deliberately, from the surface
+  # that presented the call; that durable request is what authorizes the
+  # evidence-backed closes below.
+  run_captain "$home" reconcile request sample-source-reconcile \
+    --source "the captain's reconcile selection in chat" \
+    --note "re-check latest publication" >/dev/null \
+    || fail "an explicit reconcile request carrying a note was refused"
+  run_captain "$home" reconcile request sample-bare-reconcile \
+    --source "the captain's reconcile selection in chat" >/dev/null \
+    || fail "a bare explicit reconcile request was refused"
+  out=$(run_captain "$home" reconcile list)
   assert_contains "$out" "sample-source-reconcile" \
-    "the bound captured reconcile selection did not create a request"
+    "the explicit reconcile request was not recorded"
   assert_contains "$out" "captain note: re-check latest publication" \
-    "the annotated reconcile selection lost its note provenance"
+    "the annotated reconcile request lost its note provenance"
   show=$(tasks_in "$home" show sample-old-shape --full)
-  assert_contains "$show" "state: done" "an ordinary legacy board choice did not close its task"
+  assert_contains "$show" "state: done" "an ordinary legacy deck choice did not close its task"
   assert_contains "$show" "Resolution mode: answered" \
-    "an ordinary legacy board choice did not use the keyed-answer intake"
+    "an ordinary legacy deck choice did not use the keyed-answer intake"
   show=$(tasks_in "$home" show sample-old-reconcile --full)
   assert_contains "$show" "state: queued" "a bare legacy reconcile value closed its task"
   assert_contains "$show" "held: yes" "a bare legacy reconcile value released its task"
@@ -1774,22 +1785,37 @@ test_reconcile_never_closes_through_the_keyed_answer_intake() {
   assert_contains "$list" "reconcile-requests: 0" \
     "the shared answer intake created a reconcile request: $list"
   set +e
-  out=$(printf 'sample-reconcile-call\n' \
-    | run_captain "$home" reconcile-requests --source-id unbound-src --source "captured board" 2>&1)
+  out=$(run_captain "$home" reconcile request sample-reconcile-call 2>&1)
   rc=$?
   set -e
-  [ "$rc" -ne 0 ] || fail "an unbound captured source created a reconcile request"
-  request_reconciles "$home" board-src sample-reconcile-call sample-reconcile-gated \
-    || fail "the bound captured source did not create reconcile requests"
+  [ "$rc" -ne 0 ] || fail "a reconcile request was recorded with no provenance"
+  assert_contains "$out" "provenance" \
+    "the provenance refusal did not say what was missing: $out"
+  tasks_in "$home" add sample-unheld-work "Ordinary work" --repo sample >/dev/null \
+    || fail "could not create the unheld work item"
+  set +e
+  out=$(run_captain "$home" reconcile request sample-unheld-work \
+    --source "the captain's reconcile selection in chat" 2>&1)
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "a reconcile request was recorded against work that is not a captain call"
+  assert_contains "$out" "not an open captain call" \
+    "the non-call refusal did not name why it was refused: $out"
+  list=$(run_captain "$home" reconcile list)
+  assert_contains "$list" "reconcile-requests: 0" \
+    "a refused reconcile request was still recorded: $list"
+
+  request_reconciles "$home" sample-reconcile-call sample-reconcile-gated \
+    || fail "the explicit reconcile request did not create the obligations"
   list=$(run_captain "$home" reconcile list)
   assert_contains "$list" "sample-reconcile-call" "the reconcile obligation was not recorded durably: $list"
   assert_contains "$list" "reconcile-requests: 2" "the reconcile requests were not both recorded: $list"
 
-  request_reconciles "$home" board-src sample-reconcile-call \
-    || fail "replaying a captured reconcile selection failed"
+  request_reconciles "$home" sample-reconcile-call \
+    || fail "repeating the captain's reconcile selection failed"
   list=$(run_captain "$home" reconcile list)
-  assert_contains "$list" "reconcile-requests: 2" "a replayed reconcile selection duplicated the obligation: $list"
-  pass "only a bound captured source creates reconcile requests"
+  assert_contains "$list" "reconcile-requests: 2" "a repeated reconcile selection duplicated the obligation: $list"
+  pass "only a deliberate reconcile request creates an obligation"
 }
 
 test_normal_answers_retire_pending_reconcile_requests() {
@@ -1799,7 +1825,7 @@ test_normal_answers_retire_pending_reconcile_requests() {
     tasks_in "$home" add "$id" "Captain call $id" --repo sample >/dev/null
     run_captain "$home" hold "$id" --reason "waiting for the captain" >/dev/null
   done
-  request_reconciles "$home" board-src sample-direct-close sample-direct-release sample-keyed-close \
+  request_reconciles "$home" sample-direct-close sample-direct-release sample-keyed-close \
     || fail "could not create reconcile requests before normal answers"
 
   printf 'Captain said close.\n' > "$home/close.txt"
@@ -1809,7 +1835,7 @@ test_normal_answers_retire_pending_reconcile_requests() {
   run_captain "$home" answer sample-direct-release --decision-file "$home/release.txt" --release >/dev/null \
     || fail "a direct release answer failed"
   printf 'sample-keyed-close\tyes\tYes\n' \
-    | run_captain "$home" answers --source "board sequence 2" >/dev/null \
+    | run_captain "$home" answers --source "captured answer sequence 2" >/dev/null \
     || fail "a keyed normal answer failed"
   list=$(run_captain "$home" reconcile list)
   assert_contains "$list" "reconcile-requests: 0" \
@@ -1820,7 +1846,7 @@ test_normal_answers_retire_pending_reconcile_requests() {
   run_captain "$home" answer sample-direct-release --decision-file "$home/release.txt" --release >/dev/null \
     || fail "a direct release replay failed"
   printf 'sample-keyed-close\tyes\tYes\n' \
-    | run_captain "$home" answers --source "board sequence 2" >/dev/null \
+    | run_captain "$home" answers --source "captured answer sequence 2" >/dev/null \
     || fail "a keyed answer replay failed"
   list=$(run_captain "$home" reconcile list)
   assert_contains "$list" "reconcile-requests: 0" \
@@ -1845,18 +1871,18 @@ test_reconcile_closes_with_evidence_or_keeps_the_call_open() {
   out=$(run_captain "$home" reconcile close sample-moot-call --evidence-file "$home/evidence.txt" 2>&1)
   rc=$?
   set -e
-  [ "$rc" -ne 0 ] || fail "reconcile closed a call without a pending board request"
-  assert_contains "$out" "no pending board-created reconcile request" \
-    "the ungated close refusal did not name the missing board request: $out"
+  [ "$rc" -ne 0 ] || fail "reconcile closed a call without a pending request"
+  assert_contains "$out" "no pending reconcile request" \
+    "the ungated close refusal did not name the missing pending request: $out"
   set +e
   out=$(run_captain "$home" reconcile note sample-active-call --note-file "$home/note.txt" 2>&1)
   rc=$?
   set -e
-  [ "$rc" -ne 0 ] || fail "reconcile annotated a call without a pending board request"
-  assert_contains "$out" "no pending board-created reconcile request" \
-    "the ungated note refusal did not name the missing board request: $out"
+  [ "$rc" -ne 0 ] || fail "reconcile annotated a call without a pending request"
+  assert_contains "$out" "no pending reconcile request" \
+    "the ungated note refusal did not name the missing pending request: $out"
 
-  request_reconciles "$home" board-src sample-moot-call sample-active-call sample-mode-call \
+  request_reconciles "$home" sample-moot-call sample-active-call sample-mode-call \
     || fail "could not file the reconcile requests"
 
   set +e
@@ -1913,12 +1939,11 @@ test_reconcile_closes_with_evidence_or_keeps_the_call_open() {
   rc=$?
   set -e
   [ "$rc" -ne 0 ] || fail "a retired reconcile request appended a duplicate note"
-  assert_contains "$out" "no pending board-created reconcile request" \
+  assert_contains "$out" "no pending reconcile request" \
     "the duplicate-note refusal did not name the retired request: $out"
 
-  printf 'sample-active-call\n' \
-    | FM_CAPTAIN_HOLD_NOW=2026-09-07T06:00:00Z run_captain "$home" reconcile-requests \
-        --source-id board-src --source "captured board result sequence 2" >/dev/null \
+  FM_CAPTAIN_HOLD_NOW=2026-09-07T06:00:00Z run_captain "$home" reconcile request sample-active-call \
+    --source "the captain's reconcile selection in chat, a second time" >/dev/null \
     || fail "could not create the second reconcile request"
   FM_CAPTAIN_HOLD_NOW=2026-09-07T06:01:00Z run_captain "$home" reconcile note sample-active-call \
     --note-file "$home/note.txt" >/dev/null \
@@ -1947,7 +1972,7 @@ test_reconcile_outcomes_retry_partial_failures_once() {
   run_captain "$home" hold sample-reconcile-retire-retry --reason "verify retire" >/dev/null
   run_captain "$home" hold sample-reconcile-close-retire --reason "verify close retirement" >/dev/null
   run_captain "$home" hold sample-answer-retire --reason "verify answer retirement" >/dev/null
-  request_reconciles "$home" board-src sample-reconcile-close-retry sample-reconcile-note-retry \
+  request_reconciles "$home" sample-reconcile-close-retry sample-reconcile-note-retry \
     sample-reconcile-retire-retry sample-reconcile-close-retire sample-answer-retire \
     || fail "could not create partial-retry requests"
   printf 'Verified moot.\n' > "$home/retry-evidence.txt"
@@ -2225,28 +2250,28 @@ test_legacy_identities_keep_working() {
   pass "legacy identities, metadata, bindings, and the shim keep working"
 }
 
-# A board answer must reach the keyed-answer intake through the RUNNER, not just
-# through a hand-fed `answers` call. The captain answered ten calls on a bearings
-# board, the board accepted them, and nothing collected them: the source that
-# collects a board is a supervised process, and while it was not running the
-# board went on presenting as armed. Everything between the captured result and
-# the closed task is asserted here end to end - capture, the wake that tells
-# firstmate to look, and the recorded answer - because each of those was intact
-# on its own while the chain as a whole delivered nothing.
-test_board_answer_reaches_the_keyed_answer_intake() {
+# A captured answer must reach the keyed-answer intake through the RUNNER, not
+# just through a hand-fed `answers` call. The captain answered ten calls on a
+# review surface, the surface accepted them, and nothing collected them: the
+# source that collects a review is a supervised process, and while it was not
+# running the surface went on presenting as armed. Everything between the
+# captured result and the closed task is asserted here end to end - capture, the
+# wake that tells firstmate to look, and the recorded answer - because each of
+# those was intact on its own while the chain as a whole delivered nothing.
+test_captured_answer_reaches_the_keyed_answer_intake() {
   local home sid stub out queue show
-  home=$(make_home board-channel)
+  home=$(make_home captured-answer-channel)
   sid=lavish-b0a4d0000000f1e2
   fm_test_track_procevent_home "$home" "$home/procevent-claims"
 
-  run_captain "$home" hold sample-board-call --title "Choose the sample board route" \
-    --reason "captain board route choice pending" --repo sample >/dev/null \
-    || fail "could not register the board call"
+  run_captain "$home" hold sample-reviewed-call --title "Choose the sample review route" \
+    --reason "captain review route choice pending" --repo sample >/dev/null \
+    || fail "could not register the reviewed call"
 
   # One published Lavish poll response carrying the captain's structured answer,
   # in the shape the adapter's own reader parses: a declared field order, an
   # indented CSV row, and the versioned answer context inside its prompt.
-  stub="$home/board-source.sh"
+  stub="$home/review-source.sh"
   cat > "$stub" <<'SH'
 #!/usr/bin/env bash
 cat <<'OUT'
@@ -2254,32 +2279,32 @@ session:
   status: feedback
   session_ended: false
 prompts[1]{tag,text,prompt}:
-  "choice","Take the north route","Context data: {\"schema\":\"fm-bearings-answer.v1\",\"question\":\"sample-board-call\",\"selection\":\"north\",\"note\":\"\"}"
+  "choice","Take the north route","Context data: {\"schema\":\"fm-bearings-answer.v1\",\"question\":\"sample-reviewed-call\",\"selection\":\"north\",\"note\":\"\"}"
 OUT
 SH
   chmod +x "$stub"
 
   run_procevent "$home" register lavish "$sid" -- "$stub" >/dev/null \
-    || fail "could not register the board source"
+    || fail "could not register the review source"
   run_captain "$home" bind "$sid" >/dev/null \
-    || fail "could not bind the board source to the keyed-answer intake"
+    || fail "could not bind the review source to the keyed-answer intake"
 
   out=$(run_procevent "$home" start "$sid" 2>&1) \
-    || fail "the board source runner did not complete: $out"
-  assert_contains "$out" "$sid.1.result" "the board answer was never durably captured: $out"
+    || fail "the review source runner did not complete: $out"
+  assert_contains "$out" "$sid.1.result" "the captured answer was never durably recorded: $out"
   assert_contains "$out" "answers-fed: $sid" \
-    "the captured board answer never reached the keyed-answer intake: $out"
+    "the captured answer never reached the keyed-answer intake: $out"
 
   queue=$(cat "$home/state/.wake-queue" 2>/dev/null || true)
   assert_contains "$queue" "check: procevent lavish $sid 1" \
-    "the captured board answer produced no wake: $queue"
+    "the captured answer produced no wake: $queue"
 
-  show=$(tasks_in "$home" show sample-board-call --full)
-  assert_contains "$show" "state: done" "the board answer did not close the captain call"
-  assert_contains "$show" "north" "the board answer lost the captain's selection"
+  show=$(tasks_in "$home" show sample-reviewed-call --full)
+  assert_contains "$show" "state: done" "the captured answer did not close the captain call"
+  assert_contains "$show" "north" "the captured answer lost the captain's selection"
   assert_contains "$show" "the captured result $sid sequence 1" \
-    "the recorded answer did not name the board result that carried it"
-  pass "a board answer reaches the keyed-answer intake and wakes firstmate"
+    "the recorded answer did not name the captured result that carried it"
+  pass "a captured answer reaches the keyed-answer intake and wakes firstmate"
 }
 
 # The intake is channel-agnostic, so chat must reach it the same way a captured
@@ -2374,7 +2399,7 @@ SH
   show=$(tasks_in "$home" show sample-chat-reconcile --full)
   assert_contains "$show" "state: queued" "a chat reconcile answer closed the call"
   list=$(run_captain "$home" reconcile list)
-  assert_contains "$list" "reconcile-requests: 0" "a chat reconcile answer created a board request"
+  assert_contains "$list" "reconcile-requests: 0" "a chat reconcile answer created a reconcile request"
   printf 'Chat cannot authorize this closure.\n' > "$home/chat-reconcile.txt"
   if run_captain "$home" reconcile close sample-chat-reconcile \
     --evidence-file "$home/chat-reconcile.txt" >/dev/null 2>&1; then
@@ -2550,8 +2575,8 @@ EOF
 # The originating work item is itself the captain call, which is what the policy
 # prefers ("hold the work item the question gates"). Cleanup of that finished
 # work must never be the act that closes the captain's own row: the deliverable
-# is recorded on the still-held row, the call keeps reading as open on the
-# board, and only a recorded answer closes it. An ordinary finished task in the
+# is recorded on the still-held row, the call keeps reading as open to
+# the captain, and only a recorded answer closes it. An ordinary finished task in the
 # same home must still close exactly as before, and discard authority covers
 # unlanded work, never the captain's question.
 test_teardown_never_closes_a_captain_held_task() {
@@ -2589,7 +2614,7 @@ test_teardown_never_closes_a_captain_held_task() {
   json=$(run_bearings "$home") || fail "Bearings failed after cleanup of a captain-held task"
   printf '%s' "$json" | jq -e --arg id "$id" '
     (.decisions_open | any(.id == $id and .verb == "captain-hold"))
-  ' >/dev/null || fail "the board no longer surfaces the captain call: $json"
+  ' >/dev/null || fail "Bearings no longer surfaces the captain call: $json"
 
   # The ordinary path is untouched: a finished task with no captain call closes.
   plain=sample-plain-review
@@ -4050,7 +4075,7 @@ test_reconcile_closes_with_evidence_or_keeps_the_call_open
 test_reconcile_outcomes_retry_partial_failures_once
 test_unbound_source_closes_no_hold
 test_legacy_identities_keep_working
-test_board_answer_reaches_the_keyed_answer_intake
+test_captured_answer_reaches_the_keyed_answer_intake
 test_chat_channel_feeds_the_same_keyed_answer_intake
 test_origin_slug_validation_precedes_path_construction
 test_status_resolution_over_an_open_hold_is_signalled

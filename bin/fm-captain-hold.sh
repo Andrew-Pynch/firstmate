@@ -24,7 +24,7 @@
 #     [--title <title>] [--repo <repo>] [--origin <origin-id>] [--until YYYY-MM-DD]
 #   fm-captain-hold.sh answer <task-id> --decision-file <path> [--release]
 #   fm-captain-hold.sh answers [<legacy-origin> | --any-origin] --source <provenance>   (keyed answers on stdin)
-#   fm-captain-hold.sh reconcile-requests --source-id <source-id> --source <provenance>   (task ids on stdin)
+#   fm-captain-hold.sh reconcile request <task-id> --source <provenance> [--note <note>]
 #   fm-captain-hold.sh bind <source-id> [<legacy-origin> | --any-origin]
 #   fm-captain-hold.sh unbind <source-id>
 #   fm-captain-hold.sh binding <source-id>
@@ -97,12 +97,15 @@
 # The exact answer value `reconcile` means "go re-check reality", never "the
 # captain answered". `answers` matches it before it reads the close mode,
 # visibly refuses it, and never passes it to `answer`, so no channel and no
-# card-declared mode can turn it into a close, release, or request. A separate
-# `reconcile-requests` intake verifies a captured source's binding before it
-# records a durable request under `state/reconcile-requests/`.
+# card-declared mode can turn it into a close, release, or request. Recording
+# that request is a separate, deliberate act: `reconcile request` creates the
+# durable obligation under `state/reconcile-requests/` after checking the task
+# is still an open captain call. Reaching it needs an explicit command, never a
+# value that arrived as an answer.
 #
 # `reconcile` is the verify-then-decide half. Both outcomes require the pending
-# request created by the captain's board selection. `close` is the moot outcome:
+# request created by the captain's own reconcile selection on whatever surface
+# presented the call (chat, or the queue program). `close` is the moot outcome:
 # it requires the evidence that made the call moot, writes a `reconciled` resolution record
 # under a `Reconciliation evidence:` label so it can never read as the
 # captain's words, and closes the task. `note` is the still-active outcome: it
@@ -1244,7 +1247,7 @@ command_answers() {
     [ -n "$answer" ] || continue
     label=$(sanitize_field "${label:-}")
     if [ "$answer" = "$RECONCILE_VALUE" ]; then
-      printf 'refused: %s (reconcile requests require a bound captured source)\n' "$key"
+      printf 'refused: %s (reconcile is a re-check request, never an answer)\n' "$key"
       skipped=$((skipped + 1))
       continue
     fi
@@ -1361,7 +1364,7 @@ RECONCILE_VALUE=reconcile
 reconcile_request_path() { printf '%s/%s.request\n' "$RECONCILE_DIR" "$1"; }
 
 # Idempotent per task: a repeated reconcile keeps the one request and its
-# original timestamp, so a re-delivered board answer never resets the clock on
+# original timestamp, so a repeated reconcile selection never resets the clock on
 # an obligation that is already open.
 reconcile_request_record() {  # <task-id> <provenance>
   local id=$1 source=$2 path tmp
@@ -1409,63 +1412,39 @@ publish_parent_resolution_then_retire() {  # <task-id> <occurrence> <note>
   reconcile_request_retire "$id"
 }
 
-command_reconcile_requests() {
-  local source_id='' source='' origin row id note provenance show show_status=0 created=0 skipped=0 tab=$'\t'
+# Record the durable obligation to re-check one captain call. The captain's own
+# reconcile selection on the presenting surface (chat, or the queue program) is
+# what authorizes it, so creating one is a separate, deliberate act rather than
+# a value the keyed-answer intake could ever see. Idempotent per task: repeating
+# a selection keeps the one request and its original timestamp, so a repeated
+# selection never resets the clock on an obligation already open.
+reconcile_request() {
+  local id=${1:-} source='' note='' provenance
+  [ "$#" -ge 1 ] || { usage >&2; exit 2; }
+  shift
   while [ "$#" -gt 0 ]; do
     case "$1" in
-      --source-id) shift; source_id=${1:-} ;;
       --source) shift; source=${1:-} ;;
+      --note) shift; note=${1:-} ;;
       *) usage >&2; exit 2 ;;
     esac
     shift
   done
-  validate_source_id "$source_id"
-  [ -n "$source" ] || fail "--source provenance is required"
-  origin=$(read_binding "$source_id") || fail "cannot verify the binding for source $source_id"
-  [ -n "$origin" ] || fail "source $source_id is not bound; no reconcile requests were created"
-  require_tasks_axi
-  while IFS= read -r row; do
-    id=${row%%"$tab"*}
-    note=''
-    case "$row" in *"$tab"*) note=${row#*"$tab"} ;; esac
-    [ -n "$id" ] || continue
-    case "$id" in
-      *[!A-Za-z0-9._-]*) printf 'refused: %s (invalid task id)\n' "$id"; skipped=$((skipped + 1)); continue ;;
-    esac
-    [ "${#id}" -le 128 ] \
-      || { printf 'refused: %s (task id is too long)\n' "$id"; skipped=$((skipped + 1)); continue; }
-    acquire_task_control_lock "$id"
-    show_status=0
-    show=''
-    task_show "$id" || show_status=$?
-    [ "$show_status" -ne 0 ] || show=$TASK_SHOW_OUTPUT
-    if [ "$show_status" -eq 124 ]; then
-      fail "the backlog backend exceeded its read bound reading $id"
-    fi
-    if [ -z "$show" ]; then
-      printf 'refused: %s (absent)\n' "$id"
-      skipped=$((skipped + 1))
-    elif [ "$(show_field "$show" state)" = "done" ]; then
-      printf 'refused: %s (already closed)\n' "$id"
-      skipped=$((skipped + 1))
-    elif [ "$(show_field_value "$show" hold_kind)" != captain ]; then
-      printf 'refused: %s (not held for the captain)\n' "$id"
-      skipped=$((skipped + 1))
-    else
-      provenance=$source
-      [ -z "$note" ] || provenance="$source; captain note: $(sanitize_field "$note")"
-      if reconcile_request_record "$id" "$provenance"; then
-        printf 'reconcile: %s\n' "$id"
-        created=$((created + 1))
-      else
-        printf 'refused: %s (cannot record the reconcile request)\n' "$id"
-        skipped=$((skipped + 1))
-      fi
-    fi
-    release_task_control_lock || fail "cannot release task control for $id"
-  done
-  printf 'reconcile-requests: created=%s skipped=%s\n' "$created" "$skipped"
-  [ "$skipped" -eq 0 ]
+  [ -n "$source" ] || fail "--source provenance is required so the durable request records where the re-check came from"
+  source=$(sanitize_field "$source")
+  command_open "$id" \
+    || fail "task $id is not an open captain call; there is nothing to re-check"
+  acquire_task_control_lock "$id"
+  provenance=$source
+  [ -z "$note" ] || provenance="$source; captain note: $(sanitize_field "$note")"
+  if [ -e "$(reconcile_request_path "$id")" ]; then
+    printf 'reconcile-kept: %s\n' "$id"
+  elif reconcile_request_record "$id" "$provenance"; then
+    printf 'reconcile: %s\n' "$id"
+  else
+    fail "cannot record the reconcile request for $id"
+  fi
+  release_task_control_lock || fail "cannot release task control for $id"
 }
 
 command_reconcile() {
@@ -1473,6 +1452,7 @@ command_reconcile() {
   [ "$#" -ge 1 ] || { usage >&2; exit 2; }
   shift
   case "$action" in
+    request) reconcile_request "$@" ;;
     list)    reconcile_list "$@" ;;
     close)   reconcile_close "$@" ;;
     note)    reconcile_note "$@" ;;
@@ -1514,7 +1494,7 @@ reconcile_close() {
   load_decision "$evidence_file"
   acquire_task_control_lock "$id"
   reconcile_request_read "$id" \
-    || fail "task $id has no pending board-created reconcile request"
+    || fail "task $id has no pending reconcile request"
   require_tasks_axi
   task_show_or_fail "$id" "captain-held task $id is absent from this home's configured backlog (data directory $DATA)"
   state=$(show_field "$show" state)
@@ -1584,7 +1564,7 @@ reconcile_note() {
     || fail "note file exceeds 8192 bytes"
   acquire_task_control_lock "$id"
   reconcile_request_read "$id" \
-    || fail "task $id has no pending board-created reconcile request"
+    || fail "task $id has no pending reconcile request"
   require_tasks_axi
   command_open "$id" \
     || fail "task $id is not an open captain call; a note cannot keep a closed call open"
@@ -1927,7 +1907,6 @@ case "${1:-}" in
   hold) shift; command_hold "$@" ;;
   answer) shift; command_answer "$@" ;;
   answers) shift; command_answers "$@" ;;
-  reconcile-requests) shift; command_reconcile_requests "$@" ;;
   bind) shift; command_bind "$@" ;;
   unbind) shift; command_unbind "$@" ;;
   binding) shift; command_binding "$@" ;;

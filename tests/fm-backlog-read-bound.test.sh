@@ -240,38 +240,40 @@ case "$(cat "$VERIFY_OUT")" in
 esac
 pass "the teardown verify gate reports a bound hit by name instead of as an absent inventory entry"
 
-# The reconcile-requests intake reads each row with task_show in this shell and
-# must stop on a bound hit by name; spending the 124 as 'refused: <id>
-# (absent)' would let a wedged backend erase real rows from the reconcile
-# sweep.
+# The keyed-answer intake resolves each key with task_show and must stop on a
+# bound hit by name; spending the 124 as 'skipped: <id> (no captain-held task
+# with that id)' would let a wedged backend erase a real captain answer from
+# the feed.
 REQ="$TMP_ROOT/req"
 REQ_FAKEBIN=$(fm_fakebin "$REQ")
-mkdir -p "$REQ/data" "$REQ/state" "$REQ/config" "$REQ/state/decision-bindings"
+mkdir -p "$REQ/data" "$REQ/state" "$REQ/config"
 make_hanging_tasks_axi "$REQ_FAKEBIN"
 cp "$ROOT/.tasks.toml" "$REQ/.tasks.toml"
 printf '# Backlog\n' > "$REQ/data/backlog.md"
-printf 'schema=fm-decision-binding.v1\norigin=wedged-origin\n' \
-  > "$REQ/state/decision-bindings/probe.origin"
 
 REQ_OUT="$REQ/req.out"
 REQ_STATUS=0
-printf 'wedged-req\n' \
+printf 'wedged-req\tyes\tYes\n' \
   | PATH="$REQ_FAKEBIN:$BASE_PATH" FM_HOME="$REQ" \
     FM_STATE_OVERRIDE="$REQ/state" FM_DATA_OVERRIDE="$REQ/data" \
     FM_CONFIG_OVERRIDE="$REQ/config" FM_BACKLOG_ROW_TIMEOUT_SECS="$BOUND_SECS" \
-    "$ROOT/bin/fm-captain-hold.sh" reconcile-requests --source-id probe --source 'test capture' \
+    "$ROOT/bin/fm-captain-hold.sh" answers --source 'test capture' \
     > "$REQ_OUT" 2>&1 || REQ_STATUS=$?
 
 [ "$REQ_STATUS" -ne 0 ] \
-  || fail "reconcile-requests must not report success against a wedged backend: $(cat "$REQ_OUT")"
+  || fail "the keyed-answer intake must not report success against a wedged backend: $(cat "$REQ_OUT")"
 case "$(cat "$REQ_OUT")" in
-  *absent*|*refused*) fail "the reconcile intake spent a bound hit as an absent row: $(cat "$REQ_OUT")" ;;
+  *absent*|*skipped*) fail "the keyed-answer intake spent a bound hit as an absent key: $(cat "$REQ_OUT")" ;;
 esac
 case "$(cat "$REQ_OUT")" in
-  *wedged-req*bound*) ;;
-  *) fail "the reconcile intake must name the row and the bound it hit, got: $(cat "$REQ_OUT")" ;;
+  *wedged-req*) ;;
+  *) fail "the keyed-answer intake did not name the key it could not read: $(cat "$REQ_OUT")" ;;
 esac
-pass "the reconcile-requests intake stops loudly on a bound hit instead of refusing the row as absent"
+case "$(cat "$REQ_OUT")" in
+  *bound*) ;;
+  *) fail "the keyed-answer intake did not name the read bound it hit: $(cat "$REQ_OUT")" ;;
+esac
+pass "the keyed-answer intake stops loudly on a bound hit instead of skipping the key"
 
 # The migrated-prefix scan is the resolution path whose exact and legacy ids
 # genuinely answer NOT_FOUND: only the prefixed migrated row wedges. A dropped

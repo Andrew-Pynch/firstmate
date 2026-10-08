@@ -685,7 +685,7 @@ out=$(PATH="$LAVISH_BIN:$PATH" FM_HOME="$HLT" "$ROOT/bin/fm-procevent-lavish.sh"
 assert_contains "$out" "retired: $lavish_id" "explicit adapter retirement stays supported after automatic retirement"
 pass "one Send & End yields exactly one captured result, automatic retirement, and no recurring poll"
 
-# --- end-user-aligned regression: an empty board close is not news ------------
+# --- end-user-aligned regression: an empty review close is not news ------------
 # The captain's report: closing a review surface he had said nothing on still
 # put a wake in his chat whose entire content was that nothing happened. The
 # adapter now answers the runner's silence seam for exactly that shape, so the
@@ -696,12 +696,12 @@ HEMPTY="$TMP_ROOT/hempty"; new_home "$HEMPTY"
 EMPTY_BIN=$(fm_fakebin "$TMP_ROOT/lavish-empty-stub")
 cat > "$EMPTY_BIN/lavish-axi" <<'SH'
 #!/usr/bin/env bash
-# Stand-in for `lavish-axi poll <file>` when the captain closes a board he said
+# Stand-in for `lavish-axi poll <file>` when the captain closes a review he said
 # nothing on: an ended session carrying no queued content at all.
 printf 'session:\n  file: /quiet.html\n  status: ended\n  ended_by: user\n'
 SH
 chmod +x "$EMPTY_BIN/lavish-axi"
-QUIET_ART="$TMP_ROOT/quiet-board.html"
+QUIET_ART="$TMP_ROOT/quiet-review.html"
 printf '<h1>quiet</h1>\n' > "$QUIET_ART"
 lavish_session "$QUIET_ART"
 quiet_id=$("$ROOT/bin/fm-procevent-lavish.sh" source-id "$QUIET_ART")
@@ -723,18 +723,18 @@ done
 [ -f "$QUIET_HANDLED" ] \
   || fail "a silenced result was not durably recorded handled, so a later reconcile would announce it"
 [ "$(count_results "$HEMPTY" "$quiet_id")" = 1 ] \
-  || fail "an empty board close captured $(count_results "$HEMPTY" "$quiet_id") results instead of one"
+  || fail "an empty review close captured $(count_results "$HEMPTY" "$quiet_id") results instead of one"
 [ -z "$(wake_payloads "$HEMPTY")" ] \
-  || fail "an empty board close woke the captain: $(wake_payloads "$HEMPTY")"
+  || fail "an empty review close woke the captain: $(wake_payloads "$HEMPTY")"
 # Re-announcement is exactly what the handled marker exists to stop, so the
 # silence has to survive the reconcile that would otherwise republish it.
 PATH="$EMPTY_BIN:$PATH" pe "$HEMPTY" reconcile >/dev/null
 sleep 0.3
 [ -z "$(wake_payloads "$HEMPTY")" ] \
-  || fail "a later reconcile re-announced a silenced empty board close: $(wake_payloads "$HEMPTY")"
+  || fail "a later reconcile re-announced a silenced empty review close: $(wake_payloads "$HEMPTY")"
 assert_absent "$HEMPTY/state/procevent/$quiet_id.source" \
-  "an empty board close still retires its ended source"
-pass "an empty board close is captured and recorded handled without ever waking the captain"
+  "an empty review close still retires its ended source"
+pass "an empty review close is captured and recorded handled without ever waking the captain"
 
 # --- end-user-aligned regression: worker-owned rounds stay open until re-arm -
 # One worker-owned board runs three rounds: feedback reaches only the worker's
@@ -1270,7 +1270,7 @@ cat > "$ANSWER_BIN/lavish-axi" <<'SH'
 printf 'session:\n  file: /answered.html\n  status: feedback\n  session_ended: true\n  ended_by: user\nprompts[1]{tag,text,prompt}:\n  "choice","Option B","Context data: {\\"question\\":\\"noop-check-routing\\",\\"answer\\":\\"b\\"}"\n'
 SH
 chmod +x "$ANSWER_BIN/lavish-axi"
-ANSWER_ART="$TMP_ROOT/answered-board.html"
+ANSWER_ART="$TMP_ROOT/answered-review.html"
 printf '<h1>answered</h1>\n' > "$ANSWER_ART"
 lavish_session "$ANSWER_ART"
 answer_id=$("$ROOT/bin/fm-procevent-lavish.sh" source-id "$ANSWER_ART")
@@ -1279,18 +1279,18 @@ PATH="$ANSWER_BIN:$PATH" FM_HOME="$HANSWER" \
   "$ROOT/bin/fm-procevent-lavish.sh" arm "$ANSWER_ART" >/dev/null
 PATH="$ANSWER_BIN:$PATH" pe "$HANSWER" reconcile >/dev/null
 wait_for "$HANSWER/state/.wake-queue" \
-  || fail "a board close carrying the captain's real answer produced no wake"
+  || fail "a review close carrying the captain's real answer produced no wake"
 assert_contains "$(wake_payloads "$HANSWER")" "procevent lavish $answer_id 1" \
-  "a real board answer still reaches the captain"
+  "a real review answer still reaches the captain"
 [ ! -f "$HANSWER/state/procevent-inbox/$answer_id.1.handled" ] \
-  || fail "a real board answer was recorded handled without ever being handled"
-pass "a board close carrying the captain's real answer is still announced"
+  || fail "a real review answer was recorded handled without ever being handled"
+pass "a review close carrying the captain's real answer is still announced"
 
 # --- end-user-aligned regression: a transient poll interruption is not news ---
-# The dogfood defect: a live board listener can answer with exactly
+# The dogfood defect: a live review listener can answer with exactly
 #     error: Lavish Editor poll response was interrupted
 #     code: SERVER_ERROR
-# while the board's marks remain available. Firstmate registered raw poll output,
+# while the review's marks remain available. Firstmate registered raw poll output,
 # so the generic runner captured that transient response and woke the whole fleet
 # over what is really an internal retry. Every scenario below runs through the
 # adapter's own arm command and the real runner, so registration, capture, and
@@ -1301,7 +1301,7 @@ cat > "$LAVISH_SCRIPTED_BIN/lavish-axi" <<'SH'
 # Stand-in for `lavish-axi poll <file>`, scripted per scenario: LAVISH_SCRIPT
 # names the response for each successive poll, one word per poll, and its last
 # word repeats forever. `interrupt` is the exact transient response the server
-# returns while the board's marks stay available.
+# returns while the review's marks stay available.
 n=$(cat "$LAVISH_COUNT" 2>/dev/null || echo 0)
 n=$((n + 1))
 printf '%s\n' "$n" > "$LAVISH_COUNT"
@@ -1328,7 +1328,7 @@ case "${plan[$i]}" in
   other-server-error)
     printf 'error: Lavish Editor session store is unavailable\ncode: SERVER_ERROR\n'; exit 1 ;;
   feedback)
-    printf 'session:\n  file: /board.html\n  status: feedback\n  session_ended: true\n  ended_by: user\nfeedback[1]{text}:\n  ship it\n' ;;
+    printf 'session:\n  file: /review.html\n  status: feedback\n  session_ended: true\n  ended_by: user\nfeedback[1]{text}:\n  ship it\n' ;;
   stream)
     printf 'x%.0s' {1..4096}
     printf 'ready\n' > "$LAVISH_STREAM_READY"
@@ -1339,7 +1339,7 @@ SH
 chmod +x "$LAVISH_SCRIPTED_BIN/lavish-axi"
 export LAVISH_COUNT LAVISH_SCRIPT
 
-DEFAULT_RATE_ART="$TMP_ROOT/default-rate-board.html"
+DEFAULT_RATE_ART="$TMP_ROOT/default-rate-review.html"
 printf '<h1>default rate</h1>\n' > "$DEFAULT_RATE_ART"
 lavish_session "$DEFAULT_RATE_ART"
 DEFAULT_RATE_COUNT="$TMP_ROOT/default-rate-count"
@@ -1364,7 +1364,7 @@ export FM_LAVISH_POLL_RETRY_DELAY=1
 # Two interruptions, then the captain's real feedback: the retries are silent and
 # only the feedback becomes a captured result and a check wake.
 HRETRY="$TMP_ROOT/hretry"; new_home "$HRETRY"
-RETRY_ART="$TMP_ROOT/retry-board.html"
+RETRY_ART="$TMP_ROOT/retry-review.html"
 printf '<h1>retry</h1>\n' > "$RETRY_ART"
 lavish_session "$RETRY_ART"
 retry_id=$("$ROOT/bin/fm-procevent-lavish.sh" source-id "$RETRY_ART")
@@ -1478,7 +1478,7 @@ pass "a listener whose artifact vanished leaves the staged reply for the next on
 # Exhaustion is news: after the bounded retries the same exact response is
 # captured and announced normally rather than being swallowed forever.
 HEXH="$TMP_ROOT/hexh"; new_home "$HEXH"
-EXH_ART="$TMP_ROOT/exhaust-board.html"
+EXH_ART="$TMP_ROOT/exhaust-review.html"
 printf '<h1>exhaust</h1>\n' > "$EXH_ART"
 lavish_session "$EXH_ART"
 exh_id=$("$ROOT/bin/fm-procevent-lavish.sh" source-id "$EXH_ART")
@@ -1502,7 +1502,7 @@ pass "an interruption that outlives the bounded retries is captured and announce
 # A different SERVER_ERROR is a genuine error, never a retry: no fail-open drift
 # from the one exact transient response this adapter owns.
 HOTHER="$TMP_ROOT/hother"; new_home "$HOTHER"
-OTHER_ART="$TMP_ROOT/other-board.html"
+OTHER_ART="$TMP_ROOT/other-review.html"
 printf '<h1>other</h1>\n' > "$OTHER_ART"
 lavish_session "$OTHER_ART"
 other_id=$("$ROOT/bin/fm-procevent-lavish.sh" source-id "$OTHER_ART")
@@ -1523,7 +1523,7 @@ unset FM_LAVISH_POLL_RETRY_DELAY
 # A whitespace variant is not the exact transient response and must surface on
 # the first poll instead of drifting into the quiet retry policy.
 HNEAR="$TMP_ROOT/hnear"; new_home "$HNEAR"
-NEAR_ART="$TMP_ROOT/near-board.html"
+NEAR_ART="$TMP_ROOT/near-review.html"
 printf '<h1>near</h1>\n' > "$NEAR_ART"
 lavish_session "$NEAR_ART"
 near_id=$("$ROOT/bin/fm-procevent-lavish.sh" source-id "$NEAR_ART")
@@ -1543,7 +1543,7 @@ pass "only the literal two-line interruption enters the quiet retry policy"
 # The public arm boundary refuses invalid retry intervals before it publishes a
 # source registration, rather than arming a listener that can only fail later.
 HINVALID="$TMP_ROOT/hinvalid"; new_home "$HINVALID"
-INVALID_ART="$TMP_ROOT/invalid-delay-board.html"
+INVALID_ART="$TMP_ROOT/invalid-delay-review.html"
 printf '<h1>invalid delay</h1>\n' > "$INVALID_ART"
 lavish_session "$INVALID_ART"
 invalid_id=$("$ROOT/bin/fm-procevent-lavish.sh" source-id "$INVALID_ART")
@@ -1573,7 +1573,7 @@ quoted_staged=("$QUOTED_TMPDIR"/fm-lavish-poll.*)
 pass "poll cleanup safely handles an apostrophe-containing TMPDIR"
 
 HSTREAM="$TMP_ROOT/hstream"; new_home "$HSTREAM"
-STREAM_ART="$TMP_ROOT/stream-board.html"
+STREAM_ART="$TMP_ROOT/stream-review.html"
 STREAM_TMPDIR="$TMP_ROOT/stream-stage"
 LAVISH_STREAM_READY="$TMP_ROOT/stream-ready"
 LAVISH_STREAM_RELEASE="$TMP_ROOT/stream-release"
@@ -2021,7 +2021,7 @@ assert_contains "$sr4_out" "uncertain=1" \
   || fail "reconcile replaced the reused-pid generation's claim"
 # Nothing can take this source, so reporting it as unowned reads like an idle
 # source waiting to be started - the reassuring answer this surface gave while a
-# review board collected nothing.
+# review surface collected nothing.
 sr4_owner=$(pe "$HSR4" list | awk '$1 == "reused-group-src" { print $3 }')
 [ "$sr4_owner" = orphaned ] \
   || fail "a source no caller can claim is listed as '$sr4_owner'"
@@ -2249,7 +2249,7 @@ pe "$HLK" retire "$LK_ID" >/dev/null 2>&1 || true
 pass "a 64-char source id keeps the launch-failed key within the watcher's marker bound"
 
 # --- reconcile reports only launches it actually confirmed -------------------
-# The reported incident. A review board the captain had answered sat collecting
+# The reported incident. A review surface the captain had answered sat collecting
 # nothing while `reconcile` reported a start on every run: `detach_runner` is
 # fire-and-forget with the child's stderr discarded, so a runner that died
 # before it could claim was counted exactly like one that is listening. A
@@ -2953,7 +2953,7 @@ silent_says() {  # <expected: yes|no> <description>
   fi
 }
 printf 'session:\n  file: /a.html\n  status: ended\n  ended_by: user\n' > "$SIL"
-silent_says yes "an ended session carrying nothing is an empty board close"
+silent_says yes "an ended session carrying nothing is an empty review close"
 printf 'session:\n  file: /a.html\n  status: ended\n  ended_by: user\nprompts[0]{tag,text}:\n' > "$SIL"
 silent_says no "a declared-empty content block is still present"
 printf 'session:\n  file: /a.html\n  status: ended\n  ended_by: user\nprompts[many]{tag,text}:\n' > "$SIL"
@@ -3231,13 +3231,13 @@ session:
   ended_by: user
 EOF
 out=$(read_out) || fail "read failed on an ended-with-nothing capture"
-assert_contains "$out" "lifecycle: ended" "an empty board close did not report ended"
-assert_contains "$out" "declared_items: 0" "an empty board close invented queued items"
-assert_contains "$out" "presented_items: 0" "an empty board close invented presented items"
-assert_contains "$out" "complete: yes" "an empty board close was not marked complete"
+assert_contains "$out" "lifecycle: ended" "an empty review close did not report ended"
+assert_contains "$out" "declared_items: 0" "an empty review close invented queued items"
+assert_contains "$out" "presented_items: 0" "an empty review close invented presented items"
+assert_contains "$out" "complete: yes" "an empty review close was not marked complete"
 assert_contains "$out" "SESSION-ENDING MESSAGE: (none)" \
-  "an empty board close invented a session-ending message"
-assert_contains "$out" "ANNOTATIONS: (none)" "an empty board close invented annotations"
+  "an empty review close invented a session-ending message"
+assert_contains "$out" "ANNOTATIONS: (none)" "an empty review close invented annotations"
 pass "read distinguishes a feedback capture from an ended-with-nothing close"
 
 # The runner's silence seam is generic and closed by default: an adapter with no

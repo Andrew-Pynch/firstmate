@@ -174,9 +174,10 @@
 # captain chose; the intake owns every rule about what happens next. This runner
 # names no adapter, parses no result, and knows no decision rule, so a future
 # built-in source needs nothing here beyond an `answers` command and a binding.
-# Reconcile selections use the parallel `reconciles` adapter command and the
-# binding-verified `reconcile-requests` intake, never the keyed-answer value.
-# External binding responses never enter either authority-bearing intake.
+# The reserved `reconcile` value is never an answer, so no capture can create a
+# re-check obligation through this seam; that is an explicit
+# `bin/fm-captain-hold.sh reconcile request`.
+# External binding responses never enter that intake.
 #
 # Feeding is deliberately independent of handling: it never acknowledges a result
 # and never suppresses a wake. Recording the captain's answer is transcription,
@@ -442,19 +443,6 @@ feed_keyed_answers() {  # <adapter> <source-id> <result-file>
   "$script" answers "$result" 2>/dev/null \
     | "$SCRIPT_DIR/fm-captain-hold.sh" answers "$origin" \
         --source "the captured result $id sequence $seq" >/dev/null 2>&1
-}
-
-feed_reconcile_requests() {  # <adapter> <source-id> <result-file>
-  local adapter=$1 id=$2 result=$3 script origin seq rows
-  script=$(adapter_script "$adapter")
-  [ -f "$script" ] && [ ! -L "$script" ] || return 1
-  origin=$("$SCRIPT_DIR/fm-captain-hold.sh" binding "$id" 2>/dev/null) || return 1
-  [ -n "$origin" ] || return 1
-  seq=$(fm_procevent_result_sequence "$result") || return 1
-  rows=$("$script" reconciles "$result" 2>/dev/null) || return 1
-  printf '%s\n' "$rows" \
-    | "$SCRIPT_DIR/fm-captain-hold.sh" reconcile-requests \
-        --source-id "$id" --source "the captured result $id sequence $seq" >/dev/null 2>&1
 }
 
 read_adapter() {  # <source-id>
@@ -1234,10 +1222,6 @@ EOF
   # Independent of publication and acknowledgement, so it runs once per capture
   # for every adapter and cannot change what the handler receives.
   if [ "$extension_owner" -eq 0 ] \
-    && feed_reconcile_requests "$adapter" "$id" "$durable"; then
-    printf 'reconciles-fed: %s\n' "$id"
-  fi
-  if [ "$extension_owner" -eq 0 ] \
     && feed_keyed_answers "$adapter" "$id" "$durable"; then
     printf 'answers-fed: %s\n' "$id"
   fi
@@ -1718,7 +1702,7 @@ launch_entry_listed() {  # <entry> <newline-separated entries>
 # this every failure inside _start - a refused claim above all - was still
 # counted and reported as a start. That made a source that CANNOT start
 # indistinguishable from one that had, which is exactly how a wedged review
-# board goes on presenting as armed while collecting nothing.
+# review surface goes on presenting as armed while collecting nothing.
 #
 # Two signals confirm a launch, and each covers what the other cannot see:
 # ownership covers the runner still blocked on its source, which is the only
@@ -2210,7 +2194,7 @@ cmd_list() {
     # undisplaceable as the leaderless group state 3 already reports, and a
     # reused PID reaches it through state 1 rather than state 3. Reporting that
     # as `none` reads like an idle source waiting to be started, which is the
-    # reassuring answer this whole surface gave while a board collected nothing.
+    # reassuring answer this whole surface gave while a review surface collected nothing.
     case "$claim_state" in
       0) owner=live ;;
       1)

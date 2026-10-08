@@ -21,7 +21,6 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-bearings-snapshot.sh` | Project the bounded remote-ledger fleet snapshot to compact TOON; `--include-prs` adds live GitHub enrichment |
 |`fm-queue.sh`|Queue: the captain's requests grouped by project with wave, tickets, source, freshness, owner and next action, fleet maintenance grouped apart; the listing is read-only and `answer <row-id>` closes a keyed captain hold through `bin/fm-captain-hold.sh` and hands the answer off through the home's durable inbox, arming one wake and starting no worker (schema `fm-queue.v1` under `--json`)|
 | `fm-queue-line.sh`       | Read-only one-line view of that queue for the pinned editor line: the most urgent item waiting on the captain and the count of the rest, or nothing at all when nothing waits |
-| `fm-bearings-board.sh`   | Build and arm the stable interactive `/bearings lavish` fleet board                  |
 | `fm-secondmate-reconcile.sh` | Queue Bearings reconcile requests for later supervision delivery and ask each mismatched home through its durable inbox with a per-home cooldown |
 | `fm-update.sh`           | Guarded self-update of firstmate and local or remote secondmate homes, reconciling redundant divergence and classifying every live mate left on the target commit for restart or fallback nudge |
 | `fm-farm-patch.sh`       | Keep a checkout's own fixes as a named patch set off its default branch and replay them onto a new base, so the fast-forward update path keeps advancing that branch |

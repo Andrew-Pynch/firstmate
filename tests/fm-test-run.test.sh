@@ -424,6 +424,15 @@ test_changed_dependency_selection_and_unmapped_failure() {
   rm -f "$repo/src/unmapped.ts"
   listed=$(cd "$repo" && bin/fm-test-run.sh --list --changed --base HEAD)
   [ -z "$listed" ] || fail "a retired unmapped source without consumers selected tests: $listed"
+
+  printf '#!/bin/sh\nexit 0\n' >"$repo/tests/fm-retired-selection.test.sh"
+  mkdir -p "$repo/tests/assets"
+  printf 'export const retired = true;\n' >"$repo/tests/assets/retired-selection.mjs"
+  git -C "$repo" add tests/fm-retired-selection.test.sh tests/assets/retired-selection.mjs
+  git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm retired-test-fixtures
+  rm -f "$repo/tests/fm-retired-selection.test.sh" "$repo/tests/assets/retired-selection.mjs"
+  listed=$(cd "$repo" && bin/fm-test-run.sh --list --changed --base HEAD)
+  [ -z "$listed" ] || fail "retired test artifacts selected tests: $listed"
   rm -rf "$tmp"
   pass "changed selection covers dependents, fails closed for live unmapped source, and accepts retired unconsumed source"
 }

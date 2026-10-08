@@ -7,7 +7,6 @@
 #   fm-procevent-lavish.sh terminal <result-file>
 #   fm-procevent-lavish.sh silent <result-file>
 #   fm-procevent-lavish.sh answers <result-file>
-#   fm-procevent-lavish.sh reconciles <result-file>
 #   fm-procevent-lavish.sh read <result-file>
 #   fm-procevent-lavish.sh source-id <artifact.html>
 #   fm-procevent-lavish.sh retire <artifact.html>
@@ -51,9 +50,9 @@
 #            Task-owned terminal rounds bypass generic silence so their owner
 #            receives the stop-and-conclude instruction.
 #
-# AN EMPTY BOARD CLOSE IS NOT NEWS, and that is what `silent` exists to say.
+# AN EMPTY REVIEW CLOSE IS NOT NEWS, and that is what `silent` exists to say.
 # Closing a review surface that carried nothing is the single most common Lavish
-# result: the captain reads a board, says nothing, and closes it. Announcing that
+# result: the captain reads a review, says nothing, and closes it. Announcing that
 # put a wake in front of the handler whose entire content was that nothing
 # happened. `silent` therefore holds two narrow, positively-determined shapes -
 # a session this adapter classifies `ended` that carries no queued content block
@@ -504,7 +503,7 @@ result_has_queued_content() {  # <result-file>
 # Whether a captured result is a routine no-op the runner should record without
 # announcing, for the generic runner's silence seam. Lavish's notion of "nothing
 # was said" lives here and nowhere else: an ended session carrying no queued
-# content block is a board the captain closed without saying anything, and the
+# content block is a review the captain closed without saying anything, and the
 # handler learns nothing from being told. Anything else - a real answer, a
 # missing or waiting session, an unreadable result - is announced.
 cmd_silent() {
@@ -521,28 +520,33 @@ cmd_silent() {
   [ "$content_rc" -eq 1 ]
 }
 
-# Print `key<TAB>answer<TAB>label[<TAB>mode]` for each non-reconcile structured choice the
+# Print `key<TAB>answer<TAB>label[<TAB>mode]` for each structured choice the
 # captain submitted in a captured result; the optional mode column relays the
-# card's declared close mode (`done` or `release`) to the keyed-answer intake. The published response frames queued feedback as
+# card's declared close mode (`done` or `release`) to the keyed-answer intake. A
+# reconcile selection is never printed: that value means "go re-check reality",
+# the keyed-answer intake refuses it, and the obligation to re-check is recorded
+# only by an explicit `bin/fm-captain-hold.sh reconcile request`. The published
+# response frames queued feedback as
 # a `prompts[N]{field,...}:` header followed by exactly N indented CSV rows whose
 # quoted fields carry JSON-style escapes, so this reads the declared field ORDER
 # rather than assuming a fixed column, and takes only rows whose `tag` field is
 # `choice`. A freeform `message` row is captain prose and is deliberately never a
 # source of decision keys. A row that does not carry both a slug-shaped `question`
 # and the versioned `selection` and `note` fields inside its `Context data:` block
-# is skipped. A time-limited rollout branch accepts the old question/answer
-# shape only for ordinary answers and rejects its bare or annotated reconcile
-# values because old rows do not separate the selected option from its note.
+# is skipped. A time-limited rollout branch accepts a capture written before that
+# versioned shape only for ordinary answers and rejects its bare or annotated
+# reconcile values because such rows do not separate the selected option from its
+# note.
 # The question cap is 128 so any task id fits, including the long legacy
 # `<origin>-decision-<key>` identities pre-collapse decks still carry; the
 # security property is the slug SHAPE, which is unchanged.
 cmd_choice_rows() {
-  local selection=$1 file=${2-}
+  local file=${1-}
   [ -n "$file" ] || usage
   [ -f "$file" ] && [ ! -L "$file" ] || die "result file does not exist: $file"
   perl -MJSON::PP -e '
     use strict; use warnings;
-    my ($selection, $path) = @ARGV;
+    my ($path) = @ARGV;
     open my $fh, "<", $path or exit 1;
     my (@fields, $want, @rows);
     while (my $line = <$fh>) {
@@ -581,7 +585,7 @@ cmd_choice_rows() {
       my $ctx = $1;
       my $data = eval { decode_json($ctx) };
       next unless ref($data) eq "HASH";
-      my ($key, $selected, $note, $answer, $legacy);
+      my ($key, $selected, $note, $answer);
       if (defined($data->{schema}) && !ref($data->{schema})
           && $data->{schema} eq "fm-bearings-answer.v1") {
         $key = $data->{question};
@@ -593,9 +597,8 @@ cmd_choice_rows() {
         next unless length($note) <= 512;
         next unless length($selected) || length($note);
         $answer = length($selected) ? $selected : $note;
-        $legacy = 0;
-      # Time-limited compatibility for captures from pre-change boards; remove
-      # once no board carrying the old question/answer context can remain armed.
+      # Time-limited compatibility for a capture written before the versioned
+      # context shape; remove once no such capture can remain queued.
       } elsif (!exists($data->{schema}) && !exists($data->{selection})
           && !exists($data->{note})) {
         $key = $data->{question};
@@ -605,7 +608,6 @@ cmd_choice_rows() {
         next if $answer eq "reconcile" || index($answer, "reconcile - ") == 0;
         $selected = "";
         $note = "";
-        $legacy = 1;
       } else {
         next;
       }
@@ -622,30 +624,20 @@ cmd_choice_rows() {
       if (defined $seen{$key}) { $choices[$seen{$key}] = undef }
       $seen{$key} = scalar @choices;
       push @choices, {
-        key => $key, selection => $selected, note => $note, legacy => $legacy,
+        key => $key, selection => $selected, note => $note,
         answer => $answer, label => $label, mode => $mode
       };
     }
     for my $choice (grep { defined } @choices) {
-      if ($selection eq "reconciles") {
-        next if $choice->{legacy};
-        if ($choice->{selection} eq "reconcile") {
-          print length($choice->{note})
-            ? "$choice->{key}\t$choice->{note}\n"
-            : "$choice->{key}\n";
-        }
-        next;
-      }
       next if $choice->{selection} eq "reconcile";
       print length $choice->{mode}
         ? "$choice->{key}\t$choice->{answer}\t$choice->{label}\t$choice->{mode}\n"
         : "$choice->{key}\t$choice->{answer}\t$choice->{label}\n";
     }
-  ' "$selection" "$file"
+  ' "$file"
 }
 
-cmd_answers() { cmd_choice_rows answers "$@"; }
-cmd_reconciles() { cmd_choice_rows reconciles "$@"; }
+cmd_answers() { cmd_choice_rows "$@"; }
 
 # Present one already-captured result for a handler. Body lines are prefixed
 # so a captain-supplied string cannot forge a section label. A freeform message
@@ -797,7 +789,6 @@ case "${1-}" in
   terminal)  shift; cmd_terminal "$@" ;;
   silent)    shift; cmd_silent "$@" ;;
   answers)   shift; cmd_answers "$@" ;;
-  reconciles) shift; cmd_reconciles "$@" ;;
   read)      shift; cmd_read "$@" ;;
   ''|-h|--help|help) usage ;;
   *) die "unknown command: $1" ;;

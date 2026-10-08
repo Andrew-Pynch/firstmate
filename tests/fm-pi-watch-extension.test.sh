@@ -890,7 +890,7 @@ EOF
 relay-mention|check: x-mention 1234567890
 credential-failure|check: gh auth check failed; re-authenticate before dispatch
 merge-confirmation|check: task-a.check.sh: PR merged
-real-board-answer|check: procevent lavish lavish-abcdef0123456789 1
+real-review-answer|check: procevent lavish lavish-abcdef0123456789 1
 CLASSES
   pass "every main-only check class still reaches main, never the supervision branch"
 }

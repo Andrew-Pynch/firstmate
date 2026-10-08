@@ -1,0 +1,668 @@
+/Users/andrewpynch/.no-mistakes/worktrees/5f574e4d920c/01M4E2CNFR6HQA3KNXQJP9NDRB/.test-tmp/fm-lab.BEj6ya
+A new version of treehouse is available: v2.3.0 → v3.1.2
+Run "treehouse update" to update
+
+🌳 Setting up worktree...
+🌳 Leased worktree at ~/.no-mistakes/worktrees/5f574e4d920c/01M4E2CNFR6HQA3KNXQJP9NDRB/.test-tmp/fm-lab.BEj6ya/treehouse/.treehouse/reset-pin-80d0ef/1/reset-pin. Run 'treehouse return ~/.no-mistakes/worktrees/5f574e4d920c/01M4E2CNFR6HQA3KNXQJP9NDRB/.test-tmp/fm-lab.BEj6ya/treehouse/.treehouse/reset-pin-80d0ef/1/reset-pin' to release it.
+A new version of treehouse is available: v2.3.0 → v3.1.2
+Run "treehouse update" to update
+
+🌳 Worktree returned to pool.
+
+=== reset-pin: before spawn ===
+superproject HEAD=b3e96d9f54f22ac98ed8ff257cfeba6481cb41c0 recorded-pin=0ba645f811c1a89363e6957bc12da01a9515389e
+parent status:
+child-HEAD=0ba645f811c1a89363e6957bc12da01a9515389e
+child status:
+child origin branches:
+refs/remotes/origin/HEAD 0ba645f811c1a89363e6957bc12da01a9515389e
+refs/remotes/origin/main 0ba645f811c1a89363e6957bc12da01a9515389e
+$ FM_HOME=<disposable lab> bin/fm-spawn.sh probe-reset-pin <fixture project> --scout --harness codex --backend tmux 
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /Users/andrewpynch/.no-mistakes/worktrees/5f574e4d920c/01M4E2CNFR6HQA3KNXQJP9NDRB/.test-tmp/fm-lab.BEj6ya
+spawned probe-reset-pin harness=codex kind=scout window=primary:fm-probe-reset-pin worktree=/Users/andrewpynch/.no-mistakes/worktrees/5f574e4d920c/01M4E2CNFR6HQA3KNXQJP9NDRB/.test-tmp/fm-lab.BEj6ya/treehouse/.treehouse/reset-pin-80d0ef/1/reset-pin
+spawn exit=0
+=== reset-pin: after spawn ===
+superproject HEAD=7f32db03a014dc79f38ec73ae434b85c202dd016 recorded-pin=3af353f05d57fc7e2cb106f04b2b549ee15d969b
+parent status:
+child-HEAD=3af353f05d57fc7e2cb106f04b2b549ee15d969b
+child status:
+child origin branches:
+refs/remotes/origin/HEAD 3af353f05d57fc7e2cb106f04b2b549ee15d969b
+refs/remotes/origin/main 3af353f05d57fc7e2cb106f04b2b549ee15d969b
+published task metadata:
+window=primary:fm-probe-reset-pin
+worktree=/Users/andrewpynch/.no-mistakes/worktrees/5f574e4d920c/01M4E2CNFR6HQA3KNXQJP9NDRB/.test-tmp/fm-lab.BEj6ya/treehouse/.treehouse/reset-pin-80d0ef/1/reset-pin
+harness=codex
+kind=scout
+worker terminal:
+bash-5.3$ treehouse get
+A new version of treehouse is available: v2.3.0 → v3.1.2
+Run "treehouse update" to update
+
+🌳 Setting up worktree...
+🌳 Entered worktree at ~/.no-mistakes/worktrees/5f574e4d920c/01M4E2CNFR6HQA3KNXQ
+JP9NDRB/.test-tmp/fm-lab.BEj6ya/treehouse/.treehouse/reset-pin-80d0ef/1/reset-pi
+n. Type 'exit' to return.
+
+The default interactive shell is now zsh.
+To update your account to use zsh, please run `chsh -s /bin/zsh`.
+For more details, please visit https://support.apple.com/kb/HT208050.
+bash-3.2$ cd -- '/Users/andrewpynch/.no-mistakes/worktrees/5f574e4d920c/01M4E2CN
+FR6HQA3KNXQJP9NDRB/.test-tmp/fm-lab.BEj6ya/treehouse/.treehouse/reset-pin-80d0ef
+/1/reset-pin'
+bash-3.2$ export GOTMPDIR=/tmp/fm-probe-reset-pin/gotmp
+bash-3.2$ export COMPACT_ADVISER_DISABLE=1
+bash-3.2$ export FM_TASK_ID=probe-reset-pin
+bash-3.2$ . '/tmp/fm-probe-reset-pin+887aaf339bc8214fc2103847a7d1e8b18d7dcfeea21
+2b5a82b4562b838d643cd/launch.s1791475160.78386.9045.sh'
+> You are in /Users/andrewpynch/.no-mistakes/worktrees/5f574e4d920c/01M4E2CNFR6H
+
+  Note: You’re in a subdirectory of a Git project. Trusting will apply to the
+  repository root:
+  /Users/andrewpynch/.no-mistakes/worktrees/5f574e4d920c/01M4E2CNFR6HQA3KNXQJP9N
+  DRB/.test-tmp/fm-lab.BEj6ya/projects/reset-pin
+
+  Do you trust the contents of this directory? Working with untrusted contents
+  comes with higher risk of prompt injection. Trusting the directory allows
+  project-local config, hooks, and exec policies to load.
+
+› 1. Yes, continue
+  2. No, quit
+
+  Press enter to continue
+
+
+
+
+
+
+
+
+
+SCENARIO_RESULT reset-pin pass
+A new version of treehouse is available: v2.3.0 → v3.1.2
+Run "treehouse update" to update
+
+🌳 Setting up worktree...
+🌳 Leased worktree at ~/.no-mistakes/worktrees/5f574e4d920c/01M4E2CNFR6HQA3KNXQJP9NDRB/.test-tmp/fm-lab.BEj6ya/treehouse/.treehouse/named-reset-62d28d/1/named-reset. Run 'treehouse return ~/.no-mistakes/worktrees/5f574e4d920c/01M4E2CNFR6HQA3KNXQJP9NDRB/.test-tmp/fm-lab.BEj6ya/treehouse/.treehouse/named-reset-62d28d/1/named-reset' to release it.
+A new version of treehouse is available: v2.3.0 → v3.1.2
+Run "treehouse update" to update
+
+🌳 Worktree returned to pool.
+
+=== named-reset: before spawn ===
+superproject HEAD=ce4d81e5890f33261ce57edc18377b766516af00 recorded-pin=ac281dcc5e66a319d5c009a386748c5efb2bd394
+parent status:
+child-HEAD=ac281dcc5e66a319d5c009a386748c5efb2bd394
+child status:
+child origin branches:
+refs/remotes/origin/HEAD ac281dcc5e66a319d5c009a386748c5efb2bd394
+refs/remotes/origin/main ac281dcc5e66a319d5c009a386748c5efb2bd394
+$ FM_HOME=<disposable lab> bin/fm-spawn.sh probe-named-reset <fixture project> --scout --harness codex --backend tmux --base-branch release/pin
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /Users/andrewpynch/.no-mistakes/worktrees/5f574e4d920c/01M4E2CNFR6HQA3KNXQJP9NDRB/.test-tmp/fm-lab.BEj6ya
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  repair a missing or failed watcher cycle with the Pi tool fm_watch_arm_pi, or restart Pi with -e /Users/andrewpynch/.no-mistakes/worktrees/5f574e4d920c/01M4E2CNFR6HQA3KNXQJP9NDRB/.pi/extensions/fm-primary-turnend-guard.ts -e /Users/andrewpynch/.no-mistakes/worktrees/5f574e4d920c/01M4E2CNFR6HQA3KNXQJP9NDRB/.pi/extensions/fm-primary-pi-watch.ts if the extensions are not loaded.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+warn: no registry at /Users/andrewpynch/.no-mistakes/worktrees/5f574e4d920c/01M4E2CNFR6HQA3KNXQJP9NDRB/.test-tmp/fm-lab.BEj6ya/data/projects.md; defaulting named-reset to no-mistakes off
+spawned probe-named-reset harness=codex kind=scout window=primary:fm-probe-named-reset worktree=/Users/andrewpynch/.no-mistakes/worktrees/5f574e4d920c/01M4E2CNFR6HQA3KNXQJP9NDRB/.test-tmp/fm-lab.BEj6ya/treehouse/.treehouse/named-reset-62d28d/1/named-reset
+spawn exit=0
+=== named-reset: after spawn ===
+superproject HEAD=3757b10e39e8af26190d4fdd4f5bfa15f690f85b recorded-pin=44b00dd06505e11734d9ec78c3a1c6b9329645d3
+parent status:
+child-HEAD=44b00dd06505e11734d9ec78c3a1c6b9329645d3
+child status:
+child origin branches:
+refs/remotes/origin/HEAD 44b00dd06505e11734d9ec78c3a1c6b9329645d3
+refs/remotes/origin/main 44b00dd06505e11734d9ec78c3a1c6b9329645d3
+published task metadata:
+window=primary:fm-probe-named-reset
+worktree=/Users/andrewpynch/.no-mistakes/worktrees/5f574e4d920c/01M4E2CNFR6HQA3KNXQJP9NDRB/.test-tmp/fm-lab.BEj6ya/treehouse/.treehouse/named-reset-62d28d/1/named-reset
+harness=codex
+kind=scout
+worker terminal:
+bash-5.3$ treehouse get
+A new version of treehouse is available: v2.3.0 → v3.1.2
+Run "treehouse update" to update
+
+🌳 Setting up worktree...
+🌳 Entered worktree at ~/.no-mistakes/worktrees/5f574e4d920c/01M4E2CNFR6HQA3KNXQ
+JP9NDRB/.test-tmp/fm-lab.BEj6ya/treehouse/.treehouse/named-reset-62d28d/1/named-
+reset. Type 'exit' to return.
+
+The default interactive shell is now zsh.
+To update your account to use zsh, please run `chsh -s /bin/zsh`.
+For more details, please visit https://support.apple.com/kb/HT208050.
+bash-3.2$ cd -- '/Users/andrewpynch/.no-mistakes/worktrees/5f574e4d920c/01M4E2CN
+FR6HQA3KNXQJP9NDRB/.test-tmp/fm-lab.BEj6ya/treehouse/.treehouse/named-reset-62d2
+8d/1/named-reset'
+bash-3.2$ export GOTMPDIR=/tmp/fm-probe-named-reset/gotmp
+bash-3.2$ export COMPACT_ADVISER_DISABLE=1
+bash-3.2$ export FM_TASK_ID=probe-named-reset
+bash-3.2$ . '/tmp/fm-probe-named-reset+887aaf339bc8214fc2103847a7d1e8b18d7dcfeea
+212b5a82b4562b838d643cd/launch.s1791475168.83127.5983.sh'
+> You are in /Users/andrewpynch/.no-mistakes/worktrees/5f574e4d920c/01M4E2CNFR6H
+
+  Note: You’re in a subdirectory of a Git project. Trusting will apply to the
+  repository root:
+  /Users/andrewpynch/.no-mistakes/worktrees/5f574e4d920c/01M4E2CNFR6HQA3KNXQJP9N
+  DRB/.test-tmp/fm-lab.BEj6ya/projects/named-reset
+
+  Do you trust the contents of this directory? Working with untrusted contents
+  comes with higher risk of prompt injection. Trusting the directory allows
+  project-local config, hooks, and exec policies to load.
+
+› 1. Yes, continue
+  2. No, quit
+
+  Press enter to continue
+
+
+
+
+
+
+
+
+
+SCENARIO_RESULT named-reset pass
+A new version of treehouse is available: v2.3.0 → v3.1.2
+Run "treehouse update" to update
+
+🌳 Setting up worktree...
+🌳 Leased worktree at ~/.no-mistakes/worktrees/5f574e4d920c/01M4E2CNFR6HQA3KNXQJP9NDRB/.test-tmp/fm-lab.BEj6ya/treehouse/.treehouse/drifted-pin-62db8f/1/drifted-pin. Run 'treehouse return ~/.no-mistakes/worktrees/5f574e4d920c/01M4E2CNFR6HQA3KNXQJP9NDRB/.test-tmp/fm-lab.BEj6ya/treehouse/.treehouse/drifted-pin-62db8f/1/drifted-pin' to release it.
+A new version of treehouse is available: v2.3.0 → v3.1.2
+Run "treehouse update" to update
+
+🌳 Worktree returned to pool.
+
+=== drifted-pin: before spawn ===
+superproject HEAD=06f8ddb3d2db2b393aaa4ad597d45dc9b9d2609d recorded-pin=15e4a6e44302b11e545f47487b75c7c0e383d1c9
+parent status:
+ M ui
+child-HEAD=aa69a2a1e6bd2e5eeacf7ad9c52543beab6104eb
+child status:
+child origin branches:
+refs/remotes/origin/HEAD aa69a2a1e6bd2e5eeacf7ad9c52543beab6104eb
+refs/remotes/origin/main aa69a2a1e6bd2e5eeacf7ad9c52543beab6104eb
+$ FM_HOME=<disposable lab> bin/fm-spawn.sh probe-drifted-pin <fixture project> --scout --harness codex --backend tmux 
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /Users/andrewpynch/.no-mistakes/worktrees/5f574e4d920c/01M4E2CNFR6HQA3KNXQJP9NDRB/.test-tmp/fm-lab.BEj6ya
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+spawned probe-drifted-pin harness=codex kind=scout window=primary:fm-probe-drifted-pin worktree=/Users/andrewpynch/.no-mistakes/worktrees/5f574e4d920c/01M4E2CNFR6HQA3KNXQJP9NDRB/.test-tmp/fm-lab.BEj6ya/treehouse/.treehouse/drifted-pin-62db8f/1/drifted-pin
+spawn exit=0
+=== drifted-pin: after spawn ===
+superproject HEAD=06f8ddb3d2db2b393aaa4ad597d45dc9b9d2609d recorded-pin=15e4a6e44302b11e545f47487b75c7c0e383d1c9
+parent status:
+child-HEAD=15e4a6e44302b11e545f47487b75c7c0e383d1c9
+child status:
+child origin branches:
+refs/remotes/origin/HEAD 15e4a6e44302b11e545f47487b75c7c0e383d1c9
+refs/remotes/origin/main 15e4a6e44302b11e545f47487b75c7c0e383d1c9
+published task metadata:
+window=primary:fm-probe-drifted-pin
+worktree=/Users/andrewpynch/.no-mistakes/worktrees/5f574e4d920c/01M4E2CNFR6HQA3KNXQJP9NDRB/.test-tmp/fm-lab.BEj6ya/treehouse/.treehouse/drifted-pin-62db8f/1/drifted-pin
+harness=codex
+kind=scout
+worker terminal:
+bash-5.3$ treehouse get
+A new version of treehouse is available: v2.3.0 → v3.1.2
+Run "treehouse update" to update
+
+🌳 Setting up worktree...
+🌳 Entered worktree at ~/.no-mistakes/worktrees/5f574e4d920c/01M4E2CNFR6HQA3KNXQ
+JP9NDRB/.test-tmp/fm-lab.BEj6ya/treehouse/.treehouse/drifted-pin-62db8f/1/drifte
+d-pin. Type 'exit' to return.
+
+The default interactive shell is now zsh.
+To update your account to use zsh, please run `chsh -s /bin/zsh`.
+For more details, please visit https://support.apple.com/kb/HT208050.
+bash-3.2$ cd -- '/Users/andrewpynch/.no-mistakes/worktrees/5f574e4d920c/01M4E2CN
+FR6HQA3KNXQJP9NDRB/.test-tmp/fm-lab.BEj6ya/treehouse/.treehouse/drifted-pin-62db
+8f/1/drifted-pin'
+bash-3.2$ export GOTMPDIR=/tmp/fm-probe-drifted-pin/gotmp
+bash-3.2$ export COMPACT_ADVISER_DISABLE=1
+bash-3.2$ export FM_TASK_ID=probe-drifted-pin
+bash-3.2$ . '/tmp/fm-probe-drifted-pin+887aaf339bc8214fc2103847a7d1e8b18d7dcfeea
+212b5a82b4562b838d643cd/launch.s1791475176.99346.3694.sh'
+> You are in /Users/andrewpynch/.no-mistakes/worktrees/5f574e4d920c/01M4E2CNFR6H
+
+  Note: You’re in a subdirectory of a Git project. Trusting will apply to the
+  repository root:
+  /Users/andrewpynch/.no-mistakes/worktrees/5f574e4d920c/01M4E2CNFR6HQA3KNXQJP9N
+  DRB/.test-tmp/fm-lab.BEj6ya/projects/drifted-pin
+
+  Do you trust the contents of this directory? Working with untrusted contents
+  comes with higher risk of prompt injection. Trusting the directory allows
+  project-local config, hooks, and exec policies to load.
+
+› 1. Yes, continue
+  2. No, quit
+
+  Press enter to continue
+
+
+
+
+
+
+
+
+
+SCENARIO_RESULT drifted-pin pass
+A new version of treehouse is available: v2.3.0 → v3.1.2
+Run "treehouse update" to update
+
+🌳 Setting up worktree...
+🌳 Leased worktree at ~/.no-mistakes/worktrees/5f574e4d920c/01M4E2CNFR6HQA3KNXQJP9NDRB/.test-tmp/fm-lab.BEj6ya/treehouse/.treehouse/stale-topic-b6eb36/1/stale-topic. Run 'treehouse return ~/.no-mistakes/worktrees/5f574e4d920c/01M4E2CNFR6HQA3KNXQJP9NDRB/.test-tmp/fm-lab.BEj6ya/treehouse/.treehouse/stale-topic-b6eb36/1/stale-topic' to release it.
+A new version of treehouse is available: v2.3.0 → v3.1.2
+Run "treehouse update" to update
+
+🌳 Worktree returned to pool.
+
+=== stale-topic: before spawn ===
+superproject HEAD=23de1ff3b0fc2b1348bda0de602fd387c427fa26 recorded-pin=40df6783132e1c29c393547c13e5bad2f6dd7e38
+parent status:
+ M ui
+child-HEAD=ae5df5f6b5914d8f005eb68aedc1010b5f75a10d
+child status:
+child origin branches:
+refs/remotes/origin/HEAD 40df6783132e1c29c393547c13e5bad2f6dd7e38
+refs/remotes/origin/main 40df6783132e1c29c393547c13e5bad2f6dd7e38
+refs/remotes/origin/topic ae5df5f6b5914d8f005eb68aedc1010b5f75a10d
+$ FM_HOME=<disposable lab> bin/fm-spawn.sh probe-stale-topic <fixture project> --scout --harness codex --backend tmux 
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /Users/andrewpynch/.no-mistakes/worktrees/5f574e4d920c/01M4E2CNFR6HQA3KNXQJP9NDRB/.test-tmp/fm-lab.BEj6ya
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+error: submodule 'ui' in pooled worktree '/Users/andrewpynch/.no-mistakes/worktrees/5f574e4d920c/01M4E2CNFR6HQA3KNXQJP9NDRB/.test-tmp/fm-lab.BEj6ya/treehouse/.treehouse/stale-topic-b6eb36/1/stale-topic' holds a commit a fresh fetch of its origin cannot prove pushed
+error: pooled worktree '/Users/andrewpynch/.no-mistakes/worktrees/5f574e4d920c/01M4E2CNFR6HQA3KNXQJP9NDRB/.test-tmp/fm-lab.BEj6ya/treehouse/.treehouse/stale-topic-b6eb36/1/stale-topic' is not clean; refusing to discard uncommitted work while refreshing its base
+spawn exit=1
+=== stale-topic: after spawn ===
+superproject HEAD=23de1ff3b0fc2b1348bda0de602fd387c427fa26 recorded-pin=40df6783132e1c29c393547c13e5bad2f6dd7e38
+parent status:
+ M ui
+child-HEAD=ae5df5f6b5914d8f005eb68aedc1010b5f75a10d
+child status:
+child origin branches:
+refs/remotes/origin/HEAD 40df6783132e1c29c393547c13e5bad2f6dd7e38
+refs/remotes/origin/main 40df6783132e1c29c393547c13e5bad2f6dd7e38
+task metadata absent
+SCENARIO_RESULT stale-topic pass
+A new version of treehouse is available: v2.3.0 → v3.1.2
+Run "treehouse update" to update
+
+🌳 Setting up worktree...
+🌳 Leased worktree at ~/.no-mistakes/worktrees/5f574e4d920c/01M4E2CNFR6HQA3KNXQJP9NDRB/.test-tmp/fm-lab.BEj6ya/treehouse/.treehouse/stale-topic-reset-542394/1/stale-topic-reset. Run 'treehouse return ~/.no-mistakes/worktrees/5f574e4d920c/01M4E2CNFR6HQA3KNXQJP9NDRB/.test-tmp/fm-lab.BEj6ya/treehouse/.treehouse/stale-topic-reset-542394/1/stale-topic-reset' to release it.
+A new version of treehouse is available: v2.3.0 → v3.1.2
+Run "treehouse update" to update
+
+🌳 Worktree returned to pool.
+
+=== stale-topic-reset: before spawn ===
+superproject HEAD=4765305ddeb4af7aae40a5ba7a1693dc025da251 recorded-pin=fde3b9e425433548400b767bf2b9615a5a25e479
+parent status:
+child-HEAD=fde3b9e425433548400b767bf2b9615a5a25e479
+child status:
+child origin branches:
+refs/remotes/origin/HEAD e56773949369b3c9c726551566fa4a3e725f8237
+refs/remotes/origin/main e56773949369b3c9c726551566fa4a3e725f8237
+refs/remotes/origin/topic fde3b9e425433548400b767bf2b9615a5a25e479
+$ FM_HOME=<disposable lab> bin/fm-spawn.sh probe-stale-topic-reset <fixture project> --scout --harness codex --backend tmux --base-branch release/pin
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /Users/andrewpynch/.no-mistakes/worktrees/5f574e4d920c/01M4E2CNFR6HQA3KNXQJP9NDRB/.test-tmp/fm-lab.BEj6ya
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+warn: no registry at /Users/andrewpynch/.no-mistakes/worktrees/5f574e4d920c/01M4E2CNFR6HQA3KNXQJP9NDRB/.test-tmp/fm-lab.BEj6ya/data/projects.md; defaulting stale-topic-reset to no-mistakes off
+error: submodule 'ui' in pooled worktree '/Users/andrewpynch/.no-mistakes/worktrees/5f574e4d920c/01M4E2CNFR6HQA3KNXQJP9NDRB/.test-tmp/fm-lab.BEj6ya/treehouse/.treehouse/stale-topic-reset-542394/1/stale-topic-reset' is checked out at fde3b9e425433548400b767bf2b9615a5a25e479, which a fresh fetch of its origin cannot prove pushed; refusing to move it onto pin e56773949369b3c9c726551566fa4a3e725f8237 or launch
+spawn exit=1
+=== stale-topic-reset: after spawn ===
+superproject HEAD=d3eda936d133e4393247388d487bfc89cf0a7aee recorded-pin=e56773949369b3c9c726551566fa4a3e725f8237
+parent status:
+ M ui
+child-HEAD=fde3b9e425433548400b767bf2b9615a5a25e479
+child status:
+child origin branches:
+refs/remotes/origin/HEAD e56773949369b3c9c726551566fa4a3e725f8237
+refs/remotes/origin/main e56773949369b3c9c726551566fa4a3e725f8237
+task metadata absent
+SCENARIO_RESULT stale-topic-reset pass
+A new version of treehouse is available: v2.3.0 → v3.1.2
+Run "treehouse update" to update
+
+🌳 Setting up worktree...
+🌳 Leased worktree at ~/.no-mistakes/worktrees/5f574e4d920c/01M4E2CNFR6HQA3KNXQJP9NDRB/.test-tmp/fm-lab.BEj6ya/treehouse/.treehouse/live-topic-7af0bf/1/live-topic. Run 'treehouse return ~/.no-mistakes/worktrees/5f574e4d920c/01M4E2CNFR6HQA3KNXQJP9NDRB/.test-tmp/fm-lab.BEj6ya/treehouse/.treehouse/live-topic-7af0bf/1/live-topic' to release it.
+A new version of treehouse is available: v2.3.0 → v3.1.2
+Run "treehouse update" to update
+
+🌳 Worktree returned to pool.
+
+=== live-topic: before spawn ===
+superproject HEAD=409dd87aa04da129cf0b7d432aa308979e140a2a recorded-pin=9bc2fc2df9499c86d9b64659cf126e67a26e5c1e
+parent status:
+ M ui
+child-HEAD=6634df7cd61e13d87d663c01ddd452c91cc49944
+child status:
+child origin branches:
+refs/remotes/origin/HEAD 9bc2fc2df9499c86d9b64659cf126e67a26e5c1e
+refs/remotes/origin/main 9bc2fc2df9499c86d9b64659cf126e67a26e5c1e
+refs/remotes/origin/topic 6634df7cd61e13d87d663c01ddd452c91cc49944
+$ FM_HOME=<disposable lab> bin/fm-spawn.sh probe-live-topic <fixture project> --scout --harness codex --backend tmux 
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /Users/andrewpynch/.no-mistakes/worktrees/5f574e4d920c/01M4E2CNFR6HQA3KNXQJP9NDRB/.test-tmp/fm-lab.BEj6ya
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+spawned probe-live-topic harness=codex kind=scout window=primary:fm-probe-live-topic worktree=/Users/andrewpynch/.no-mistakes/worktrees/5f574e4d920c/01M4E2CNFR6HQA3KNXQJP9NDRB/.test-tmp/fm-lab.BEj6ya/treehouse/.treehouse/live-topic-7af0bf/1/live-topic
+spawn exit=0
+=== live-topic: after spawn ===
+superproject HEAD=409dd87aa04da129cf0b7d432aa308979e140a2a recorded-pin=9bc2fc2df9499c86d9b64659cf126e67a26e5c1e
+parent status:
+child-HEAD=9bc2fc2df9499c86d9b64659cf126e67a26e5c1e
+child status:
+child origin branches:
+refs/remotes/origin/HEAD 9bc2fc2df9499c86d9b64659cf126e67a26e5c1e
+refs/remotes/origin/main 9bc2fc2df9499c86d9b64659cf126e67a26e5c1e
+refs/remotes/origin/topic 4bf80090db295f0dbd19ae66f451d93dfbb5fac4
+published task metadata:
+window=primary:fm-probe-live-topic
+worktree=/Users/andrewpynch/.no-mistakes/worktrees/5f574e4d920c/01M4E2CNFR6HQA3KNXQJP9NDRB/.test-tmp/fm-lab.BEj6ya/treehouse/.treehouse/live-topic-7af0bf/1/live-topic
+harness=codex
+kind=scout
+worker terminal:
+bash-5.3$ treehouse get
+A new version of treehouse is available: v2.3.0 → v3.1.2
+Run "treehouse update" to update
+
+🌳 Setting up worktree...
+🌳 Entered worktree at ~/.no-mistakes/worktrees/5f574e4d920c/01M4E2CNFR6HQA3KNXQ
+JP9NDRB/.test-tmp/fm-lab.BEj6ya/treehouse/.treehouse/live-topic-7af0bf/1/live-to
+pic. Type 'exit' to return.
+
+The default interactive shell is now zsh.
+To update your account to use zsh, please run `chsh -s /bin/zsh`.
+For more details, please visit https://support.apple.com/kb/HT208050.
+bash-3.2$ cd -- '/Users/andrewpynch/.no-mistakes/worktrees/5f574e4d920c/01M4E2CN
+FR6HQA3KNXQJP9NDRB/.test-tmp/fm-lab.BEj6ya/treehouse/.treehouse/live-topic-7af0b
+f/1/live-topic'
+bash-3.2$ export GOTMPDIR=/tmp/fm-probe-live-topic/gotmp
+bash-3.2$ export COMPACT_ADVISER_DISABLE=1
+bash-3.2$ export FM_TASK_ID=probe-live-topic
+bash-3.2$ . '/tmp/fm-probe-live-topic+887aaf339bc8214fc2103847a7d1e8b18d7dcfeea2
+12b5a82b4562b838d643cd/launch.s1791475193.27948.8659.sh'
+> You are in /Users/andrewpynch/.no-mistakes/worktrees/5f574e4d920c/01M4E2CNFR6H
+
+  Note: You’re in a subdirectory of a Git project. Trusting will apply to the
+  repository root:
+  /Users/andrewpynch/.no-mistakes/worktrees/5f574e4d920c/01M4E2CNFR6HQA3KNXQJP9N
+  DRB/.test-tmp/fm-lab.BEj6ya/projects/live-topic
+
+  Do you trust the contents of this directory? Working with untrusted contents
+  comes with higher risk of prompt injection. Trusting the directory allows
+  project-local config, hooks, and exec policies to load.
+
+› 1. Yes, continue
+  2. No, quit
+
+  Press enter to continue
+
+
+
+
+
+
+
+
+
+SCENARIO_RESULT live-topic pass
+A new version of treehouse is available: v2.3.0 → v3.1.2
+Run "treehouse update" to update
+
+🌳 Setting up worktree...
+🌳 Leased worktree at ~/.no-mistakes/worktrees/5f574e4d920c/01M4E2CNFR6HQA3KNXQJP9NDRB/.test-tmp/fm-lab.BEj6ya/treehouse/.treehouse/unique-commit-cf16b5/1/unique-commit. Run 'treehouse return ~/.no-mistakes/worktrees/5f574e4d920c/01M4E2CNFR6HQA3KNXQJP9NDRB/.test-tmp/fm-lab.BEj6ya/treehouse/.treehouse/unique-commit-cf16b5/1/unique-commit' to release it.
+A new version of treehouse is available: v2.3.0 → v3.1.2
+Run "treehouse update" to update
+
+🌳 Worktree returned to pool.
+
+=== unique-commit: before spawn ===
+superproject HEAD=6aaeef835600dd405b2e4ef11e9959c028c69fc4 recorded-pin=fbafb7b6682db304c513b01c766225cdfd18751d
+parent status:
+ M ui
+child-HEAD=ca4f8e145bf92a39d8e33fbed6556a14e7b1dc31
+child status:
+child origin branches:
+refs/remotes/origin/HEAD 1d23f106c1034f563fd9e4950eee01ee26b765c7
+refs/remotes/origin/main 1d23f106c1034f563fd9e4950eee01ee26b765c7
+$ FM_HOME=<disposable lab> bin/fm-spawn.sh probe-unique-commit <fixture project> --scout --harness codex --backend tmux 
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /Users/andrewpynch/.no-mistakes/worktrees/5f574e4d920c/01M4E2CNFR6HQA3KNXQJP9NDRB/.test-tmp/fm-lab.BEj6ya
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+error: submodule 'ui' in pooled worktree '/Users/andrewpynch/.no-mistakes/worktrees/5f574e4d920c/01M4E2CNFR6HQA3KNXQJP9NDRB/.test-tmp/fm-lab.BEj6ya/treehouse/.treehouse/unique-commit-cf16b5/1/unique-commit' holds a commit a fresh fetch of its origin cannot prove pushed
+error: pooled worktree '/Users/andrewpynch/.no-mistakes/worktrees/5f574e4d920c/01M4E2CNFR6HQA3KNXQJP9NDRB/.test-tmp/fm-lab.BEj6ya/treehouse/.treehouse/unique-commit-cf16b5/1/unique-commit' is not clean; refusing to discard uncommitted work while refreshing its base
+spawn exit=1
+=== unique-commit: after spawn ===
+superproject HEAD=6aaeef835600dd405b2e4ef11e9959c028c69fc4 recorded-pin=fbafb7b6682db304c513b01c766225cdfd18751d
+parent status:
+ M ui
+child-HEAD=ca4f8e145bf92a39d8e33fbed6556a14e7b1dc31
+child status:
+child origin branches:
+refs/remotes/origin/HEAD fbafb7b6682db304c513b01c766225cdfd18751d
+refs/remotes/origin/main fbafb7b6682db304c513b01c766225cdfd18751d
+task metadata absent
+SCENARIO_RESULT unique-commit pass
+A new version of treehouse is available: v2.3.0 → v3.1.2
+Run "treehouse update" to update
+
+🌳 Setting up worktree...
+🌳 Leased worktree at ~/.no-mistakes/worktrees/5f574e4d920c/01M4E2CNFR6HQA3KNXQJP9NDRB/.test-tmp/fm-lab.BEj6ya/treehouse/.treehouse/mirror-only-e0b068/1/mirror-only. Run 'treehouse return ~/.no-mistakes/worktrees/5f574e4d920c/01M4E2CNFR6HQA3KNXQJP9NDRB/.test-tmp/fm-lab.BEj6ya/treehouse/.treehouse/mirror-only-e0b068/1/mirror-only' to release it.
+A new version of treehouse is available: v2.3.0 → v3.1.2
+Run "treehouse update" to update
+
+🌳 Worktree returned to pool.
+
+=== mirror-only: before spawn ===
+superproject HEAD=88c6966926436a7ac8adffb0b7caf11bbb0e6748 recorded-pin=aaab38e2a500c52731ef941b18acb3f667bbba6a
+parent status:
+ M ui
+child-HEAD=dd2ac440718c28e5cebe3d6e37a41a4a9759eb63
+child status:
+child origin branches:
+refs/remotes/origin/HEAD dbd5c0e2588010f3fecd17d0873abc5e3491ac58
+refs/remotes/origin/main dbd5c0e2588010f3fecd17d0873abc5e3491ac58
+$ FM_HOME=<disposable lab> bin/fm-spawn.sh probe-mirror-only <fixture project> --scout --harness codex --backend tmux 
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /Users/andrewpynch/.no-mistakes/worktrees/5f574e4d920c/01M4E2CNFR6HQA3KNXQJP9NDRB/.test-tmp/fm-lab.BEj6ya
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+error: submodule 'ui' in pooled worktree '/Users/andrewpynch/.no-mistakes/worktrees/5f574e4d920c/01M4E2CNFR6HQA3KNXQJP9NDRB/.test-tmp/fm-lab.BEj6ya/treehouse/.treehouse/mirror-only-e0b068/1/mirror-only' holds a commit a fresh fetch of its origin cannot prove pushed
+error: pooled worktree '/Users/andrewpynch/.no-mistakes/worktrees/5f574e4d920c/01M4E2CNFR6HQA3KNXQJP9NDRB/.test-tmp/fm-lab.BEj6ya/treehouse/.treehouse/mirror-only-e0b068/1/mirror-only' is not clean; refusing to discard uncommitted work while refreshing its base
+spawn exit=1
+=== mirror-only: after spawn ===
+superproject HEAD=88c6966926436a7ac8adffb0b7caf11bbb0e6748 recorded-pin=aaab38e2a500c52731ef941b18acb3f667bbba6a
+parent status:
+ M ui
+child-HEAD=dd2ac440718c28e5cebe3d6e37a41a4a9759eb63
+child status:
+child origin branches:
+refs/remotes/origin/HEAD aaab38e2a500c52731ef941b18acb3f667bbba6a
+refs/remotes/origin/main aaab38e2a500c52731ef941b18acb3f667bbba6a
+task metadata absent
+SCENARIO_RESULT mirror-only pass
+A new version of treehouse is available: v2.3.0 → v3.1.2
+Run "treehouse update" to update
+
+🌳 Setting up worktree...
+🌳 Leased worktree at ~/.no-mistakes/worktrees/5f574e4d920c/01M4E2CNFR6HQA3KNXQJP9NDRB/.test-tmp/fm-lab.BEj6ya/treehouse/.treehouse/dirty-child-1a0025/1/dirty-child. Run 'treehouse return ~/.no-mistakes/worktrees/5f574e4d920c/01M4E2CNFR6HQA3KNXQJP9NDRB/.test-tmp/fm-lab.BEj6ya/treehouse/.treehouse/dirty-child-1a0025/1/dirty-child' to release it.
+A new version of treehouse is available: v2.3.0 → v3.1.2
+Run "treehouse update" to update
+
+🌳 Worktree returned to pool.
+
+=== dirty-child: before spawn ===
+superproject HEAD=748ce46c4db9a11e22944bbef87cbe196a75e390 recorded-pin=caa4b7e2c1f642eee0a00452d065f3e0e243b594
+parent status:
+ M ui
+child-HEAD=124fde706794d336f90d50093359d9d0af99ea50
+child status:
+?? keep.txt
+child origin branches:
+refs/remotes/origin/HEAD 124fde706794d336f90d50093359d9d0af99ea50
+refs/remotes/origin/main 124fde706794d336f90d50093359d9d0af99ea50
+$ FM_HOME=<disposable lab> bin/fm-spawn.sh probe-dirty-child <fixture project> --scout --harness codex --backend tmux 
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /Users/andrewpynch/.no-mistakes/worktrees/5f574e4d920c/01M4E2CNFR6HQA3KNXQJP9NDRB/.test-tmp/fm-lab.BEj6ya
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+error: pooled worktree '/Users/andrewpynch/.no-mistakes/worktrees/5f574e4d920c/01M4E2CNFR6HQA3KNXQJP9NDRB/.test-tmp/fm-lab.BEj6ya/treehouse/.treehouse/dirty-child-1a0025/1/dirty-child' is not clean; refusing to discard uncommitted work while refreshing its base
+spawn exit=1
+=== dirty-child: after spawn ===
+superproject HEAD=748ce46c4db9a11e22944bbef87cbe196a75e390 recorded-pin=caa4b7e2c1f642eee0a00452d065f3e0e243b594
+parent status:
+ M ui
+child-HEAD=124fde706794d336f90d50093359d9d0af99ea50
+child status:
+?? keep.txt
+child origin branches:
+refs/remotes/origin/HEAD 124fde706794d336f90d50093359d9d0af99ea50
+refs/remotes/origin/main 124fde706794d336f90d50093359d9d0af99ea50
+task metadata absent
+SCENARIO_RESULT dirty-child pass
+A new version of treehouse is available: v2.3.0 → v3.1.2
+Run "treehouse update" to update
+
+🌳 Setting up worktree...
+🌳 Leased worktree at ~/.no-mistakes/worktrees/5f574e4d920c/01M4E2CNFR6HQA3KNXQJP9NDRB/.test-tmp/fm-lab.BEj6ya/treehouse/.treehouse/failed-fetch-3bcb17/1/failed-fetch. Run 'treehouse return ~/.no-mistakes/worktrees/5f574e4d920c/01M4E2CNFR6HQA3KNXQJP9NDRB/.test-tmp/fm-lab.BEj6ya/treehouse/.treehouse/failed-fetch-3bcb17/1/failed-fetch' to release it.
+A new version of treehouse is available: v2.3.0 → v3.1.2
+Run "treehouse update" to update
+
+🌳 Worktree returned to pool.
+
+=== failed-fetch: before spawn ===
+superproject HEAD=d35f9056bc87663a574ff1a82e36609c7af24a92 recorded-pin=e34a4a42ab863c652b9c4869e86de9830593af56
+parent status:
+ M ui
+child-HEAD=c82c181a5b1b07b707dae780f66d8f8c059484b5
+child status:
+child origin branches:
+refs/remotes/origin/HEAD c82c181a5b1b07b707dae780f66d8f8c059484b5
+refs/remotes/origin/main c82c181a5b1b07b707dae780f66d8f8c059484b5
+$ FM_HOME=<disposable lab> bin/fm-spawn.sh probe-failed-fetch <fixture project> --scout --harness codex --backend tmux 
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /Users/andrewpynch/.no-mistakes/worktrees/5f574e4d920c/01M4E2CNFR6HQA3KNXQJP9NDRB/.test-tmp/fm-lab.BEj6ya
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+error: submodule 'ui' in pooled worktree '/Users/andrewpynch/.no-mistakes/worktrees/5f574e4d920c/01M4E2CNFR6HQA3KNXQJP9NDRB/.test-tmp/fm-lab.BEj6ya/treehouse/.treehouse/failed-fetch-3bcb17/1/failed-fetch' holds a commit a fresh fetch of its origin cannot prove pushed
+error: pooled worktree '/Users/andrewpynch/.no-mistakes/worktrees/5f574e4d920c/01M4E2CNFR6HQA3KNXQJP9NDRB/.test-tmp/fm-lab.BEj6ya/treehouse/.treehouse/failed-fetch-3bcb17/1/failed-fetch' is not clean; refusing to discard uncommitted work while refreshing its base
+spawn exit=1
+=== failed-fetch: after spawn ===
+superproject HEAD=d35f9056bc87663a574ff1a82e36609c7af24a92 recorded-pin=e34a4a42ab863c652b9c4869e86de9830593af56
+parent status:
+ M ui
+child-HEAD=c82c181a5b1b07b707dae780f66d8f8c059484b5
+child status:
+child origin branches:
+refs/remotes/origin/HEAD c82c181a5b1b07b707dae780f66d8f8c059484b5
+refs/remotes/origin/main c82c181a5b1b07b707dae780f66d8f8c059484b5
+task metadata absent
+SCENARIO_RESULT failed-fetch pass
+A new version of treehouse is available: v2.3.0 → v3.1.2
+Run "treehouse update" to update
+
+🌳 Setting up worktree...
+🌳 Leased worktree at ~/.no-mistakes/worktrees/5f574e4d920c/01M4E2CNFR6HQA3KNXQJP9NDRB/.test-tmp/fm-lab.BEj6ya/treehouse/.treehouse/missing-pin-3a0e6e/1/missing-pin. Run 'treehouse return ~/.no-mistakes/worktrees/5f574e4d920c/01M4E2CNFR6HQA3KNXQJP9NDRB/.test-tmp/fm-lab.BEj6ya/treehouse/.treehouse/missing-pin-3a0e6e/1/missing-pin' to release it.
+A new version of treehouse is available: v2.3.0 → v3.1.2
+Run "treehouse update" to update
+
+🌳 Worktree returned to pool.
+
+=== missing-pin: before spawn ===
+superproject HEAD=08badfa4574433746c973d27662ad254a48f8903 recorded-pin=9bc88e236d4ead2b77476671544909212b02d3b6
+parent status:
+ M ui
+child-HEAD=1421c229ad81251f36134ab012f40cf17c67c852
+child status:
+child origin branches:
+refs/remotes/origin/HEAD 1421c229ad81251f36134ab012f40cf17c67c852
+refs/remotes/origin/main 1421c229ad81251f36134ab012f40cf17c67c852
+$ FM_HOME=<disposable lab> bin/fm-spawn.sh probe-missing-pin <fixture project> --scout --harness codex --backend tmux 
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /Users/andrewpynch/.no-mistakes/worktrees/5f574e4d920c/01M4E2CNFR6HQA3KNXQJP9NDRB/.test-tmp/fm-lab.BEj6ya
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+error: could not check out pin 318a6bdcf63e6286b167338d74478bd7880d15ea for submodule 'ui' in pooled worktree '/Users/andrewpynch/.no-mistakes/worktrees/5f574e4d920c/01M4E2CNFR6HQA3KNXQJP9NDRB/.test-tmp/fm-lab.BEj6ya/treehouse/.treehouse/missing-pin-3a0e6e/1/missing-pin'; refusing to launch
+spawn exit=1
+=== missing-pin: after spawn ===
+superproject HEAD=2c5393d3e1696ec640f958f17941b3029393e3b7 recorded-pin=318a6bdcf63e6286b167338d74478bd7880d15ea
+parent status:
+ M ui
+child-HEAD=1421c229ad81251f36134ab012f40cf17c67c852
+child status:
+child origin branches:
+refs/remotes/origin/HEAD 9bc88e236d4ead2b77476671544909212b02d3b6
+refs/remotes/origin/main 9bc88e236d4ead2b77476671544909212b02d3b6
+task metadata absent
+SCENARIO_RESULT missing-pin pass
+A new version of treehouse is available: v2.3.0 → v3.1.2
+Run "treehouse update" to update
+
+🌳 Setting up worktree...
+🌳 Leased worktree at ~/.no-mistakes/worktrees/5f574e4d920c/01M4E2CNFR6HQA3KNXQJP9NDRB/.test-tmp/fm-lab.BEj6ya/treehouse/.treehouse/uninitialized-5b0799/1/uninitialized. Run 'treehouse return ~/.no-mistakes/worktrees/5f574e4d920c/01M4E2CNFR6HQA3KNXQJP9NDRB/.test-tmp/fm-lab.BEj6ya/treehouse/.treehouse/uninitialized-5b0799/1/uninitialized' to release it.
+A new version of treehouse is available: v2.3.0 → v3.1.2
+Run "treehouse update" to update
+
+🌳 Worktree returned to pool.
+
+=== uninitialized: before spawn ===
+superproject HEAD=1d56262832f176cdb505c46bbb045d0c1df49480 recorded-pin=7fa555c1fffeb8e20f4124830edc083e39a7ec21
+parent status:
+child remains uninitialized (ui/.git absent)
+$ FM_HOME=<disposable lab> bin/fm-spawn.sh probe-uninitialized <fixture project> --scout --harness codex --backend tmux 
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /Users/andrewpynch/.no-mistakes/worktrees/5f574e4d920c/01M4E2CNFR6HQA3KNXQJP9NDRB/.test-tmp/fm-lab.BEj6ya
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+spawned probe-uninitialized harness=codex kind=scout window=primary:fm-probe-uninitialized worktree=/Users/andrewpynch/.no-mistakes/worktrees/5f574e4d920c/01M4E2CNFR6HQA3KNXQJP9NDRB/.test-tmp/fm-lab.BEj6ya/treehouse/.treehouse/uninitialized-5b0799/1/uninitialized
+spawn exit=0
+=== uninitialized: after spawn ===
+superproject HEAD=1177d37c14e89362efd018210397266419491b2b recorded-pin=59b8cee3abc1b7d85d0086c1d40b2c542a0f2a2d
+parent status:
+child remains uninitialized (ui/.git absent)
+published task metadata:
+window=primary:fm-probe-uninitialized
+worktree=/Users/andrewpynch/.no-mistakes/worktrees/5f574e4d920c/01M4E2CNFR6HQA3KNXQJP9NDRB/.test-tmp/fm-lab.BEj6ya/treehouse/.treehouse/uninitialized-5b0799/1/uninitialized
+harness=codex
+kind=scout
+worker terminal:
+bash-5.3$ treehouse get
+A new version of treehouse is available: v2.3.0 → v3.1.2
+Run "treehouse update" to update
+
+🌳 Setting up worktree...
+🌳 Entered worktree at ~/.no-mistakes/worktrees/5f574e4d920c/01M4E2CNFR6HQA3KNXQ
+JP9NDRB/.test-tmp/fm-lab.BEj6ya/treehouse/.treehouse/uninitialized-5b0799/1/unin
+itialized. Type 'exit' to return.
+
+The default interactive shell is now zsh.
+To update your account to use zsh, please run `chsh -s /bin/zsh`.
+For more details, please visit https://support.apple.com/kb/HT208050.
+bash-3.2$ cd -- '/Users/andrewpynch/.no-mistakes/worktrees/5f574e4d920c/01M4E2CN
+FR6HQA3KNXQJP9NDRB/.test-tmp/fm-lab.BEj6ya/treehouse/.treehouse/uninitialized-5b
+0799/1/uninitialized'
+bash-3.2$ export GOTMPDIR=/tmp/fm-probe-uninitialized/gotmp
+bash-3.2$ export COMPACT_ADVISER_DISABLE=1
+bash-3.2$ export FM_TASK_ID=probe-uninitialized
+bash-3.2$ . '/tmp/fm-probe-uninitialized+887aaf339bc8214fc2103847a7d1e8b18d7dcfe
+ea212b5a82b4562b838d643cd/launch.s1791475220.45919.27702.sh'
+> You are in /Users/andrewpynch/.no-mistakes/worktrees/5f574e4d920c/01M4E2CNFR6H
+
+  Note: You’re in a subdirectory of a Git project. Trusting will apply to the
+  repository root:
+  /Users/andrewpynch/.no-mistakes/worktrees/5f574e4d920c/01M4E2CNFR6HQA3KNXQJP9N
+  DRB/.test-tmp/fm-lab.BEj6ya/projects/uninitialized
+
+  Do you trust the contents of this directory? Working with untrusted contents
+  comes with higher risk of prompt injection. Trusting the directory allows
+  project-local config, hooks, and exec policies to load.
+
+› 1. Yes, continue
+  2. No, quit
+
+  Press enter to continue
+
+
+
+
+
+
+
+
+
+SCENARIO_RESULT uninitialized pass
+
+Lab cleanup: private tmux server only; disposable home and fixture repositories removed on exit.

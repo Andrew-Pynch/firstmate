@@ -117,6 +117,9 @@ case "${1:-} ${2:-}" in
   "api graphql")
     printf '%s\n' 'state=MERGED' 'merged=true' 'queued=false' 'base=main'
     ;;
+  api\ *)
+    [ "${3:-} ${4:-}" != '--jq .default_branch' ] || printf 'main\n'
+    ;;
 esac
 SH
   cat > "$home/fakebin/gh-axi" <<'SH'

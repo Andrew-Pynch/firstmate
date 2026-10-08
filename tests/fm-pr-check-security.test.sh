@@ -149,6 +149,10 @@ SH
   cat > "$fakebin/gh" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$FM_TEST_GH_LOG"
+if [ "${1:-}" = api ] && [ "${3:-} ${4:-}" = '--jq .default_branch' ]; then
+  printf 'main\n'
+  exit 0
+fi
 case "${1:-} ${2:-}" in
   "api graphql")
     printf '%s\n' \

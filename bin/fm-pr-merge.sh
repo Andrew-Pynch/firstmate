@@ -13,6 +13,10 @@
 # is open, not a draft, mergeable, free of conflicts, and every unwaived check
 # is green at the exact current head commit, where github_checks_not_green below
 # owns what makes a check green and judges each one by its current run.
+# The base must match the repository's live default branch, read through
+# `gh api repos/<owner>/<repo> --jq .default_branch`, unless --allow-base <name>
+# explicitly selects a different base. An unreadable default refuses the merge;
+# an explicit base must match exactly and never weakens the head or check guards.
 # Every failing condition is reported, not
 # just the first. The verified head is then passed to gh as
 # --match-head-commit, so a push that lands between that read and the merge
@@ -100,7 +104,7 @@
 # explicit captain instruction and never skips the live green check, the
 # away-record read, or a captain hold.
 #
-# Usage: fm-pr-merge.sh <task-id> <pr-url> [--attended-override] [--allow-red <check-name>] [-- <extra forge merge args>]
+# Usage: fm-pr-merge.sh <task-id> <pr-url> [--attended-override] [--allow-red <check-name>] [--allow-base <name>] [-- <extra forge merge args>]
 #
 # On GitLab, this script confirms the MR is actually merged before reporting it;
 # an auto-merge-queued or unconfirmed request leaves the poll armed and records
@@ -149,6 +153,7 @@ PROJECT_URL="https://$FM_PR_HOST/$FM_PR_PATH"
 shift 2
 ATTENDED_OVERRIDE=false
 ALLOW_RED=()
+ALLOW_BASE=
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --attended-override)
@@ -169,12 +174,26 @@ while [ "$#" -gt 0 ]; do
       echo "error: --allow-red requires a separate check name argument" >&2
       exit 2
       ;;
+    --allow-base)
+      [ -n "${2:-}" ] || { echo "error: --allow-base requires a base name" >&2; exit 2; }
+      [ -z "$ALLOW_BASE" ] || { echo "error: --allow-base may be specified only once" >&2; exit 2; }
+      ALLOW_BASE=$2
+      shift 2
+      ;;
+    --allow-base=*)
+      echo "error: --allow-base requires a separate base name argument" >&2
+      exit 2
+      ;;
     --) shift; break ;;
     *) break ;;
   esac
 done
 if [ "${#ALLOW_RED[@]}" -gt 0 ] && [ "$PROVIDER" = gitlab ]; then
   echo "error: --allow-red does not apply to GitLab, where a merge already requires the head pipeline to have succeeded" >&2
+  exit 2
+fi
+if [ -n "$ALLOW_BASE" ] && [ "$PROVIDER" = gitlab ]; then
+  echo "error: --allow-base does not apply to GitLab" >&2
   exit 2
 fi
 
@@ -572,7 +591,7 @@ github_checks_not_green() {
 # Pre-merge conditions for a GitHub pull request, read from one live view.
 # Sets FM_PR_MERGE_HEAD to the verified head on success.
 github_verify_mergeable() {
-  local json fields line red name covered
+  local json fields line red name covered expected_base
   local total=0 named=0 refusals=''
   local state='' draft='' mergeable='' merge_state='' live_head='' base=''
 
@@ -612,6 +631,18 @@ FIELDS
     echo "error: could not read the GitHub pull request state before merging" >&2
     return 1
   fi
+  expected_base=$ALLOW_BASE
+  if [ -z "$expected_base" ]; then
+    if ! expected_base=$(gh api "repos/$PR_OWNER/$PR_REPO" --jq .default_branch 2>/dev/null) \
+      || [ -z "$expected_base" ] || [ "$expected_base" = null ]; then
+      echo "error: could not read the GitHub repository default base branch before merging" >&2
+      return 1
+    fi
+  fi
+  if ! git check-ref-format "refs/heads/$expected_base" >/dev/null 2>&1; then
+    echo "error: GitHub merge base is not a valid branch name" >&2
+    return 1
+  fi
 
   draft=$(fm_pr_json_draft_state "$json")
   if ! fm_pr_head_valid "$live_head"; then
@@ -638,6 +669,9 @@ FIELDS
 "
   [ "$merge_state" != DIRTY ] \
     || refusals="$refusals  - mergeStateStatus is DIRTY (conflicts)
+"
+  [ "$base" = "$expected_base" ] \
+    || refusals="$refusals  - base is \"$base\", not expected \"$expected_base\"; use --allow-base <name> to select a non-default base explicitly
 "
 
   uncovered=''

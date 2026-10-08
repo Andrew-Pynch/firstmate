@@ -48,6 +48,14 @@
 # keyboard hints are hidden, and type and tap targets grow to phone size. The
 # page writes manifest.json and its icons beside itself, so Add to Home Screen
 # opens it as a standalone app.
+# Task documents: every item tied to a task (a need's task and who, a held call,
+# a worker, a Done record) lists that task's worker documents in its inspector.
+# They are each data/<task>/*.md except brief.md and launch-brief.md, plus any
+# .md under data/ that the task's status log names in a report=, plan= or
+# review= key, rendered with bin/fm_md.py beside the page as <task>-<name>.html;
+# the six most recently changed show, and a page is re-rendered only when its
+# source is newer. A source that looks like it holds a credential is neither
+# rendered nor linked, and its old page is removed.
 # Answers: with answers_origin set (bin/fm-current-answers.sh's header), every
 # captain call (Needs you and Held calls) carries its options as buttons - the
 # curated "options", else lettered choices, yes/no, merge/close, or

@@ -47,6 +47,10 @@ PARKED_VERBS = {"paused", "done", "failed"}
 LINE_RE = re.compile(r"^\s*([A-Za-z][\w-]*)((?:\s*\[[^\]]*\])*)\s*:?\s*(.*)$", re.S)
 AT_RE = re.compile(r"\[at=(\d+)\]")
 PR_RE = re.compile(r"https://github\.com/[\w.-]+/[\w.-]+/pull/\d+")
+DOC_SKIP = {"brief.md", "launch-brief.md"}
+DOC_LIMIT = 6
+DOC_KEY_RE = re.compile(r"\b(?:report|plan|review)=(\S+?\.md)\b")
+SECRET_RE = re.compile(r"gh[opsu]_[A-Za-z0-9]{20,}|AKIA[A-Z0-9]{16}|xox[abp]-[A-Za-z0-9-]{10,}|BEGIN [A-Z ]*PRIVATE KEY|sk-[A-Za-z0-9_-]{20,}")
 e = html.escape
 
 
@@ -692,7 +696,7 @@ def completions(cur, merged, done, rows, repos, viewer, now):
         row = by_task.get(task, {})
         url = linked or str(ticket.get("url") or "") or (links[0] if links else "")
         item = {"title": cur["why"].get(task) or plain_words(re.sub(r"^Done:\s*", "", title), 120) or task,
-                "match_title": title + " " + task, "url": url if url.startswith("https://") else "",
+                "match_title": title + " " + task, "url": url if url.startswith("https://") else "", "task": task,
                 "projects": row.get("projects") or [ticket.get("project_token") or ticket.get("repo") or ""],
                 "linear_project": ticket.get("linear_project") or row.get("linear_project", ""),
                 "ts": ts, "date_only": date_only, "closed": closed[:10],
@@ -716,6 +720,68 @@ def completions(cur, merged, done, rows, repos, viewer, now):
     return items, others
 
 
+def task_docs(task, page_dir, cache):
+    """The task's worker documents rendered beside the page as <task>-<name>.html: (name, href) pairs.
+
+    Sources: every data/<task>/*.md except the briefs, plus any .md under data/ that the task's status log
+    names in a report=, plan= or review= key. Only the DOC_LIMIT most recently changed are rendered and
+    linked. A page is re-rendered only when its source is newer, and a source that looks like it holds a
+    secret is neither rendered nor linked.
+    """
+    if not task or not re.fullmatch(r"[\w.-]+", task):
+        return []
+    if task in cache:
+        return cache[task]
+    srcs = {}
+    own = os.path.join(DATA, task)
+    try:
+        for name in sorted(os.listdir(own)):
+            if name.endswith(".md") and name not in DOC_SKIP:
+                srcs[os.path.join(own, name)] = name[:-3]
+    except OSError:
+        pass
+    try:
+        with open(os.path.join(STATE, task + ".status"), encoding="utf-8", errors="replace") as fh:
+            named = DOC_KEY_RE.findall(fh.read())
+    except OSError:
+        named = []
+    data_root = os.path.realpath(DATA) + os.sep
+    for ref in named:
+        path = os.path.realpath(ref if os.path.isabs(ref) else os.path.join(HOME, ref))
+        if path.startswith(data_root) and os.path.basename(path) not in DOC_SKIP and path not in srcs:
+            parent = os.path.basename(os.path.dirname(path))
+            srcs[path] = os.path.basename(path)[:-3] if parent == task else f"{parent}-{os.path.basename(path)[:-3]}"
+    out = []
+    newest = sorted(srcs, key=lambda p: os.path.getmtime(p) if os.path.exists(p) else 0, reverse=True)
+    for src in newest[:DOC_LIMIT]:
+        name = srcs[src]
+        page = f"{task}-{name}.html"
+        target = os.path.join(page_dir, page)
+        try:
+            stale = not os.path.exists(target) or os.path.getmtime(src) > os.path.getmtime(target)
+            if stale:
+                with open(src, encoding="utf-8", errors="replace") as fh:
+                    text = fh.read()
+                if SECRET_RE.search(text):
+                    if os.path.exists(target):
+                        os.remove(target)
+                    continue
+                fm_md.write_atomic(target, fm_md.page(text))
+        except OSError:
+            continue
+        out.append((name, page))
+    cache[task] = out
+    return out
+
+
+def docs_line(pairs):
+    """The inspector line linking a task's rendered documents, or '' when it has none."""
+    if not pairs:
+        return ""
+    return ('<p class="docs"><span class="lbl">Docs</span> '
+            + " ".join(f'<a href="{e(href)}" target="_blank" rel="noopener">{e(name)} &#8599;</a>' for name, href in pairs) + "</p>")
+
+
 def item_div(key, row, det, href="", task="", cls=""):
     """One selectable pane item: a one-line row, plus the inspector body the page script shows while it is selected."""
     attrs = f' data-key="{e(key)}"' + (f' data-task="{e(task)}"' if task else "") + (f' data-href="{e(href)}"' if href else "")
@@ -734,7 +800,8 @@ def done_div(item, now, initiative):
     row = f'<span class="mk"></span><span class="t">{e(clip(item["title"], 140))}</span><span class="m">{e(label)}</span>'
     det = (f'<h2>{e(item["title"])}</h2>{chips("done " + when, e(initiative))}'
            + (f'<div class="acts"><a class="go" href="{e(url)}">Open {e(label)}</a></div>' if url else
-              '<p class="k">No link recorded for this one.</p>'))
+              "" if item.get("docs") else '<p class="k">No link recorded for this one.</p>')
+           + item.get("docs", ""))
     return item_div("done:" + (url or item["title"]), row, det, href=url)
 
 
@@ -812,6 +879,7 @@ letter-spacing:.2em;color:var(--data);text-shadow:0 0 18px rgba(0,221,170,.6);an
 .chip.alert{border-color:var(--alert);color:var(--alert)}.chip code{border:0;background:none;padding:0}
 .why{font-size:14.5px;line-height:1.6;margin:0 0 12px;overflow-wrap:anywhere}
 .acts{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:12px 0}
+.docs{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:baseline;margin:12px 0 4px;font:13px var(--mono)}.docs .lbl{margin-right:2px}
 a.go{background:var(--acc);color:#0a0a0f;font:700 12px var(--mono);letter-spacing:.1em;text-transform:uppercase;padding:6px 12px;border-radius:var(--r);box-shadow:var(--glow)}
 a.go::before{content:"\\23CE  "}a.go:hover{text-decoration:none;filter:brightness(1.15)}
 .do{font-size:14px;overflow-wrap:anywhere;flex-basis:100%}
@@ -1076,6 +1144,11 @@ def render(paths, reason):
         return "heat1" if asked is None or now - asked < 7200 else "heat2" if now - asked < 28800 else "heat3"
 
     decisions = {}
+    page_dir = os.path.dirname(os.path.abspath(paths["out"]))
+    doc_cache = {}
+
+    def docs(*tasks):
+        return docs_line([p for t in dict.fromkeys(t for t in tasks if t) for p in task_docs(t, page_dir, doc_cache)])
 
     def answer_for(task, title, text, options, rec):
         """Register one answerable decision for the answer endpoint and return its buttons; '' when answers are off."""
@@ -1101,7 +1174,8 @@ def render(paths, reason):
         det = (f'<h2>{e(str(n["t"]))}</h2>'
                + chips(age(asked, now, "asked "), e(str(host)), e(who) if who != task else "", f"<code>{e(task)}</code>" if task else "",
                        f'not re-checked · {age(checked, now, "checked ")}' if stale else "")
-               + f'<div class="why">{fm_md.inline(str(n.get("why", "")))}</div>{need_actions(n, bool(ans))}{ans}')
+               + f'<div class="why">{fm_md.inline(str(n.get("why", "")))}</div>{need_actions(n, bool(ans))}{ans}'
+               + docs(task, who))
         return item_div("need:" + (task or str(n["t"])), row, det, href=link if re.match(r"https?://", link) else "",
                         task=task, cls=heat(asked) + (" dim" if stale else ""))
     needs_now, needs_stale, curated_tasks, asks = [], [], set(), []
@@ -1137,7 +1211,7 @@ def render(paths, reason):
         row = f'<span class="mk"></span><span class="t">{e(title)}</span><span class="m">{until or age(c["asked"], now)}</span>'
         det = (f"<h2>{e(title)}</h2>" + chips(age(c["asked"], now, "asked "), note, until, f'<code>{e(c["id"])}</code>')
                + f'<div class="why">{linked_words(reason, 260)}</div>'
-               + (ans or '<p class="k">Answer it by telling Main.</p>'))
+               + (ans or '<p class="k">Answer it by telling Main.</p>') + docs(c["id"]))
         return item_div("call:" + c["id"], row, det, href=fm_md.first_url(re.sub(r"\S*data/\S+", "", reason)), task=c["id"],
                         cls=cls or heat(c["asked"]))
     for c in fresh_calls:
@@ -1156,7 +1230,7 @@ def render(paths, reason):
             ('<span class="tag">paused</span>' if r["verb"] == "paused" else "")
         row = f'<span class="mk"></span><span class="t">{e(r["title"])}</span><span class="m">{age(as_of, now)}</span>'
         det = (f'<h2>{e(r["title"])}</h2>' + chips(pr, e(r["host"]), age(as_of, now, "said "), f'<code>{e(r["task"])}</code>')
-               + f'<div class="st">{tags}{e(text)}</div>')
+               + f'<div class="st">{tags}{e(text)}</div>' + docs(r["task"]))
         cls = "dim" if r["verb"] in PARKED_VERBS else "heat2" if r["task"] in open_by_task else "heat1"
         return item_div("run:" + r["task"], row, det, href=r["pr"], task=r["task"], cls=cls)
     shown = [r for r in rows if r["task"] not in cur["hide"]]
@@ -1169,6 +1243,8 @@ def render(paths, reason):
     # Done today, by initiative. Older work and other people's merges live in Linear and GitHub.
     items, _others = completions(cur, merged, done, rows, repos, viewer, now)
     done_today = [x for x in items if x["today"]]
+    for x in done_today:
+        x["docs"] = docs(x.get("task", ""))
 
     banners = []
     if cur["error"]:
@@ -1213,7 +1289,6 @@ def render(paths, reason):
         f'<a class="win" href="{e(str(w["url"]))}" target="_blank" rel="noopener"><b>{e(str(w["t"]))}</b>'
         f'<span class="why">{e(str(w.get("why", "")))}</span>'
         f'<span class="m">{e(str(w.get("kind") or fm_md.link_label(str(w["url"]))))} &#8599;</span></a>' for w in cur["wins"])
-    page_dir = os.path.dirname(os.path.abspath(paths["out"]))
     write_pwa_assets(page_dir, os.path.basename(paths["out"]))
     page = (
         f'<!doctype html><html lang="en"><head><meta charset="utf-8"><title>{f"({len(needs_now)}) " if needs_now else ""}Current</title>'

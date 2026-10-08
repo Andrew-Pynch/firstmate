@@ -143,6 +143,40 @@ assert_contains "$(page_part second-mates)" 'the far box needs a <b>disk</b> dec
 assert_not_contains "$page" '<b>disk</b>' "status text is escaped"
 pass "Running shows live workers in plain words with their PR"
 
+# Task documents: a worker's own report and plan, a doc its status names, never its brief or a secret-shaped file.
+mkdir -p "$HOME_DIR/data/alpha-fix" "$HOME_DIR/data/shared-notes"
+printf '# Alpha report\n\n## Findings\n\n- the banner **color** is picked\n' > "$HOME_DIR/data/alpha-fix/report.md"
+printf '# Alpha plan\n\nStep one.\n' > "$HOME_DIR/data/alpha-fix/plan.md"
+printf '# Brief\n' > "$HOME_DIR/data/alpha-fix/brief.md"
+printf '# Leak\n\ntoken ghp_%s\n' "abcdefghijklmnopqrstuvwxyz0123" > "$HOME_DIR/data/alpha-fix/leak.md"
+printf '# Shared review\n' > "$HOME_DIR/data/shared-notes/review.md"
+printf '# Outside\n' > "$TMP_ROOT/outside.md"
+printf 'note [at=%s]: review=data/shared-notes/review.md report=%s/outside.md\n' $((now - 290)) "$TMP_ROOT" >> "$STATE/alpha-fix.status"
+"$ROOT/bin/fm-current-page.sh" >/dev/null
+running=$(page_part running-now)
+assert_contains "$running" 'href=alpha-fix-report.html report' "a worker's report is linked from its row"
+assert_contains "$running" 'href=alpha-fix-plan.html plan' "a worker's plan is linked from its row"
+assert_contains "$running" 'href=alpha-fix-shared-notes-review.html' "a doc named in the status log is linked"
+assert_not_contains "$running" 'brief' "the brief is not a worker document"
+assert_not_contains "$running" 'leak' "a secret-shaped document is not linked"
+assert_not_contains "$running" 'outside' "a status key pointing outside data/ is ignored"
+[ ! -e "$HOME_DIR/data/page/alpha-fix-leak.html" ] || fail "a secret-shaped document was rendered"
+[ ! -e "$HOME_DIR/data/page/alpha-fix-outside.html" ] || fail "a document outside data/ was rendered"
+report_page=$(cat "$HOME_DIR/data/page/alpha-fix-report.html")
+assert_contains "$report_page" '<h2' "the report renders its headings"
+assert_contains "$report_page" '<strong>color</strong>' "the report renders inline Markdown"
+printf '# Alpha report v2\n' > "$HOME_DIR/data/alpha-fix/report.md"
+touch -d '+2 seconds' "$HOME_DIR/data/alpha-fix/report.md"
+"$ROOT/bin/fm-current-page.sh" >/dev/null
+assert_contains "$(cat "$HOME_DIR/data/page/alpha-fix-report.html")" 'Alpha report v2' "a newer report re-renders its page"
+printf '# Alpha report v3\n\nkey AKIA%s\n' "ABCDEFGHIJKLMNOP" > "$HOME_DIR/data/alpha-fix/report.md"
+touch -d '+4 seconds' "$HOME_DIR/data/alpha-fix/report.md"
+"$ROOT/bin/fm-current-page.sh" >/dev/null
+[ ! -e "$HOME_DIR/data/page/alpha-fix-report.html" ] || fail "a report that gained a secret kept its old page"
+assert_not_contains "$(page_part running-now)" 'alpha-fix-report.html' "a report that gained a secret is unlinked"
+rm -f "$HOME_DIR/data/alpha-fix/report.md" "$HOME_DIR/data/alpha-fix/leak.md"
+pass "each task's worker documents render beside the page and link from its row; briefs, secrets and outside paths do not"
+
 "$ROOT/bin/fm-tasks-axi.sh" unhold call-new >/dev/null
 "$ROOT/bin/fm-current-page.sh" >/dev/null
 assert_not_contains "$(cat "$PAGE")" 'Pick the banner color' "an answered call leaves the page on the next render"

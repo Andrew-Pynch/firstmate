@@ -429,6 +429,21 @@ def need_message(need):
     return button, f'<details class="need-message"><summary>{head}</summary><blockquote>{"".join(parts)}</blockquote></details>'
 
 
+def do_block(action, cls="do"):
+    """An exact human step: prose with each `command` in monospace beside its Copy button; '' when there is none."""
+    action = action.strip()
+    if not action:
+        return ""
+    parts, end = [], 0
+    for match in re.finditer(r"`([^`]+)`", action):
+        parts.append(fm_md.inline(action[end:match.start()]))
+        parts.append(f'<span class="cmd"><code>{e(match.group(1))}</code>'
+                     '<button type="button" class="copy-command">Copy</button></span>')
+        end = match.end()
+    parts.append(fm_md.inline(action[end:]))
+    return f'<span class="{cls}">{"".join(parts)}</span>'
+
+
 def need_actions(need, answerable=False):
     """The direct link, exact commands with Copy, message, and option chips of one curated need."""
     acts = []
@@ -437,14 +452,7 @@ def need_actions(need, answerable=False):
         acts.append(f'<a class="go" href="{e(link)}">Open {e(str(need.get("link_label") or fm_md.link_label(link)))}</a>')
     action = str(need.get("do") or "").strip()
     if action:
-        parts, end = [], 0
-        for match in re.finditer(r"`([^`]+)`", action):
-            parts.append(fm_md.inline(action[end:match.start()]))
-            parts.append(f'<span class="cmd"><code>{e(match.group(1))}</code>'
-                         '<button type="button" class="copy-command">Copy</button></span>')
-            end = match.end()
-        parts.append(fm_md.inline(action[end:]))
-        acts.append(f'<span class="do">{"".join(parts)}</span>')
+        acts.append(do_block(action))
     button, folded = need_message(need)
     if button:
         acts.append(button)
@@ -968,6 +976,12 @@ border-left:2px solid var(--acc);box-shadow:-12px 0 40px rgba(0,0,0,.6)}#inbox[h
 #inbox header{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--acc-dim)}#inbox header b{font:600 14px var(--mono);letter-spacing:.12em;color:var(--acc)}
 #inbox .ib-close{margin-left:auto;background:none;border:1px solid var(--dim);color:var(--fg2);border-radius:var(--r);padding:4px 12px}
 #thread{flex:1;overflow:auto;padding:12px 14px;display:flex;flex-direction:column;gap:10px;overscroll-behavior:contain}
+#ib-msgs{display:flex;flex-direction:column;gap:10px}
+#ib-dec{border:1px solid var(--alert);border-radius:10px;padding:6px 10px;background:rgba(255,51,102,.06)}
+#ib-dec summary{font:600 13px var(--mono);letter-spacing:.08em;color:var(--alert);padding:6px 0;cursor:pointer}#ib-dec summary b{color:var(--fg);margin-left:6px}
+.ib-card{padding:9px 0;border-top:1px solid rgba(255,51,102,.16);font:15px/1.4 var(--sans)}.ib-card>b{display:block;margin-bottom:6px}
+.ib-card .answer.compact .ans-opts{flex-wrap:wrap}.ib-links{display:flex;flex-wrap:wrap;gap:10px;margin-top:6px;font:13px var(--mono)}
+.fx-do,.ib-card .do{display:block;margin:6px 0}
 .msg{max-width:86%;padding:9px 12px;border-radius:12px;font:15px/1.4 var(--sans);white-space:pre-wrap;word-break:break-word}
 .msg.me{align-self:flex-end;background:rgba(255,136,0,.14);border:1px solid var(--acc-dim)}.msg.main{align-self:flex-start;background:var(--raised);border:1px solid var(--data-dim)}
 .msg .who{display:block;font:600 11px var(--mono);letter-spacing:.08em;color:var(--fg2);margin-bottom:3px}.msg.main .who{color:var(--data)}
@@ -1078,7 +1092,7 @@ function apply(text){const doc=new DOMParser().parseFromString(text,"text/html")
  const opened=$$(".overlay:not([hidden])").map(o=>[o.id,($(".box",o)||{}).scrollTop||0]);
  $$("[data-swap]").forEach(el=>{const n=doc.getElementById(el.id);if(n)el.replaceWith(document.importNode(n,true));});
  opened.forEach(([id,top])=>{const o=document.getElementById(id);if(o){o.hidden=false;const b=$(".box",o);if(b)b.scrollTop=top;}});
- document.body.dataset.rendered=doc.body.dataset.rendered;document.title=doc.title;bind();const after=keys();
+ document.body.dataset.rendered=doc.body.dataset.rendered;document.title=doc.title;bind();const after=keys();if(!$("#inbox")?.hidden)ibDec();
  const gone=[...before].filter(k=>!after.has(k)).length,fresh=[...after].filter(k=>!before.has(k));
  fresh.forEach(k=>{const x=$$("#needs-now .it").find(y=>y.dataset.key===k);if(x)x.classList.add("flash");});
  if(gone){S.cleared+=gone;score();toast(gone>1?gone+" CALLS CLEARED":"CALL CLEARED");}
@@ -1190,19 +1204,31 @@ if(/^#batch-[\w-]+$/.test(location.hash)){const o=document.getElementById(locati
 const IB={msgs:[],pending:[],seen:+localStorage.getItem("fm-ib-seen")||0,timer:0};
 function ibAgo(t){return ago(Date.now()/1000-t);}
 function ibState(m){return m.state==="answered"?"Main replied":m.state==="seen"?"Main read it":"Main has it";}
-function ibDraw(){const box=$("#thread");if(!box)return;const atEnd=box.scrollHeight-box.scrollTop-box.clientHeight<40;
+// Decision cards, copied live from the band and Needs you, so the phone answers them without leaving the thread.
+function ibDec(){const d=$("#ib-dec");if(!d)return;const items=[];
+ $$("#factory .fx").forEach(f=>items.push({t:f.querySelector(".fx-q").textContent,step:f.querySelector(".fx-do"),
+  a:f.querySelector(".answer"),links:[...f.querySelectorAll(".fx-a>a")]}));
+ $$("#needs-now .it").forEach(x=>items.push({t:(x.querySelector(".row .t")||{}).textContent||"",step:x.querySelector(".det .do"),
+  a:x.querySelector(".det .answer"),links:[...x.querySelectorAll(".det a.go")]}));
+ const open=d.open||!d.dataset.drawn;d.innerHTML='<summary>Waiting on you <b>'+items.length+"</b></summary>";d.dataset.drawn=1;d.open=open;
+ for(const it of items){const c=document.createElement("div");c.className="ib-card";c.innerHTML="<b>"+esc(it.t)+"</b>";
+  if(it.step)c.append(it.step.cloneNode(true));if(it.a)c.append(it.a.cloneNode(true));
+  if(it.links.length){const l=document.createElement("div");l.className="ib-links";it.links.forEach(a=>{const n=a.cloneNode(true);n.target="_blank";l.append(n);});c.append(l);}
+  d.append(c);}
+ paint();}
+function ibDraw(){const box=$("#thread"),list=$("#ib-msgs");if(!list)return;const atEnd=box.scrollHeight-box.scrollTop-box.clientHeight<40;
  const rows=[];for(const m of IB.msgs){const mine=m.kind==="answer"?"Answered "+m.title+": "+m.text:m.text;
   rows.push('<div class="msg me"><span class="who">YOU · '+esc(ibAgo(m.ts))+"</span>"+esc(mine)+'<span class="st">'+esc(ibState(m))+"</span></div>");
   if(m.reply)rows.push('<div class="msg main"><span class="who">MAIN'+(m.reply_at?" · "+esc(ibAgo(Date.parse(m.reply_at)/1000)):"")+"</span>"+esc(m.reply)+"</div>");}
  for(const p of IB.pending)rows.push('<div class="msg me'+(p.err?" err":"")+'"><span class="who">YOU</span>'+esc(p.text)+'<span class="st">'+esc(p.err||"sending…")+"</span></div>");
- box.innerHTML=rows.join("")||'<p class="k">Nothing yet. Write to Main below; replies show here.</p>';if(atEnd)box.scrollTop=box.scrollHeight;}
+ list.innerHTML=rows.join("")||'<p class="k">Nothing yet. Write to Main below; replies show here.</p>';if(atEnd)box.scrollTop=box.scrollHeight;}
 function ibBadge(){const b=$("#inboxbtn .n");if(!b)return;const n=IB.msgs.filter(m=>m.reply_at&&Date.parse(m.reply_at)/1000>IB.seen).length;
  b.hidden=!n;b.textContent=n;}
 async function ibLoad(){try{const r=await fetch("/api/thread",{cache:"no-store"});if(!r.ok)return;const j=await r.json();
  const before=IB.msgs.filter(m=>m.reply).length;IB.msgs=j.messages||[];if(IB.msgs.filter(m=>m.reply).length>before&&before)toast("MAIN REPLIED");
  if(!$("#inbox").hidden){IB.seen=Date.now()/1000;localStorage.setItem("fm-ib-seen",IB.seen);}ibDraw();ibBadge();}catch{}}
 function inboxOpen(on){const p=$("#inbox");if(!p)return;p.hidden=!on;clearInterval(IB.timer);
- if(on){ibLoad().then(()=>{const b=$("#thread");b.scrollTop=b.scrollHeight;});IB.timer=setInterval(ibLoad,10000);$("#ib-text").focus({preventScroll:true});}
+ if(on){ibDec();ibLoad().then(()=>{const b=$("#thread");b.scrollTop=b.scrollHeight;});IB.timer=setInterval(ibLoad,10000);if(!MOB.matches)$("#ib-text").focus({preventScroll:true});}
  else IB.timer=setInterval(ibLoad,30000);}
 async function ibSend(){const ta=$("#ib-text"),text=ta.value.trim();if(!text)return;const p={text,rid:rid()};IB.pending.push(p);ta.value="";ibDraw();
  let r=null,j={};for(let i=0;i<3&&!r;i++){try{r=await fetch("/api/note",{method:"POST",credentials:"same-origin",
@@ -1415,7 +1441,8 @@ def render(paths, reason):
         links = "".join(band_link(lk) for lk in f.get("links") or []
                         if isinstance(lk, dict) and re.match(r"https://|#batch-[\w-]+$", str(lk.get("url", ""))))
         inline, below = (ans, "") if opts else ("", ans)
-        detail = f'<div class="fx-w">{fm_md.inline(why)}{below}</div>' if why or below else ""
+        step = do_block(str(f.get("do") or ""), "fx-do")
+        detail = f'<div class="fx-w">{fm_md.inline(why)}{step}{below}</div>' if why or below or step else ""
         key = str(f.get("key") or task or answers.answer_key(task, title))
         return (f'<div class="fx" data-task="{e(task)}" data-k="{e(answers.answer_key(task, title))}">'
                 f'<span class="fx-q{" has-w" if detail else ""}" title="{e(why or title)}">{e(title)}</span>'
@@ -1455,7 +1482,7 @@ def render(paths, reason):
     page_url = paths.get("page_url") or ""
     inbox = ('<section id="inbox" hidden aria-label="Inbox to Main"><header><b>Inbox</b><span class="k">to Main</span>'
              '<button type="button" class="ib-close" aria-label="Close the inbox">close</button></header>'
-             '<div id="thread" aria-live="polite"><p class="k">Loading…</p></div>'
+             '<div id="thread" aria-live="polite"><div id="ib-msgs"><p class="k">Loading…</p></div><details id="ib-dec"></details></div>'
              '<form id="composer" autocomplete="off"><textarea id="ib-text" rows="2" maxlength="1200" enterkeyhint="send" '
              'placeholder="Write to Main" aria-label="Message to Main"></textarea><button type="submit" id="ib-send">Send</button></form>'
              '</section>') if answers_on else ""

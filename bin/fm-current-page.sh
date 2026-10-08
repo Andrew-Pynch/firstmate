@@ -21,7 +21,9 @@
 # Inbox (with answers on): the INBOX button in the top bar opens a thread to
 # Main, full screen on a phone. It shows the captain's notes and his answers from
 # the page, each with Main's reply, and sends new notes through
-# bin/fm-current-answers.sh's POST /note (one bin/fm-inbox.sh note each).
+# bin/fm-current-answers.sh's POST /note (one bin/fm-inbox.sh note each). Below
+# the thread, "Waiting on you" repeats every band and Needs-you call with its
+# exact step and answer buttons, so the phone answers without leaving it.
 #
 # Sources, read only: every state/*.meta (task, kind, project and token, host,
 # backend endpoint, recorded PR) with the last line of its state/*.status;

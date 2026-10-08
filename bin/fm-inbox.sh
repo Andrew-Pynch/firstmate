@@ -12,9 +12,17 @@
 #   say     Same as `note`, but the body comes from spoken audio on stdin.
 #           Speech is an INPUT METHOD here, not an architecture: it transcribes
 #           and then takes exactly the `note` path.
-#   status  Answer "what is happening" from durable records ONLY. Reads no
-#           network and appends NO wake, so it never interrupts work and is safe
-#           to run in a loop.
+#   status  Answer "what is happening" from durable records, reconciled by the
+#           one current-state reader. Appends NO wake, so it never interrupts
+#           work and is safe to run in a loop. Row state is the reconciled
+#           current state read through bin/fm-fleet-snapshot.sh, never the last
+#           line of the append-only event log: a captain hold reads
+#           `waiting-on-you`, and a row that establishes no state reads `unknown`
+#           with the source that failed. Local rows add no network read; that
+#           snapshot samples each registered remote home's summary over its own
+#           bounded budget and reuses a cached copy when a live read fails or
+#           exceeds it, so the whole answer costs seconds on a large fleet rather
+#           than milliseconds.
 #   ask     Answer a side question with a one-shot model call that never touches
 #           firstmate, the backlog, or the wake queue. A side question is not
 #           fleet work and must not become fleet work.
@@ -125,6 +133,14 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 INBOX="$STATE/inbox"
 
 CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
+PROJECTS="${FM_PROJECTS_OVERRIDE:-$FM_HOME/projects}"
+
+# `status` reads current row state through the canonical reconciled snapshot
+# rather than parsing state/<id>.status itself, because that log is an
+# append-only EVENT stream: its last line is the last thing a crew chose to say,
+# not what the row is doing now (bin/fm-crew-state.sh owns that reconciliation).
+# The override exists so a test can feed a fixed snapshot.
+SNAPSHOT_BIN="${FM_INBOX_SNAPSHOT_BIN:-$SELF_DIR/fm-fleet-snapshot.sh}"
 
 die() { printf 'fm-inbox: %s\n' "$*" >&2; exit 1; }
 
@@ -1038,8 +1054,75 @@ audio_seconds=$secs"
 
 # ---------------------------------------------------------------- status
 
+# The two row sections are one projection of one reconciled generation. State
+# comes from bin/fm-crew-state.sh through the canonical snapshot, so the last
+# recorded event can never be read as the current state; a captain hold is an
+# explicit record and reads `waiting-on-you`, and a row that establishes no
+# state at all reads `unknown` with the source that failed.
+status_render_snapshot() {  # <snapshot-json>
+  printf '%s' "$1" | jq -r '
+    def dash($v): if $v == null or $v == "" then "-" else ($v | tostring) end;
+    def row_state($state; $source; $detail):
+      "\($state)/\($source)"
+      + (if dash($detail) == "-" then "" else " · " + dash($detail) end);
+    .tasks as $tasks
+    | [ .backlog.records[] | select(.state == "in_flight") ] as $in_flight
+    | "--- in flight (\($in_flight | length) row(s); reconciled state, never the last event) ---",
+      (if ($in_flight | length) == 0 then "  (none)"
+       else $in_flight[]
+         | . as $row
+         | (first($tasks[] | select(.id == $row.id)) // null) as $task
+         | (if $task != null and $task.current_state.state == "working"
+            then row_state($task.current_state.state; $task.current_state.source; $task.current_state.detail)
+            elif $row.hold_kind == "captain" then row_state("waiting-on-you"; "captain-hold"; "")
+            elif $row.hold_kind != null then row_state("blocked"; "backlog-hold"; "")
+            elif $task == null then row_state("unknown"; "no-worker-record"; "")
+            else row_state($task.current_state.state; $task.current_state.source; $task.current_state.detail) end) as $state
+         | "  \($state) | \(dash($row.id)) - \(dash($row.title))"
+       end),
+      "",
+      "--- workers (\($tasks | length); reconciled state, never the last event) ---",
+      (if ($tasks | length) == 0 then "  (no workers on deck)"
+       else $tasks[]
+         | "  \(.id) \(dash(.kind)) | state: \(.current_state.state) · source: \(.current_state.source)"
+           + (if dash(.current_state.detail) == "-" then "" else " · " + dash(.current_state.detail) end)
+       end),
+      "",
+      "Note: row state is bin/fm-crew-state.sh'"'"'s reconciliation, read through the canonical fleet snapshot; a status line is a wake event, not current state."
+  '
+}
+
+# Reconciliation unavailable: name the source that failed and still show the
+# rows, with every one of them unknown. The queue stays visible without ever
+# dressing the last event up as a state.
+status_render_unavailable() {  # <reason>
+  printf '  (no reconciled state: %s)\n' "$1"
+
+  if [ -f "$DATA/backlog.md" ]; then
+    printf '\n--- in flight (row states unavailable) ---\n'
+    awk '/^## In flight/{f=1;next} /^## /{f=0} f && /^- \[/{print}' "$DATA/backlog.md" \
+      | sed 's/^- \[ \] /  unknown\/snapshot-unavailable | /'
+  else
+    printf '\n(no backlog at %s)\n' "$DATA/backlog.md"
+  fi
+
+  local any=0 meta id kind
+  for meta in "$STATE"/*.meta; do
+    [ -e "$meta" ] || break
+    if [ "$any" -eq 0 ]; then printf '\n--- workers (row states unavailable) ---\n'; any=1; fi
+    id=$(basename "$meta" .meta)
+    kind=$(sed -n 's/^kind=//p' "$meta" | head -1)
+    printf '  unknown/snapshot-unavailable | %s %s\n' "$id" "${kind:-?}"
+  done
+  [ "$any" -eq 1 ] || printf '\n(no workers on deck)\n'
+}
+
 cmd_status() {
   local pending=0
+  # jq renders the projection, so a missing jq is a hard refusal before any
+  # output; an unreadable snapshot is not, and degrades to named-unknown rows.
+  need jq
+
   [ -d "$INBOX" ] && pending=$(find "$INBOX" -maxdepth 1 -name '*.note' 2>/dev/null | wc -l | tr -d ' ')
 
   printf '=== firstmate status (read-only, no wake sent) ===\n'
@@ -1047,29 +1130,33 @@ cmd_status() {
   printf 'time     %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   printf 'inbox    %s note(s) waiting for firstmate\n' "$pending"
 
-  if [ -f "$DATA/backlog.md" ]; then
-    printf '\n--- in flight ---\n'
-    awk '/^## In flight/{f=1;next} /^## /{f=0} f && /^- \[/{print}' \
-      "$DATA/backlog.md" | sed 's/^- \[ \] /  /' | cut -c1-150
-  else
-    printf '\n(no backlog at %s)\n' "$DATA/backlog.md"
+  local snapshot='' reason=''
+  if [ ! -x "$SNAPSHOT_BIN" ]; then
+    reason="snapshot reader not found at $SNAPSHOT_BIN"
+  elif ! snapshot=$(FM_ROOT_OVERRIDE="$FM_ROOT" \
+      FM_HOME="$FM_HOME" \
+      FM_STATE_OVERRIDE="$STATE" \
+      FM_DATA_OVERRIDE="$DATA" \
+      FM_PROJECTS_OVERRIDE="$PROJECTS" \
+      FM_CONFIG_OVERRIDE="$CONFIG" \
+      "$SNAPSHOT_BIN" --json); then
+    # A reader that fails after printing partial stdout must not have that
+    # fragment rendered as a snapshot: drop it and take the degraded path.
+    reason="snapshot reader failed: $SNAPSHOT_BIN --json"
+    snapshot=''
+  elif ! printf '%s' "$snapshot" | jq -e 'type == "object"' >/dev/null 2>&1; then
+    reason="snapshot reader returned no usable JSON"
+    snapshot=''
   fi
 
-  local any=0
-  for m in "$STATE"/*.meta; do
-    [ -e "$m" ] || break
-    if [ "$any" -eq 0 ]; then printf '\n--- workers ---\n'; any=1; fi
-    local id kind mode last
-    id=$(basename "$m" .meta)
-    kind=$(sed -n 's/^kind=//p' "$m" | head -1)
-    mode=$(sed -n 's/^mode=//p' "$m" | head -1)
-    last=""
-    [ -f "$STATE/$id.status" ] && last=$(tail -1 "$STATE/$id.status" 2>/dev/null | cut -c1-100)
-    printf '  %-42s %-6s %-10s %s\n' "$id" "${kind:-?}" "${mode:--}" "${last:-(no events yet)}"
-  done
-  [ "$any" -eq 1 ] || printf '\n(no workers on deck)\n'
-
-  printf '\nNote: the last event line is history, not current state.\n'
+  printf '\n'
+  if [ -n "$snapshot" ]; then
+    status_render_snapshot "$snapshot"
+  else
+    [ -n "$reason" ] || reason="snapshot reader returned nothing"
+    printf 'fm-inbox: %s\n' "$reason" >&2
+    status_render_unavailable "$reason"
+  fi
 }
 
 # ---------------------------------------------------------------- ask

@@ -1076,6 +1076,26 @@ The owner classifier therefore accepts that label only when `launchctl print gui
 The SSH-born row was read on the remote host whose `dev.firstmate.herdr.fm-remote` job showed `state = spawn scheduled`, `runs = 239`, `last exit code = 1` and a log repeating `error: herdr server is already running`: herdr's remote attach had started the session's server as its own child before the login session existed, and launchd's copy lost the socket on every retry.
 `pgrep -f` did not list the herdr server's argv on macOS; `lsof -U -a -c herdr -F pn` named the socket owner.
 
+The NAME field that identification compares carries the path in two host shapes, measured 2026-09-15.
+On macOS 26.6.2 (Darwin) with lsof 4.91 the field is the bare path:
+
+```text
+n/Users/andrewpynch/.config/herdr/sessions/fm-remote/herdr.sock
+```
+
+On Linux 7.0.0 (Ubuntu 24.04.4) with lsof 4.95.0, and on Linux 7.2.3 with lsof 4.99.7, the same server's field appends the socket type, so an exact comparison against the bare path finds no owner at all:
+
+```sh
+lsof -U -a -c herdr -Fpn | grep -F '/home/andrew/.config/herdr/sessions/fm-remote/herdr.sock'
+```
+
+```text
+n/home/andrew/.config/herdr/sessions/fm-remote/herdr.sock type=STREAM
+```
+
+`fm_remote_herdr_socket_owner` therefore drops exactly one trailing ` type=<type>` suffix before comparing, which leaves the macOS field unchanged and keeps the comparison exact on both hosts.
+`bin/fm-test-run.sh tests/fm-remote-herdr-owner-lib.test.sh` pins both shapes, their near matches, and a live bound unix socket against the host's own lsof.
+
 A separate foreground-supervision check ran on 2026-09-09 on macOS 26 (Darwin 25.6.0) with Herdr 0.9.0 using the throwaway Aqua launch agent `dev.fm-rca.herdr-fg`.
 Its `ProgramArguments` ran `/run/current-system/sw/bin/zsh -l -c "exec /etc/profiles/per-user/kunchen/bin/herdr server --session fm-lab-fg-90381-18985"`, with `KeepAlive={SuccessfulExit=false}` and `ThrottleInterval=10`, after `launchctl bootstrap gui/501 <plist>` and `launchctl kickstart -k gui/501/dev.fm-rca.herdr-fg`.
 `launchctl print gui/501/dev.fm-rca.herdr-fg` reported `state = running` and `pid = 4806`.

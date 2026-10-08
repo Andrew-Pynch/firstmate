@@ -163,6 +163,7 @@ Every `/bearings` chat response renders EXACTLY these four sections, in THIS ord
 Rules that keep the contract unambiguous:
 
 - Every section ALWAYS renders, even when empty, with its short empty-state sentence; never omit a section.
+- A section whose snapshot list carries a non-null `<key>_bound` line is partial: the digest states that withheld count and the exact reveal command from the line itself, on that section rather than only in the disclosures array, so a cut list is never presented as a complete one. A null bound means that section is complete.
 - Every chat digest and file-mode report is a complete current snapshot, never a delta against a prior report.
 - Recently Landed always renders the bounded current baseline, even when the same completions appeared in an earlier report.
 - A captain hold appears in exactly one decision bucket: an unsuppressed live hold is in Captain's Call, while a blocked, dated, or aged hold is in Charted Next; `--all-decisions` moves the latter into Captain's Call and removes its gate.

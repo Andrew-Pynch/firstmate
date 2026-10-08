@@ -1512,6 +1512,107 @@ test_section_caps_and_expansion_flags() {
   pass "all fleet-sized sections are capped with counted opt-in expansion"
 }
 
+# The default bound has to fit the real fleet: an inventory that fits inside it is
+# shown in full, with no bound line and no omitted[] entry, so a busy fleet never
+# reads as a smaller one.
+test_default_bounds_show_a_fleet_larger_than_the_old_cap() {
+  local home fakebin json
+  home=$(make_home default-bound-fits); write_large_fixture "$home" 25
+  fakebin=$(make_fakebin "$home")
+  json=$(run "$home" "$fakebin" --json)
+  printf '%s' "$json" | jq -e '
+    (.in_flight | length) == 25 and (.decisions_open | length) == 25
+      and (.gates | length) == 25 and (.reports | length) == 25
+      and (.recorded_prs | length) == 25 and (.unhealthy_endpoints | length) == 25
+      and (.in_flight_bound == null) and (.decisions_open_bound == null)
+      and (.gates_bound == null) and (.reports_bound == null)
+      and (.recorded_prs_bound == null) and (.unhealthy_endpoints_bound == null)
+      and ([.omitted[].surface] | any(test("showing")) | not)
+  ' >/dev/null || fail "the default bound cut an inventory that fits inside it: $json"
+  pass "the default bound shows a 25-item inventory in full"
+}
+
+# A section that is STILL bounded says so on its own surface - the withheld count
+# and the exact reveal flag, printed with that section's rows instead of only in
+# omitted[] - in both output forms.
+test_bounded_section_states_its_count_beside_its_rows() {
+  local home fakebin json expanded toon rows_line bound_line
+  home=$(make_home bound-on-surface); write_large_fixture "$home" 25
+  fakebin=$(make_fakebin "$home")
+  json=$(FM_BEARINGS_IN_FLIGHT=2 FM_BEARINGS_DECISIONS=2 FM_BEARINGS_GATES=2 \
+    FM_BEARINGS_REPORTS=2 FM_BEARINGS_RECORDED_PRS=2 FM_BEARINGS_UNHEALTHY=2 \
+    run "$home" "$fakebin" --json)
+  printf '%s' "$json" | jq -e '
+    .in_flight_bound == "showing 2 of 25; reveal --all-in-flight"
+      and .decisions_open_bound == "showing 2 of 25; reveal --all-decisions"
+      and .gates_bound == "showing 2 of 25; reveal --all-queued"
+      and .reports_bound == "showing 2 of 25; reveal --all-reports"
+      and .recorded_prs_bound == "showing 2 of 25; reveal --all-recorded-prs"
+      and .unhealthy_endpoints_bound == "showing 2 of 25; reveal --all-unhealthy"
+      and ([.omitted[] | select(.surface == "decisions_open showing 2 of 25"
+             and .reveal == "--all-decisions")] | length) == 1
+  ' >/dev/null || fail "a bounded section did not state its own count and reveal: $json"
+
+  expanded=$(FM_BEARINGS_IN_FLIGHT=2 FM_BEARINGS_DECISIONS=2 \
+    run "$home" "$fakebin" --json --all-in-flight --all-decisions)
+  printf '%s' "$expanded" | jq -e '
+    .in_flight_bound == null and .decisions_open_bound == null
+      and (.in_flight | length) == 25 and (.decisions_open | length) == 25
+      and ([.omitted[].reveal] | index("--all-in-flight") == null)
+      and ([.omitted[].reveal] | index("--all-decisions") == null)
+  ' >/dev/null || fail "the reveal flag did not clear the bound line: $expanded"
+
+  toon=$(FM_BEARINGS_DECISIONS=2 run "$home" "$fakebin")
+  printf '%s\n' "$toon" | grep -qxF 'decisions_open_bound: showing 2 of 25; reveal --all-decisions' \
+    || fail "the TOON surface did not state the bound: $toon"
+  rows_line=$(printf '%s\n' "$toon" | grep -n '^decisions_open\[' | cut -d: -f1)
+  bound_line=$(printf '%s\n' "$toon" | grep -n '^decisions_open_bound:' | cut -d: -f1)
+  [ "$bound_line" -eq "$((rows_line + 3))" ] \
+    || fail "the bound line was not printed with its rows (rows start at $rows_line, bound at $bound_line)"
+  pass "a bounded section prints its withheld count and reveal beside its rows"
+}
+
+# A registered home whose own inventory is cut names that home, the count withheld
+# and the variable to raise, on the surface and in the canonical home record.
+test_bounded_home_inventory_states_its_count_and_reveal() {
+  local home mate fakebin json summary i
+  home=$(make_home home-inventory-bound)
+  : > "$home/data/secondmates.md"
+  printf '## In flight\n\n## Queued\n\n## Done\n' > "$home/data/backlog.md"
+  mate=$(make_landed_secondmate "$home" inventory-mate)
+  printf '## In flight\n\n## Queued\n' > "$mate/data/backlog.md"
+  i=1
+  while [ "$i" -le 25 ]; do
+    printf -- '- [ ] home-q-%02d - Queued %02d (repo: sample) (kind: ship) (since 2026-07-%02d)\n' \
+      "$i" "$i" "$i" >> "$mate/data/backlog.md"
+    i=$((i + 1))
+  done
+  printf '\n## Done\n' >> "$mate/data/backlog.md"
+  fakebin=$(make_fakebin "$home")
+
+  json=$(run "$home" "$fakebin" --json)
+  printf '%s' "$json" | jq -e '
+    ([.gates[] | select(.owner == "inventory-mate")] | length) == 25
+      and ([.omitted[] | select(.surface | test("inventory-mate"))] | length) == 0
+  ' >/dev/null || fail "the default per-home bound cut a 25-item home inventory: $json"
+
+  json=$(FM_SNAPSHOT_SECONDMATE_QUEUED=20 run "$home" "$fakebin" --json)
+  printf '%s' "$json" | jq -e '
+    ([.gates[] | select(.owner == "inventory-mate")] | length) == 20
+      and ([.omitted[] | select(.surface == "secondmate inventory-mate queued omitted by snapshot bound: 5"
+             and .reveal == "raise FM_SNAPSHOT_SECONDMATE_QUEUED")] | length) == 1
+  ' >/dev/null || fail "a bounded home inventory was not disclosed with its reveal: $json"
+
+  summary=$(PATH="$fakebin:$PATH" FM_HOME="$mate" FM_SNAPSHOT_NOW=2026-07-11T18:00:00Z \
+    FM_SNAPSHOT_SECONDMATE_QUEUED=20 "$ROOT/bin/fm-fleet-snapshot.sh" --secondmate-home-summary)
+  printf '%s' "$summary" | jq -e '
+    (.counts.queued == 25) and ((.queued | length) == 20)
+      and ([.omitted[] | select(.surface == "queued" and .count == 5
+             and .reveal == "raise FM_SNAPSHOT_SECONDMATE_QUEUED")] | length) == 1
+  ' >/dev/null || fail "the canonical home record lost the withheld count or its reveal: $summary"
+  pass "a bounded home inventory states its count and the bound to raise"
+}
+
 test_pr_repository_cap_and_expansion() {
   local home fakebin json expanded
   home=$(make_home repo-caps); write_large_fixture "$home" 5
@@ -2455,7 +2556,7 @@ test_newest_filed_gates_are_selected_before_snapshot_bounds() {
   printf -- '- [ ] newest - Newest gate (repo: sample) (kind: ship) (since 2026-07-01)\n\n## Done\n' \
     >> "$home/data/backlog.md"
   fakebin=$(make_fakebin "$home")
-  json=$(run "$home" "$fakebin" --json)
+  json=$(FM_BEARINGS_GATES=20 run "$home" "$fakebin" --json)
   printf '%s' "$json" | jq -e '
     (.gates | length) == 20 and .gates[0].id == "newest"
       and (.gates | any(.id == "old-01") | not)
@@ -3366,6 +3467,9 @@ test_include_prs_is_the_only_fetch_path
 test_partial_github_failure_degrades
 test_perl_fallback_bounds_github_call
 test_section_caps_and_expansion_flags
+test_default_bounds_show_a_fleet_larger_than_the_old_cap
+test_bounded_section_states_its_count_beside_its_rows
+test_bounded_home_inventory_states_its_count_and_reveal
 test_collapsed_captain_call_deferral_and_landed
 test_undated_hold_phrasing_and_aging_projection
 test_blocked_deferred_hold_has_concrete_disclosure

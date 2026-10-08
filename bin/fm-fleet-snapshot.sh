@@ -85,7 +85,9 @@
 #     observed status file's mtime instead: freshness is how fresh this snapshot's
 #     own observation is, never when a worker emitted the event.
 #     Each structured-home record carries active_children, decisions_open, holds,
-#     queued, landed, endpoints, counts, and omitted. provenance.summary_source
+#     queued, landed, endpoints, counts, and omitted; counts always reports the
+#     true totals, and each omitted[] entry names the count withheld and the
+#     bound to raise. provenance.summary_source
 #     distinguishes "local-ledger", "remote-ledger", and "remote-ledger-cache";
 #     freshness is "cached" only for the cache source, and observed_at/age_seconds
 #     come from the selected summary's generation. Every successfully sampled home also carries
@@ -158,9 +160,14 @@ FM_SNAPSHOT_LOCAL_READ_CONCURRENCY=${FM_SNAPSHOT_LOCAL_READ_CONCURRENCY:-8}
 FM_SNAPSHOT_BUDGET=${FM_SNAPSHOT_BUDGET:-5}
 FM_SNAPSHOT_CACHE_DIR=${FM_SNAPSHOT_CACHE_DIR:-$STATE/secondmate-summary-cache}
 FM_SNAPSHOT_SECONDMATE_MAX_BYTES=${FM_SNAPSHOT_SECONDMATE_MAX_BYTES:-262144}
-FM_SNAPSHOT_SECONDMATE_CHILDREN=${FM_SNAPSHOT_SECONDMATE_CHILDREN:-20}
-FM_SNAPSHOT_SECONDMATE_QUEUED=${FM_SNAPSHOT_SECONDMATE_QUEUED:-20}
-FM_SNAPSHOT_SECONDMATE_DECISIONS=${FM_SNAPSHOT_SECONDMATE_DECISIONS:-20}
+# Per-home INVENTORY bounds (children, queued, decisions) share one default sized
+# to fit the observed fleet with headroom, so a registered home's answer is a
+# complete inventory rather than a quietly cut one; each home still declares its
+# own counts and every omission with the bound to raise.
+FM_SNAPSHOT_SECONDMATE_LIST_BOUND=${FM_SNAPSHOT_SECONDMATE_LIST_BOUND:-200}
+FM_SNAPSHOT_SECONDMATE_CHILDREN=${FM_SNAPSHOT_SECONDMATE_CHILDREN:-$FM_SNAPSHOT_SECONDMATE_LIST_BOUND}
+FM_SNAPSHOT_SECONDMATE_QUEUED=${FM_SNAPSHOT_SECONDMATE_QUEUED:-$FM_SNAPSHOT_SECONDMATE_LIST_BOUND}
+FM_SNAPSHOT_SECONDMATE_DECISIONS=${FM_SNAPSHOT_SECONDMATE_DECISIONS:-$FM_SNAPSHOT_SECONDMATE_LIST_BOUND}
 FM_SNAPSHOT_TERMINAL_LINES=${FM_SNAPSHOT_TERMINAL_LINES:-8}
 FM_SNAPSHOT_TERMINAL_BYTES=${FM_SNAPSHOT_TERMINAL_BYTES:-4096}
 FM_SNAPSHOT_TERMINAL_TIMEOUT=${FM_SNAPSHOT_TERMINAL_TIMEOUT:-2}
@@ -263,6 +270,12 @@ projections. A captain hold is actionable only when every blocker is Done, any
 hold-until date has arrived, and an undated hold remains below the aging threshold.
 Cross-home collection uses FM_SNAPSHOT_SECONDMATES (default 20, 0 lifts the
 count bound) and FM_SNAPSHOT_SECONDMATE_MAX_BYTES.
+Each home's inventory lists - active_children, decisions_open, queued, endpoints,
+and landed - are bounded by FM_SNAPSHOT_SECONDMATE_CHILDREN,
+FM_SNAPSHOT_SECONDMATE_DECISIONS, and FM_SNAPSHOT_SECONDMATE_QUEUED (all default
+FM_SNAPSHOT_SECONDMATE_LIST_BOUND, 200) and FM_SNAPSHOT_SECONDMATE_LANDED_PER_HOME.
+The home's counts{} always carries the true totals, and every omission appears in
+that home's omitted[] with the count withheld and the variable to raise.
 Every sampled remote home's state/home-summary.json is fetched concurrently
 under one FM_SNAPSHOT_BUDGET (default 5 seconds), with a valid prior copy under
 FM_SNAPSHOT_CACHE_DIR used when the live read fails, is invalid, or consumes the
@@ -1155,11 +1168,11 @@ secondmate_home_summary_json() {  # <backlog-json-file> <tasks-json-file>
           endpoints:($tasks | length)
         },
         omitted:[
-          (if ($active_all | length) > $child_n then {surface:"active_children",count:(($active_all | length) - $child_n)} else empty end),
-          (if ($decisions_all | length) > $decisions_n then {surface:"decisions_open",count:(($decisions_all | length) - $decisions_n)} else empty end),
-          (if ($queued_all | length) > $queued_n then {surface:"queued",count:(($queued_all | length) - $queued_n)} else empty end),
-          (if ($tasks | length) > $child_n then {surface:"endpoints",count:(($tasks | length) - $child_n)} else empty end),
-          (if $landed_n > 0 and ($landed_all | length) > $landed_n then {surface:"landed",count:(($landed_all | length) - $landed_n)} else empty end)
+          (if ($active_all | length) > $child_n then {surface:"active_children",count:(($active_all | length) - $child_n),reveal:"raise FM_SNAPSHOT_SECONDMATE_CHILDREN"} else empty end),
+          (if ($decisions_all | length) > $decisions_n then {surface:"decisions_open",count:(($decisions_all | length) - $decisions_n),reveal:"raise FM_SNAPSHOT_SECONDMATE_DECISIONS"} else empty end),
+          (if ($queued_all | length) > $queued_n then {surface:"queued",count:(($queued_all | length) - $queued_n),reveal:"raise FM_SNAPSHOT_SECONDMATE_QUEUED"} else empty end),
+          (if ($tasks | length) > $child_n then {surface:"endpoints",count:(($tasks | length) - $child_n),reveal:"raise FM_SNAPSHOT_SECONDMATE_CHILDREN"} else empty end),
+          (if $landed_n > 0 and ($landed_all | length) > $landed_n then {surface:"landed",count:(($landed_all | length) - $landed_n),reveal:"raise FM_SNAPSHOT_SECONDMATE_LANDED_PER_HOME"} else empty end)
         ]
       }'
 }

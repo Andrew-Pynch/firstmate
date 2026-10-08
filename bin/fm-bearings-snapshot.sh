@@ -73,6 +73,16 @@
 # waste capacity, and --all-landed switches back to the complete global newest-first
 # order. Which closed rows either side contributes is bin/fm-landed-lib.sh's rule.
 #
+# No list is silently cut. Every inventory list (in_flight, secondmates,
+# decisions_open, gates, reports, recorded_prs, unhealthy_endpoints) is bounded
+# by one shared default that fits the observed fleet, the landed baseline keeps
+# its own deliberate default, and any list that is STILL bounded states it on the
+# surface itself: a `<key>_bound` field is emitted immediately beside that list
+# in both the JSON and TOON forms, carrying "showing N of M; reveal <flag>", and
+# the same fact is disclosed in omitted[]. `null` means that list was not
+# bounded. A reader never has to reach the disclosures array to learn that a
+# section is partial.
+#
 # Flags:
 #   (default)        compact projection with bounded remote-ledger collection, TOON
 #   --json           the same projected model as JSON (machine/debug; parity form)
@@ -103,15 +113,25 @@ FLEET="$SCRIPT_DIR/fm-fleet-snapshot.sh"
 . "$SCRIPT_DIR/fm-landed-lib.sh"  # FM_LANDED_JQ_DEFS: the shared landed selector
 
 # Bounds (overridable for tests / large fleets).
+# Every INVENTORY list - the rows that say what work exists and what is wrong
+# with it - shares ONE default bound chosen to fit the observed fleet with
+# headroom, so the default answer is a complete inventory rather than a quietly
+# cut one. A bound remains because one broken or unexpectedly large home must
+# not explode the output, and a list that is still bounded states its own count
+# on the surface (see the `<key>_bound` fields) instead of only in omitted[].
+FM_BEARINGS_LIST_BOUND=${FM_BEARINGS_LIST_BOUND:-200}
+# Landed is not an inventory: it is the deliberately bounded recent-completions
+# baseline, balanced across homes so one busy home cannot crowd the others out
+# of it. It keeps its own default and declares its withheld count the same way.
 FM_BEARINGS_LANDED=${FM_BEARINGS_LANDED:-6}
 FM_BEARINGS_LANDED_PER_HOME=${FM_BEARINGS_LANDED_PER_HOME:-$FM_BEARINGS_LANDED}
-FM_BEARINGS_IN_FLIGHT=${FM_BEARINGS_IN_FLIGHT:-20}
-FM_BEARINGS_DECISIONS=${FM_BEARINGS_DECISIONS:-20}
-FM_BEARINGS_SECONDMATES=${FM_BEARINGS_SECONDMATES:-20}
-FM_BEARINGS_GATES=${FM_BEARINGS_GATES:-20}
-FM_BEARINGS_REPORTS=${FM_BEARINGS_REPORTS:-20}
-FM_BEARINGS_RECORDED_PRS=${FM_BEARINGS_RECORDED_PRS:-20}
-FM_BEARINGS_UNHEALTHY=${FM_BEARINGS_UNHEALTHY:-20}
+FM_BEARINGS_IN_FLIGHT=${FM_BEARINGS_IN_FLIGHT:-$FM_BEARINGS_LIST_BOUND}
+FM_BEARINGS_DECISIONS=${FM_BEARINGS_DECISIONS:-$FM_BEARINGS_LIST_BOUND}
+FM_BEARINGS_SECONDMATES=${FM_BEARINGS_SECONDMATES:-$FM_BEARINGS_LIST_BOUND}
+FM_BEARINGS_GATES=${FM_BEARINGS_GATES:-$FM_BEARINGS_LIST_BOUND}
+FM_BEARINGS_REPORTS=${FM_BEARINGS_REPORTS:-$FM_BEARINGS_LIST_BOUND}
+FM_BEARINGS_RECORDED_PRS=${FM_BEARINGS_RECORDED_PRS:-$FM_BEARINGS_LIST_BOUND}
+FM_BEARINGS_UNHEALTHY=${FM_BEARINGS_UNHEALTHY:-$FM_BEARINGS_LIST_BOUND}
 FM_BEARINGS_PR_REPOS=${FM_BEARINGS_PR_REPOS:-10}
 FM_BEARINGS_PR_LIMIT=${FM_BEARINGS_PR_LIMIT:-20}
 FM_BEARINGS_PR_TIMEOUT=${FM_BEARINGS_PR_TIMEOUT:-20}
@@ -153,6 +173,13 @@ Default fields: schema, home, generated, prs,
   decisions_open{id,key,verb,summary,owner}, landed{id,what,artifact,owner},
   gates{id,title,blocked_by,reason,owner,filed}, reports{id,path}, recorded_prs{id,url},
   unhealthy_endpoints{...} (only when non-empty), omitted{surface,reveal}.
+Each bounded list also carries a sibling scalar `<key>_bound` - "showing N of M;
+  reveal <flag>" next to that list's rows, null when the list was not bounded - so
+  a partial section says so on the surface, not only in omitted[].
+Default bounds: every inventory list is capped by FM_BEARINGS_LIST_BOUND
+  (default 200), sized to fit the observed fleet; raise it or any per-list
+  FM_BEARINGS_* bound for a larger one. The landed baseline keeps its own
+  FM_BEARINGS_LANDED default.
 Default gates are selected newest filed first before their bound; undated gates
   retain input order after dated gates.
 landed merges this home's Done with registered secondmate homes' Done, bounded by
@@ -382,6 +409,19 @@ MODEL=$(printf '%s' "$SNAP" | jq \
   def live_captain_call: .hold_bucket == "live";
   def projected_deferred_hold:
     .hold_bucket != null and .hold_bucket != "live";
+  # A list is bounded only when its reveal flag was not given and the full set
+  # exceeds the bound. The same record feeds both the inline `<key>_bound` line
+  # and the matching omitted[] entry, so the two can never disagree.
+  def bound_of($name; $all; $shown; $total; $reveal; $note):
+    if $all == 0 and $total > $shown
+    then {name:$name, shown:$shown, total:$total, reveal:$reveal, note:$note}
+    else null end;
+  def bound_text($b):
+    if $b == null then null
+    else "showing \($b.shown) of \($b.total)\($b.note); reveal \($b.reveal)" end;
+  def bound_omitted($b):
+    if $b == null then empty
+    else {surface:"\($b.name) showing \($b.shown) of \($b.total)\($b.note)", reveal:$b.reveal} end;
   def bounded_blocker_note($n):
     ((.unresolved_blocker_ids // []) | map(tostring)) as $ids
     | reduce range(0; $ids | length) as $i
@@ -584,6 +624,19 @@ MODEL=$(printf '%s' "$SNAP" | jq \
        | select(($all_reports == 1) or (($rel_ids | index($r.id)) != null))
        | {id, path} ]) as $reports_all
   | ([ .tasks[] | select(.kind != "secondmate" and .pr.url != null and .pr.source == "meta") | {id, url:.pr.url} ]) as $recorded_prs_all
+  # One bound record per captain-facing list, computed once here and consumed
+  # twice: the `<key>_bound` scalar printed beside that list and the matching
+  # omitted[] entry. null means the list was not bounded.
+  | bound_of("in_flight"; $all_in_flight; $in_flight_n; ($in_flight_all | length); "--all-in-flight"; "") as $b_in_flight
+  | bound_of("secondmates"; $all_secondmates; $secondmates_n; ($secondmates_all | length); "--all-secondmates"; "") as $b_secondmates
+  | bound_of("decisions_open"; $all_decisions; $decisions_n; ($decisions_all | length); "--all-decisions"; "") as $b_decisions
+  | bound_of("gates"; $all_queued; $gates_n; ($gates_all | length); "--all-queued"; "") as $b_gates
+  | bound_of("reports"; $all_reports; $reports_n; ($reports_all | length); "--all-reports"; "") as $b_reports
+  | bound_of("recorded_prs"; $all_recorded_prs; $recorded_prs_n; ($recorded_prs_all | length); "--all-recorded-prs"; "") as $b_recorded_prs
+  | bound_of("unhealthy_endpoints"; $all_unhealthy; $unhealthy_n; ($unhealthy_all | length); "--all-unhealthy"; "") as $b_unhealthy
+  | bound_of("landed"; $all_landed; ($done | length); ($per_home_capped | length); "--all-landed";
+      (($done | map(.home_id) | unique | map(select(. != "(main)")) | length) as $k
+       | if $k > 0 then " (incl. \($k) secondmate home(s))" else "" end)) as $b_landed
   | def filed_epoch:
       (.filed // null) as $filed
       | if ($filed | type) != "string" then null
@@ -629,21 +682,29 @@ MODEL=$(printf '%s' "$SNAP" | jq \
            captain_omitted:([$measured[].captain_omitted] | add // 0),
            captain:[$measured[] as $h | $h.captain[]? | . + {owner:$h.owner}]}),
       in_flight: (if $all_in_flight == 1 then $in_flight_all else $in_flight_all[:$in_flight_n] end),
+      in_flight_bound: bound_text($b_in_flight),
       secondmates: (if $all_secondmates == 1 then $secondmates_all else $secondmates_all[:$secondmates_n] end),
+      secondmates_bound: bound_text($b_secondmates),
       secondmate_reconcile: [ (.secondmate_current.records // [])[]
         | select(.reconcile_inventory != null)
         | {id, spawn_gen:(.spawn_gen // null), host:(.host // null), kind:(.reconcile_inventory.kind // null), ids:((.reconcile_inventory.ids // []) | map(select(type == "string")) | sort)} ],
       decisions_open: (if $all_decisions == 1 then $decisions_all else $decisions_all[:$decisions_n] end),
+      decisions_open_bound: bound_text($b_decisions),
       landed: ($done | map({id, what:(.title | trunc(70)),
                             artifact:(landed_artifact // "-"),owner:.home_id})),
+      landed_bound: bound_text($b_landed),
       gates: ($return_catchup_gate
               + ($gates_all | newest_filed_first
                  | if $all_queued == 1 then . else .[:$gates_n] end)),
+      gates_bound: bound_text($b_gates),
       reports: (if $all_reports == 1 then $reports_all else $reports_all[:$reports_n] end),
-      recorded_prs: (if $all_recorded_prs == 1 then $recorded_prs_all else $recorded_prs_all[:$recorded_prs_n] end)
+      reports_bound: bound_text($b_reports),
+      recorded_prs: (if $all_recorded_prs == 1 then $recorded_prs_all else $recorded_prs_all[:$recorded_prs_n] end),
+      recorded_prs_bound: bound_text($b_recorded_prs)
     }
   | . + (if ($unhealthy_all | length) > 0 then
-           {unhealthy_endpoints:(if $all_unhealthy == 1 then $unhealthy_all else $unhealthy_all[:$unhealthy_n] end)}
+           {unhealthy_endpoints:(if $all_unhealthy == 1 then $unhealthy_all else $unhealthy_all[:$unhealthy_n] end),
+            unhealthy_endpoints_bound:bound_text($b_unhealthy)}
          else {} end)
   | . + (if $include_prs == 1 then {candidate_prs:$candidate_prs} else {} end)
   | . + (if $f_bodies then {bodies:[ $snap.backlog.records[] | select(.structured and (.state == "queued" or .state == "done")) | {id, body:((.body_excerpt // .raw // "-") | trunc(200))} ]} else {} end)
@@ -656,7 +717,7 @@ MODEL=$(printf '%s' "$SNAP" | jq \
         (if $f_actions then empty else {surface:"watch/steer actions", reveal:"--fields actions"} end),
         (if $f_endpoints then empty else {surface:"healthy endpoint detail", reveal:"--fields endpoints"} end),
         (if $all_reports == 1 then empty else {surface:"full scout-report inventory", reveal:"--all-reports"} end),
-        (if $all_landed == 0 and ($per_home_capped | length) > ($done | length) then {surface:("landed showing \($done | length) of \($per_home_capped | length)" + (($done | map(.home_id) | unique | map(select(. != "(main)")) | length) as $k | if $k > 0 then " (incl. \($k) secondmate home(s))" else "" end)), reveal:"--all-landed"} else empty end),
+        (bound_omitted($b_landed)),
         (if $all_landed == 0 and $home_cap_dropped > 0 then {surface:("landed per-home capped at \($landed_per_home_n) for \($home_cap_dropped) home(s)"), reveal:"--all-landed"} else empty end),
         (if (($snap.secondmate_landed.unreadable // []) | length) > 0 then {surface:("secondmate home(s) with unreadable structured state: \(($snap.secondmate_landed.unreadable // []) | length)"), reveal:"inspect the listed secondmate home ledgers"} else empty end),
         (if $all_landed == 0 and (($snap.secondmate_landed.truncated // []) | length) > 0 then {surface:("secondmate home Done capped at the snapshot layer for \(($snap.secondmate_landed.truncated // []) | length) home(s)"), reveal:"--all-landed"} else empty end),
@@ -664,11 +725,13 @@ MODEL=$(printf '%s' "$SNAP" | jq \
          | if $n > 0 then {surface:("main in-flight backlog item(s) have no child metadata: \($n)"), reveal:"inspect main data/backlog.md In flight vs state/*.meta"} else empty end),
         ((($snap.main_inventory.unstructured_current_count // 0)) as $n
          | if $n > 0 then {surface:("main unstructured current backlog row(s): \($n)"), reveal:"inspect main data/backlog.md In flight and Queued free-form rows"} else empty end),
-        (if $all_in_flight == 0 and ($in_flight_all | length) > $in_flight_n then {surface:("in_flight showing \($in_flight_n) of \($in_flight_all | length)"), reveal:"--all-in-flight"} else empty end),
+        (bound_omitted($b_in_flight)),
         (($snap.secondmate_current.records // [])[] as $m
-         | ([($m.omitted // [])[] | select(.surface == "active_children") | .count] | add // 0) as $n
-         | if $n > 0 then {surface:("secondmate " + $m.id + " active children omitted by snapshot bound: \($n)"), reveal:"raise FM_SNAPSHOT_SECONDMATE_CHILDREN"} else empty end),
-        (if $all_secondmates == 0 and ($secondmates_all | length) > $secondmates_n then {surface:("secondmates showing \($secondmates_n) of \($secondmates_all | length)"), reveal:"--all-secondmates"} else empty end),
+         | ($m.omitted // [])[]
+         | select((.count // 0) > 0)
+         | {surface:("secondmate " + $m.id + " " + (.surface | gsub("_"; " ")) + " omitted by snapshot bound: \(.count)"),
+            reveal:(.reveal // "inspect the listed secondmate home")}),
+        (bound_omitted($b_secondmates)),
         (if (($snap.secondmate_current.truncated // 0) > 0) then {surface:("registered secondmates omitted by snapshot bound: \($snap.secondmate_current.truncated)"), reveal:"raise FM_SNAPSHOT_SECONDMATES"} else empty end),
         (if $snap.secondmate_current.registry.input_truncated == true then {surface:"secondmate registry input truncated by bounded read", reveal:"raise FM_SNAPSHOT_REGISTRY_LINES or FM_SNAPSHOT_REGISTRY_BYTES"} else empty end),
         (if $snap.secondmate_current.registry.records_truncated == true then {surface:"secondmate registry records omitted by bounded read", reveal:"raise FM_SNAPSHOT_REGISTRY_RECORDS"} else empty end),
@@ -678,12 +741,12 @@ MODEL=$(printf '%s' "$SNAP" | jq \
          | {surface:("secondmate " + .id + " served from cached home ledger"),reveal:"inspect the home ledger publication and remote route"}),
         (([($snap.secondmate_current.records // [])[] | select(.parent_event.activity_scan.input_truncated == true or .parent_event.activity_scan.retained_truncated == true)] | length) as $n | if $n > 0 then {surface:("secondmate parent activity evidence truncated for \($n) record(s)"), reveal:"raise FM_SNAPSHOT_PARENT_ACTIVITY_LINES, FM_SNAPSHOT_PARENT_ACTIVITY_BYTES, or FM_SNAPSHOT_PARENT_ACTIVITIES"} else empty end),
         (([($snap.secondmate_current.records // [])[] | select(.parent_event.activity_scan.available == false)] | length) as $n | if $n > 0 then {surface:("secondmate parent activity evidence unavailable for \($n) record(s)"), reveal:"inspect the parent status logs"} else empty end),
-        (if $all_decisions == 0 and ($decisions_all | length) > $decisions_n then {surface:("decisions_open showing \($decisions_n) of \($decisions_all | length)"), reveal:"--all-decisions"} else empty end),
+        (bound_omitted($b_decisions)),
         (if $all_decisions == 0 and $decisions_marked_deferred > 0 then {surface:("captain holds bucketed blocked, dated, or aged: \($decisions_marked_deferred)"), reveal:"--all-decisions"} else empty end),
-        (if $all_queued == 0 and ($gates_all | length) > $gates_n then {surface:("gates showing \($gates_n) of \($gates_all | length)"), reveal:"--all-queued"} else empty end),
-        (if $all_reports == 0 and ($reports_all | length) > $reports_n then {surface:("reports showing \($reports_n) of \($reports_all | length)"), reveal:"--all-reports"} else empty end),
-        (if $all_recorded_prs == 0 and ($recorded_prs_all | length) > $recorded_prs_n then {surface:("recorded_prs showing \($recorded_prs_n) of \($recorded_prs_all | length)"), reveal:"--all-recorded-prs"} else empty end),
-        (if $all_unhealthy == 0 and ($unhealthy_all | length) > $unhealthy_n then {surface:("unhealthy_endpoints showing \($unhealthy_n) of \($unhealthy_all | length)"), reveal:"--all-unhealthy"} else empty end),
+        (bound_omitted($b_gates)),
+        (bound_omitted($b_reports)),
+        (bound_omitted($b_recorded_prs)),
+        (bound_omitted($b_unhealthy)),
         (if $include_prs == 1 and $pr_repos_total > $pr_repos_shown then {surface:("PR repositories showing \($pr_repos_shown) of \($pr_repos_total)"), reveal:"--all-pr-repos"} else empty end),
         (if $include_prs == 1 and $pr_rows_capped > 0 then {surface:("candidate_prs showing \($candidate_prs | length) of at least \($pr_rows_min_total); capped in \($pr_rows_capped) repo(s)"), reveal:"raise FM_BEARINGS_PR_LIMIT"} else empty end),
         (if $include_prs == 1 then empty else {surface:"live PR discovery + checks", reveal:"--include-prs"} end) ]) }

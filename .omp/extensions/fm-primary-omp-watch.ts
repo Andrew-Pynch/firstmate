@@ -11,9 +11,12 @@
 //     still tracked at before_agent_start / custom message_start exactly as on Pi.
 //   - omp reports no session_shutdown reason, so EVERY shutdown with a pending
 //     actionable close persists the replacement handoff and the next owning
-//     session_start, in this process or a later one, replays it. Replaying a
-//     wake main has already drained is harmless (the queue is durable and the
-//     drain is idempotent); losing one across a session replacement is not.
+//     session_start, in this process or a later one, replays it. A replayed
+//     reason line is frozen at its cycle's close, so bin/fm-wake-notify.sh's
+//     `replay` first decides what it still owes (owedReplay below): a wake
+//     main has already drained, or a status file cleanup has since removed,
+//     never reaches main again. Losing an owed one across a session
+//     replacement is still worse than repeating it.
 //   - Replacement shutdown retires the established predecessor arm before the
 //     successor arms; unlike Pi, it is not retained until a distinct active
 //     successor generation commits its own arm, so omp keeps the plain
@@ -404,6 +407,34 @@ function clearReplacementHandoff(pending: PendingActionableClose): void {
   } catch (error) {
     if (nodeErrorCode(error) !== "ENOENT") throw error;
   }
+}
+
+// A replayed handoff record's reason line was frozen when its watcher cycle
+// closed, possibly hours before this session and before the tasks it names were
+// cleaned up. bin/fm-wake-notify.sh's `replay` owns what it still owes: the
+// record to deliver (its reason possibly narrowed), or null when nothing is.
+// A delivered record is left to the pipeline's cleanup, and any inability to
+// decide replays it unchanged, because a missed wake is worse than a duplicate.
+function owedReplay(pending: PendingActionableClose): PendingActionableClose | null {
+  if (pending.delivered) return pending;
+  let decision = "";
+  try {
+    const result = spawnSync("bash", [notifyScript, "replay"], {
+      cwd: fmRoot,
+      encoding: "utf8",
+      input: pending.message,
+      env: { ...process.env, FM_HOME: fmHome, FM_STATE_OVERRIDE: state, FM_ROOT_OVERRIDE: fmRoot },
+    });
+    if (result.status !== 0) return pending;
+    decision = result.stdout || "";
+  } catch {
+    return pending;
+  }
+  if (decision === "skip\n") return null;
+  if (!decision.startsWith("deliver\n")) return pending;
+  const message = decision.slice("deliver\n".length).replace(/\n$/, "");
+  if (!actionableLine(message)) return pending;
+  return message === pending.message ? pending : { ...pending, message };
 }
 
 function classifyClose(stdout: string, stderr: string, code: number | null, signal: NodeJS.Signals | null): CloseClassification {
@@ -1077,7 +1108,19 @@ export default function (pi: ExtensionAPI) {
       loadFailure = `watcher: FAILED - omp extension could not load a replacement-session actionable wake\n${detail}`;
     }
     const inProcessPending = replacementCoordinator.pending.splice(0);
-    for (const actionable of [...pending, ...inProcessPending]) {
+    for (const loaded of pending) {
+      const owed = owedReplay(loaded);
+      if (owed) {
+        enqueuePendingActionable(owner, owed);
+        continue;
+      }
+      try {
+        clearReplacementHandoff(loaded);
+      } catch (error) {
+        surfaceCleanupFailure(owner, error);
+      }
+    }
+    for (const actionable of inProcessPending) {
       enqueuePendingActionable(owner, actionable);
     }
     if (owner.pendingActionables.length > 0) {
@@ -1177,8 +1220,8 @@ export default function (pi: ExtensionAPI) {
     // A child session's end leaves the primary serving; it holds no generation.
     if (childSession) return;
     // omp carries no shutdown reason (verified: `reason` is undefined), so the
-    // replacement handoff is always persisted when anything is pending; a
-    // terminal quit then merely replays an already-drained wake next start.
+    // replacement handoff is always persisted when anything is pending; after a
+    // terminal quit the next start's owedReplay drops what is no longer owed.
     if (replacementCoordinator.receiver === receiveReplacementActionable) replacementCoordinator.receiver = null;
     await stopSessionGeneration(generation, true);
   });

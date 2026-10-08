@@ -28,7 +28,9 @@
 #   6. The turn-end guard extension compels one continuation on exit 2 and
 #      stands down when the payload already carries stop_hook_active.
 #   7. The watch extension arms through fm_watch_arm_omp and delivers an
-#      actionable close as one hidden custom follow-up, never a user message.
+#      actionable close as one hidden custom follow-up, never a user message;
+#      a wake replayed after a restart never names a cleaned-up task's status
+#      file and is dropped once every row it pointed at is acknowledged.
 #   8. A secondmate launch proves both preconditions of the auto-discovery it
 #      depends on: an installed omp at or past the verified release, and a home
 #      that carries both tracked .omp/extensions files.
@@ -954,8 +956,9 @@ test_watch_extension_heals_shutdown_without_start() {
   repo="$TMP_ROOT/watch-orphan/repo"; home="$TMP_ROOT/watch-orphan/home"
   install_omp_extension_fixture "$repo"
   mkdir -p "$home/state"
-  # Cycle 1 reports an actionable line and stays up, so the shutdown persists
-  # it as a handoff token. Cycle 2 closes on the test's cue; later cycles idle.
+  # Cycle 1 queues its row, reports an actionable line, and stays up, so the
+  # shutdown persists it as a handoff token whose row is still unacknowledged.
+  # Cycle 2 closes on the test's cue; later cycles idle.
   cat > "$repo/bin/fm-watch-arm.sh" <<'SH'
 #!/usr/bin/env bash
 [ "${1:-}" = --handling-delivered ] && exit 0
@@ -964,7 +967,13 @@ n=$((n + 1))
 printf '%s\n' "$n" > "$FM_HOME/state/.arm-count"
 printf 'watcher: started pid=%s (beacon 0s) recovery-generation=gen-%s\n' "$$" "$n"
 case "$n" in
-  1) printf 'signal: stuck wake\n'; sleep 30 ;;
+  1)
+    # shellcheck source=/dev/null
+    . "${FM_ROOT_OVERRIDE:?}/bin/fm-wake-lib.sh"
+    fm_wake_append signal stuck.status "signal: stuck wake" || exit 1
+    printf 'signal: stuck wake\n'
+    sleep 30
+    ;;
   2)
     i=0
     while [ ! -e "$FM_HOME/state/.fire" ] && [ "$i" -lt 150 ]; do sleep 0.1; i=$((i + 1)); done
@@ -1027,6 +1036,9 @@ if (!/^watcher: started omp extension arm child 1;/.test(text) || !text.includes
 if (readFileSync(marker, "utf8").split("\n")[1] !== String(process.pid)) throw new Error("the arm call did not reconcile the loaded marker to this session");
 await settle(() => primary.sent.length === 1, "the stuck wake was not replayed");
 if (!primary.sent[0].m.content.includes("FIRSTMATE WATCHER WAKE: signal: stuck wake")) throw new Error(`unexpected replay: ${primary.sent[0].m.content}`);
+// Main handles the replayed wake and acknowledges its row, so the next cycle's
+// wake is not covered by the replayed notification.
+writeFileSync(`${state}/.wake-queue`, "");
 writeFileSync(`${state}/.fire`, "");
 await settle(() => primary.sent.length === 2, "wakes did not inject again after recovery");
 if (!primary.sent[1].m.content.includes("FIRSTMATE WATCHER WAKE: signal: after recovery")) throw new Error(`unexpected wake: ${primary.sent[1].m.content}`);
@@ -1048,6 +1060,105 @@ EOF
   expect_code 0 "$status" "omp watch extension shutdown-without-start contract: $out"
   [ -z "$out" ] || fail "omp watch shutdown-without-start test printed output: $out"
   pass ".omp watch extension: after a shutdown with no session_start the next arm call or agent start arms a fresh generation, replays the stuck token, and wakes inject again"
+}
+
+# omp persists every wake a session had not yet consumed when it ended, and the
+# next session replays it. The replay carries the reason line exactly as its
+# watcher cycle printed it, so a restart after a task's cleanup used to wake the
+# supervisor naming that task's removed status file while the drain found
+# nothing. A replay must never name a status file that no longer exists, and a
+# replayed wake whose durable rows were all acknowledged must not wake at all.
+test_watch_extension_restart_never_replays_a_cleaned_up_task() {
+  local repo home state out status
+  repo="$TMP_ROOT/watch-replay/repo"; home="$TMP_ROOT/watch-replay/home"; state="$home/state"
+  install_omp_extension_fixture "$repo"
+  mkdir -p "$state"
+  # A cycle fires once when the test writes .fire: it queues one durable row per
+  # named file, as the real watcher does before printing, then prints the list.
+  cat > "$repo/bin/fm-watch-arm.sh" <<'SH'
+#!/usr/bin/env bash
+set -u
+[ "${1:-}" = --handling-delivered ] && exit 0
+printf 'watcher: started pid=%s (beacon fresh) recovery-generation=gen-%s\n' "$$" "$$"
+if [ -s "${FM_HOME:?}/state/.fire" ]; then
+  files=$(cat "$FM_HOME/state/.fire")
+  rm -f "$FM_HOME/state/.fire"
+  # shellcheck source=/dev/null
+  . "${FM_ROOT_OVERRIDE:?}/bin/fm-wake-lib.sh"
+  for f in $files; do fm_wake_append signal "${f##*/}" "signal: $files" || exit 1; done
+  sleep 0.3
+  printf 'signal: %s\n' "$files"
+  exit 0
+fi
+exec sleep 30
+SH
+  chmod +x "$repo/bin/fm-watch-arm.sh"
+  # One omp session per call. "fire" receives the wake, never consumes it, and
+  # ends, so the shutdown persists it. "restart" is the next session: it prints
+  # every wake it was handed.
+  omp_session() {  # <fire|restart>
+    FM_HOME="$home" FM_ROOT_OVERRIDE="$repo" SESSION_MODE=$1 FM_OMP_ARM_READY_TIMEOUT_MS=3000 \
+      FM_WATCH_REARM_RETRY_LIMIT=1 FM_WATCH_REARM_RETRY_BASE_MS=5 FM_WATCH_REARM_RETRY_MAX_MS=10 \
+      EXT="$repo/.omp/extensions/fm-primary-omp-watch.ts" node --input-type=module 2>&1 <<'EOF'
+import { pathToFileURL } from "node:url";
+import { writeFileSync, existsSync } from "node:fs";
+const state = `${process.env.FM_HOME}/state`;
+writeFileSync(`${state}/.lock`, `${process.pid}\n`);
+const handlers = new Map(); const sent = [];
+const mod = await import(pathToFileURL(process.env.EXT).href);
+mod.default({
+  on(e, h) { handlers.set(e, h); },
+  registerCommand() {},
+  registerTool() {},
+  sendMessage(m) { sent.push(m.content); return undefined; },
+});
+await handlers.get("session_start")({}, {});
+if (process.env.SESSION_MODE === "fire") {
+  for (let i = 0; i < 100 && sent.length === 0; i += 1) await new Promise((r) => setTimeout(r, 50));
+  if (sent.length !== 1) throw new Error(`the firing session received ${sent.length} wakes`);
+  await handlers.get("session_shutdown")({}, {});
+  if (!existsSync(`${state}/extensions/omp-primary-watch/session-replacement-actionable.json`)) throw new Error("the unconsumed wake was not persisted");
+} else {
+  await new Promise((r) => setTimeout(r, 2000));
+  for (const wake of sent) console.log(`WAKE ${wake.slice(wake.indexOf("FIRSTMATE WATCHER WAKE:")).split("\n")[0]}`);
+  await handlers.get("session_shutdown")({}, {});
+}
+process.exit(0);
+EOF
+  }
+  clean_up_task() {  # <id>: the task's status and turn-end files leave, and main acknowledges its rows
+    rm -f "$state/$1.status" "$state/$1.turn-ended"
+    : > "$state/.wake-queue"
+  }
+
+  # 1. Every row acknowledged: the replay has nothing left to announce.
+  : > "$state/torn.status"
+  printf '%s' "$state/torn.status" > "$state/.fire"
+  out=$(omp_session fire); status=$?
+  expect_code 0 "$status" "the first session did not receive its wake: $out"
+  clean_up_task torn
+  out=$(omp_session restart); status=$?
+  expect_code 0 "$status" "the restarted session failed: $out"
+  assert_not_contains "$out" "torn.status" "a restart replayed a wake naming a cleaned-up task's status file"
+  assert_not_contains "$out" "WAKE " "a restart woke the supervisor for a wake whose rows were all acknowledged: $out"
+  assert_absent "$state/extensions/omp-primary-watch/session-replacement-actionable.json" \
+    "a replay that is no longer owed stayed in the handoff and would replay again"
+
+  # 2. A newer row for a live task is still unacknowledged: the replay still
+  # wakes the supervisor, naming only the status file that still exists.
+  : > "$state/torn.status"; : > "$state/live.status"
+  printf '%s %s' "$state/torn.status" "$state/live.status" > "$state/.fire"
+  out=$(omp_session fire); status=$?
+  expect_code 0 "$status" "the second firing session did not receive its wake: $out"
+  clean_up_task torn
+  FM_HOME="$home" bash -c '. "$1/bin/fm-wake-lib.sh"; fm_wake_append signal live.status "signal: $2"' \
+    _ "$repo" "$state/live.status" || fail "could not queue the live task's newer row"
+  out=$(omp_session restart); status=$?
+  expect_code 0 "$status" "the second restarted session failed: $out"
+  assert_not_contains "$out" "torn.status" "a restart replayed a wake naming a cleaned-up task's status file"
+  assert_contains "$out" "WAKE FIRSTMATE WATCHER WAKE: signal: $state/live.status" \
+    "a restart with an unacknowledged row did not wake the supervisor for the live task: $out"
+  pass ".omp watch extension: a restart after a task's cleanup never replays its status file, and replays nothing once every row is acknowledged"
 }
 
 # The loaded markers vouch for the process in state/.lock, so a descendant omp
@@ -1100,6 +1211,7 @@ test_watch_extension_arms_and_delivers
 test_watch_extension_coalesces_unacknowledged_wakes
 test_watch_extension_child_session_never_owns_the_watch
 test_watch_extension_heals_shutdown_without_start
+test_watch_extension_restart_never_replays_a_cleaned_up_task
 test_extension_markers_name_only_the_lock_holder
 test_remote_host_leg_accepts_omp
 test_remote_parent_leg_accepts_omp

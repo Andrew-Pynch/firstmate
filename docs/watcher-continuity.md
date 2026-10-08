@@ -67,6 +67,12 @@ Rows appended after the supervisor's drain but before its acknowledgement are no
 Claude and Cursor need no such claim: their Stop hooks arm the watcher only at a turn boundary, so no second notification can exist while the supervisor is busy.
 The Pi adapter delivers actionable wakes to the supervision branch rather than to main, so main's composer does not accumulate them and the claim is deliberately not applied there.
 
+A notification the omp adapter replays from an earlier session carries a reason line frozen when its watcher cycle closed, often before a restart and before the tasks it names were cleaned up.
+Before replaying one, the adapter asks `bin/fm-wake-notify.sh replay`, and `bin/fm-wake-lib.sh`'s `fm_wake_notify_replay` owns what it still owes.
+A replayed signal, stale, or heartbeat wake is dropped once the queue holds no row, because the watcher queues a row before every such wake and acknowledgement removes it.
+A replayed signal wake never names a status or turn-end file that no longer exists, and one left naming none is dropped.
+Check wakes, some of which queue no row, and any replay that cannot be decided are replayed unchanged.
+
 ## Recovery episode acknowledgement
 
 A recovery episode is one generation of `state/.watcher-down`, and it is retired only by the generation-bound acknowledgement the drain prints as `WAKE_ACK_REQUIRED`.

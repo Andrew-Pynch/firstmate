@@ -1981,6 +1981,54 @@ fm_wake_notify_claim() {
   return "$status"
 }
 
+# A harness integration that keeps undelivered notifications across a session
+# replacement (the omp primary extension persists every wake its session had not
+# consumed) replays each one's reason line exactly as its watcher cycle printed
+# it, possibly hours later and after the tasks it names were cleaned up. That
+# line only points at the durable queue, so decide what, if anything, of it is
+# still owed:
+#   - A signal, stale, or heartbeat reason is owed only while the queue holds a
+#     row: the watcher queues one before printing every such reason and
+#     acknowledgement removes it, so an empty queue proves the wake was handled.
+#   - A signal reason drops every status or turn-end file that no longer exists,
+#     which is how cleanup (bin/fm-teardown.sh) leaves a task; a reason left
+#     naming nothing is not owed.
+#   - Any other reason, including the check wakes that queue no row, replays
+#     unchanged.
+# <message> is the replayed reason line, optionally followed by more lines,
+# which pass through untouched.
+# 0 = deliver the printed message; 1 = not owed, skip it; 2 = the decision
+# could not be made safely, which callers treat as delivering the original.
+fm_wake_notify_replay() {  # <message>
+  local message=$1 reason rest bounds token kept=""
+  local -a tokens
+  reason=${message%%$'\n'*}
+  rest=${message#"$reason"}
+  case "$reason" in
+    signal:*|stale:*|heartbeat|heartbeat:*) ;;
+    *) printf '%s' "$message"; return 0 ;;
+  esac
+  if [ -e "$FM_WAKE_QUEUE" ] && [ ! -r "$FM_WAKE_QUEUE" ]; then return 2; fi
+  fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK" || return 2
+  bounds=$(_fm_wake_queue_seq_bounds)
+  fm_lock_release "$FM_WAKE_QUEUE_LOCK"
+  [ -n "$bounds" ] || return 1
+  case "$reason" in
+    signal:*)
+      read -r -a tokens <<< "${reason#signal:}"
+      for token in "${tokens[@]+"${tokens[@]}"}"; do
+        case "$token" in
+          *.status|*.turn-ended) [ -e "$token" ] || [ -L "$token" ] || continue ;;
+        esac
+        kept="$kept $token"
+      done
+      [ -n "$kept" ] || return 1
+      reason="signal:$kept"
+      ;;
+  esac
+  printf '%s%s' "$reason" "$rest"
+}
+
 fm_wake_secondmate_progress_marker_write() { # <task> <observed-at> <oldest-row-key>
   local task=$1 observed_at=$2 oldest_row_key=$3 marker tmp
   case "$task" in ''|*[!A-Za-z0-9._-]*) return 1 ;; esac

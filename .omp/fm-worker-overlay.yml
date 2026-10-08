@@ -22,6 +22,14 @@ modelRoles:
   # DeepSeek platform quota is exhausted, so the advisor is Grok 4.7 through
   # the xai OAuth account, the same advisor Main uses (~/.omp/agent/config.yml).
   advisor: xai-oauth/grok-4.7
+advisor:
+  # 2026-10-04 (Andrew): xai Grok credits are empty until about 2026-10-09, and
+  # when Grok fails omp fell back to openai-codex/gpt-6-astra, adding a large
+  # Codex burn (swarm-efficiency report: Astra worker advisors about $4,016
+  # API-equal; all advisors plus subagents were 23.9% of total fleet spend
+  # across every provider). Workers run with no advisor
+  # until Grok resets; then set this back to true.
+  enabled: false
 composer:
   # Renders a bare `❯` (U+276F) row, a glyph the shared composer classifier
   # already reads; the shipped default `band` and six other shapes are not in

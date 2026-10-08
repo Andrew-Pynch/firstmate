@@ -44,6 +44,9 @@
 # and a `## Captain's intent` line opening with a Captain label or address
 # through the helpers below. Other mentions of `--intent` point here rather than
 # restating the rule.
+# fm_brief_intent_append below is the writer for a later captain change: it
+# amends that subsection in place, and bin/fm-authority-amend.sh owns amending
+# several affected tasks plus steering each owner in one step.
 # Every heredoc here stays outside a command substitution: `VAR=$(cat <<EOF ...)`
 # breaks parsing of the whole file on Bash 3.2 (tests/fm-brief.test.sh).
 # fm_brief_worker_role owns the ship/scout role scope. bin/fm-spawn.sh is its one
@@ -243,6 +246,122 @@ fm_brief_intent_address_line() {  # <file>
     /^[[:space:]]*(Captain('\''s (words|ask|intent))?:|Captain,)/ { print; found = 1; exit }
     END { exit !found }
   '
+}
+
+# Append the captain's own words to the end of the `## Captain's intent` body
+# inside a brief's `# Task` section, then verify through the reader that the
+# words are now part of that body. The write is atomic (temp file in the same
+# directory, then rename) and preserves the brief's mode.
+#
+# This is the WRITER mirror of fm_brief_heading_parse: the same optional
+# indentation, the same fence tracking, and the same same-or-higher-heading
+# terminator decide where the body ends, so a brief the reader can find is a
+# brief this can extend. The two scans live in one file and must be changed
+# together. Existing trailing blank lines of the body are collapsed before the
+# insertion, so re-amending one brief cannot grow an unbounded run of blanks.
+# Never add a speaker label or direct address here: the heading supplies
+# provenance and the appended text is the captain's words only
+# (fm_brief_intent_address_line is the check a caller applies before this).
+fm_brief_intent_append() {  # <file> <text>
+  local file=$1 text=$2 dir tmp mode body
+  [ -f "$file" ] && [ -r "$file" ] || {
+    echo "error: fm_brief_intent_append: no readable brief at $file" >&2
+    return 1
+  }
+  dir=$(dirname "$file")
+  while [ "${text%$'\n'}" != "$text" ]; do text=${text%$'\n'}; done
+  if [ -z "$(printf '%s' "$text" | tr -d '[:space:]')" ]; then
+    echo "error: fm_brief_intent_append: refusing to append an empty captain-words block to $file" >&2
+    return 1
+  fi
+  if ! fm_brief_task_heading_present "$file" "## Captain's intent"; then
+    echo "error: fm_brief_intent_append: $file has no '## Captain's intent' subsection to amend" >&2
+    return 1
+  fi
+  tmp=$(mktemp "$dir/.intent-append.XXXXXX") || return 1
+  if ! FM_APPEND_TEXT="$text" awk '
+    function level_of(s,   n) { n = 0; while (substr(s, n + 1, 1) == "#") n++; return n }
+    function flush_blanks(   i) { for (i = 0; i < blanks; i++) print ""; blanks = 0 }
+    function emit_words() { blanks = 0; print ""; print add; print ""; inserted = 1 }
+    BEGIN { add = ENVIRON["FM_APPEND_TEXT"]; found = 0; grab = 0; fenced = 0; blanks = 0; inserted = 0 }
+    {
+      line = $0
+      scan = line
+      spaces = 0
+      while (spaces < 3 && substr(scan, 1, 1) == " ") {
+        scan = substr(scan, 2)
+        spaces++
+      }
+      marker = substr(scan, 1, 1)
+      marker_len = 0
+      if (marker == "`" || marker == "~") {
+        while (substr(scan, marker_len + 1, 1) == marker) marker_len++
+      }
+      is_fence = marker_len >= 3
+      was_fenced = fenced
+      if (is_fence) {
+        rest = substr(scan, marker_len + 1)
+        if (!fenced) {
+          fenced = 1
+          fence_marker = marker
+          fence_len = marker_len
+        } else if (marker == fence_marker && marker_len >= fence_len && rest ~ /^[[:space:]]*$/) {
+          fenced = 0
+        }
+      }
+
+      if (!found && !was_fenced && line == "## Captain'"'"'s intent") {
+        found = 1
+        grab = 1
+        print line
+        next
+      }
+      if (!grab) {
+        print line
+        next
+      }
+      if (is_fence || was_fenced) {
+        flush_blanks()
+        print line
+        next
+      }
+      level = level_of(scan)
+      if (level > 0 && level <= 2 && substr(scan, level + 1, 1) ~ /^[[:space:]]?$/) {
+        emit_words()
+        print line
+        grab = 0
+        next
+      }
+      if (line ~ /^[[:space:]]*$/) {
+        blanks++
+        next
+      }
+      flush_blanks()
+      print line
+    }
+    END {
+      if (!found) exit 1
+      if (grab) emit_words()
+      if (!inserted) exit 1
+    }
+  ' "$file" > "$tmp"; then
+    rm -f "$tmp"
+    echo "error: fm_brief_intent_append: could not amend $file" >&2
+    return 1
+  fi
+  mode=$(stat -c %a "$file" 2>/dev/null || /usr/bin/stat -f %Lp "$file" 2>/dev/null || true)
+  [ -z "$mode" ] || chmod "$mode" "$tmp" 2>/dev/null || true
+  if ! mv "$tmp" "$file"; then
+    rm -f "$tmp"
+    echo "error: fm_brief_intent_append: could not replace $file" >&2
+    return 1
+  fi
+  body=$(fm_brief_task_heading_body "$file" "## Captain's intent")
+  case "$body" in
+    *"$text"*) return 0 ;;
+  esac
+  echo "error: fm_brief_intent_append: $file was rewritten but the appended words are not in its '## Captain's intent' body" >&2
+  return 1
 }
 
 # The `nm-<run>-<step>` decision key this block mandates is load-bearing beyond

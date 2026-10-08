@@ -1,8 +1,19 @@
 #!/usr/bin/env python3
 """fm-current-page.py - implementation behind bin/fm-current-page.sh.
 
-The shell wrapper's header owns the usage, configuration, notes format, and
-trigger contract; this file only implements them.
+The shell wrapper's header owns usage, configuration, and triggers.
+This header owns the keeper's current-notes.md format:
+  - HH:MM <kind> <text>
+One event per line, using a local 24-hour time.
+Kinds: merged, fixed, live (green), decided (blue), needs (amber), blocked
+(red), info (gray); an unknown kind displays as info.
+Optional ## YYYY-MM-DD headings date the following events; events before a
+date heading use the notes file's local modification date.
+Events sort newest first, grouped by date, with today's first 15 shown.
+More events today and other days sit behind closed details toggles.
+Full HTTP(S) URLs become links, GitHub pull URLs display as PR #<number>,
+and /design/ or /designs/ URLs display their final slug without .html.
+Other lines keep their existing Markdown rendering without timeline styling.
 """
 import datetime as dt
 import fcntl
@@ -322,14 +333,33 @@ def parse_curated(path):
 
 
 def parse_notes(path):
-    """Free-form Markdown context rendered above the filters."""
+    """Read dated timeline events and preserve legacy Markdown."""
     try:
         with open(path, encoding="utf-8") as fh:
             text = fh.read()
+            day = dt.datetime.fromtimestamp(os.fstat(fh.fileno()).st_mtime).date()
     except OSError:
-        return {"free": "", "missing": True}
-    free_text = "\n".join(line for line in text.splitlines() if not re.match(r"^#\s+current-notes\s*$", line, re.I)).strip()
-    return {"free": free_text, "missing": False}
+        return {"free": "", "events": [], "missing": True}
+    free, events = [], []
+    for line in text.splitlines():
+        if re.match(r"^#\s+current-notes\s*$", line, re.I):
+            continue
+        heading = re.fullmatch(r"##\s+(\d{4}-\d{2}-\d{2})\s*", line)
+        if heading:
+            try:
+                day = dt.date.fromisoformat(heading.group(1))
+                continue
+            except ValueError:
+                pass
+        event = re.fullmatch(r"- ([01]\d|2[0-3]):([0-5]\d) ([\w-]+) (.+)", line)
+        if not event:
+            free.append(line)
+            continue
+        hour, minute, kind, note = event.groups()
+        kind = kind if kind in {"merged", "fixed", "live", "decided", "needs", "blocked", "info"} else "info"
+        events.append({"day": day.isoformat(), "time": f"{hour}:{minute}", "kind": kind, "text": note})
+    events.sort(key=lambda row: (row["day"], row["time"]), reverse=True)
+    return {"free": "\n".join(free).strip(), "events": events, "missing": False}
 
 
 def inline_md(text):
@@ -372,6 +402,89 @@ def block_md(text):
             para.append(line.strip())
     flush()
     return "".join(html_out)
+
+
+def note_links(text):
+    """Keep inline Markdown while shortening full PR and design URLs."""
+    out, end = [], 0
+    for match in re.finditer(r"\[[^\]]+\]\(https?://[^)\s]+\)|https?://[^\s<>]+", text):
+        out.append(inline_md(text[end:match.start()]))
+        token = match.group()
+        if token.startswith("["):
+            label, url = token[1:].split("](", 1)
+            url, trailing = url[:-1], ""
+        else:
+            url = token.rstrip(".,;:!?)")
+            trailing = token[len(url):]
+            label = url
+            if PR_RE.fullmatch(url):
+                label = f'PR #{url.rsplit("/", 1)[1]}'
+            elif re.search(r"/designs?/", url):
+                label = url.split("?", 1)[0].split("#", 1)[0].rstrip("/").rsplit("/", 1)[-1]
+                label = label.removesuffix(".html")
+        out.append(f'<a href="{e(url)}">{e(label)}</a>{e(trailing)}')
+        end = match.end()
+    out.append(inline_md(text[end:]))
+    return "".join(out)
+
+
+def notes_timeline(notes, today):
+    """Render at most 15 events initially, with overflow and history folded."""
+    groups = {}
+    for row in notes["events"]:
+        groups.setdefault(row["day"], []).append(row)
+
+    def rows_html(rows):
+        return '<ol class="timeline">' + "".join(
+            f'<li class="note-event"><time datetime="{row["day"]}T{row["time"]}">{row["time"]}</time>'
+            f'<span class="note-kind {row["kind"]}">{row["kind"]}</span>'
+            f'<div class="note-text">{note_links(row["text"])}</div></li>' for row in rows) + "</ol>"
+
+    out = []
+    if groups:
+        day = today.isoformat()
+        rows = groups.pop(day, [])
+        out.append(f'<h3>Today · <time datetime="{day}">{today.strftime("%a, %d %b %Y")}</time></h3>')
+        out.append(rows_html(rows[:15]) if rows else '<p class="k">No events today.</p>')
+        if len(rows) > 15:
+            out.append(f'<details><summary>{len(rows) - 15} more today</summary>{rows_html(rows[15:])}</details>')
+        if groups:
+            count = sum(len(rows) for rows in groups.values())
+            out.append(f'<details class="notes-history"><summary>Other days · {count} event{"s" if count != 1 else ""}</summary>')
+            for day, rows in groups.items():
+                label = dt.date.fromisoformat(day).strftime("%a, %d %b %Y")
+                out.append(f'<h3><time datetime="{day}">{label}</time></h3>{rows_html(rows)}')
+            out.append("</details>")
+    if notes["free"]:
+        out.append(block_md(notes["free"]))
+    return "".join(out)
+
+
+def need_details(need):
+    """Optional action and recommendation, leaving legacy needs unchanged."""
+    out = []
+    action = need.get("do")
+    if isinstance(action, str) and action.strip():
+        parts, end = [], 0
+        for match in re.finditer(r"`([^`]+)`", action):
+            parts.append(inline_md(action[end:match.start()]))
+            parts.append(f'<span class="need-command"><code>{e(match.group(1))}</code>'
+                         '<button type="button" class="copy-command" aria-label="Copy command">Copy</button></span>')
+            end = match.end()
+        parts.append(inline_md(action[end:]))
+        out.append(f'<div class="need-action"><b>Do</b><div>{"".join(parts)}</div></div>')
+    options = need.get("options")
+    if isinstance(options, list):
+        chips = []
+        for option in options:
+            if not isinstance(option, str) or not option.strip():
+                continue
+            recommended = option == need.get("rec")
+            chips.append(f'<span class="need-option{" recommended" if recommended else ""}">{e(option)}'
+                         f'{" <b>Recommended</b>" if recommended else ""}</span>')
+        if chips:
+            out.append(f'<div class="need-options" aria-label="Options">{"".join(chips)}</div>')
+    return "".join(out)
 
 
 # ---------- model ----------
@@ -499,6 +612,7 @@ def render(paths, reason):
         projects = row["projects"] if row else mates.get(who, {}).get("projects", [])
         need_cards.append(
             f'<div class="card need f" {attrs(host, mate, projects)}><b>{e(str(n.get("t", "")))}</b>'
+            f'{need_details(n)}'
             f'<div class="why">{inline_md(str(n.get("why", "")))}</div>'
             f'<div class="k">{e(host)} / {e(mate)}{" / <code>" + e(who) + "</code>" if who else ""}</div></div>')
     nx = cur["next"]
@@ -595,14 +709,16 @@ def render(paths, reason):
     notes_html = ""
     if notes["missing"]:
         notes_html = f'<p class="k">No notes yet ({e(os.path.basename(paths["notes"]))}).</p>'
-    elif notes["free"]:
-        notes_html = f'<div class="notes">{block_md(notes["free"])}</div>'
+    elif notes["free"] or notes["events"]:
+        notes_html = f'<section class="notes" aria-label="Context from Main">{notes_timeline(notes, dt.date.today())}</section>'
 
     stamp = dt.datetime.fromtimestamp(now).strftime("%a %H:%M:%S %Z").strip()
     page = f'''<!doctype html><meta charset="utf-8"><title>Current</title><meta name="viewport" content="width=device-width,initial-scale=1">
 <style>body{{font:16px/1.45 system-ui;background:#0d1117;color:#e6edf3;max-width:1100px;margin:1.5em auto;padding:0 1em}}a{{color:#58a6ff}}h1{{margin:.2em 0}}h2{{margin-top:1.6em;border-bottom:1px solid #30363d;padding-bottom:.2em}}h3{{margin:.6em 0 .2em}}.k{{color:#8b949e;font-size:13px}}code{{font-size:13px;color:#c9d1d9}}
 .next{{border:3px solid #f85149;border-radius:12px;padding:1em 1.3em;background:#2d1517;font-size:18px}}.next h2{{margin:.1em 0;border:0;color:#ff7b72}}.next p{{margin:.3em 0}}.notes{{background:#161b22;border:1px solid #30363d;border-radius:12px;padding:.4em 1.1em;margin:.8em 0}}
+.timeline{{list-style:none;margin:.5em 0;padding:0}}.timeline .note-event{{display:grid;grid-template-columns:5ch 5.5em minmax(0,1fr);align-items:baseline;gap:.8em;border-top:1px solid #30363d;padding:.65em 0;margin:0}}.note-event time{{font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}}.note-kind{{font-size:12px;font-weight:700;text-align:center;border:1px solid;border-radius:5px;padding:2px 6px}}.note-kind.merged,.note-kind.fixed,.note-kind.live{{color:#7ee787;background:#12261e;border-color:#238636}}.note-kind.decided{{color:#79c0ff;background:#10233f;border-color:#1f6feb}}.note-kind.needs{{color:#e3b341;background:#2b2110;border-color:#9e6a03}}.note-kind.blocked{{color:#ff7b72;background:#2d1517;border-color:#da3633}}.note-kind.info{{color:#c9d1d9;background:#21262d;border-color:#57606a}}.note-text{{overflow-wrap:anywhere}}.notes details{{margin:.7em 0;color:#c9d1d9}}@media(max-width:480px){{.timeline .note-event{{gap:.5em;grid-template-columns:5ch 5em minmax(0,1fr);font-size:14px}}.notes{{padding:.4em .7em}}}}
 .card{{background:#161b22;border:1px solid #30363d;border-radius:12px;padding:.9em 1.1em;margin:.7em 0}}.need{{border-left:6px solid #d29922}}.top{{display:flex;justify-content:space-between;gap:1em;font-size:17px}}
+.need-action{{display:flex;align-items:baseline;gap:.8em;background:#2b2110;border:1px solid #9e6a03;border-radius:8px;padding:.7em .9em;margin:.7em 0;color:#e6edf3}}.need-action>div{{min-width:0;overflow-wrap:anywhere}}.need-action>b{{color:#e3b341}}.need-command code{{font-family:ui-monospace,monospace;white-space:pre-wrap;color:#f0f6fc}}.copy-command{{font:12px system-ui;color:#c9d1d9;background:#21262d;border:1px solid #57606a;border-radius:5px;padding:.2em .6em;margin-left:.5em;cursor:pointer}}.copy-command:focus-visible{{outline:2px solid #58a6ff;outline-offset:2px}}.need-options{{display:flex;flex-wrap:wrap;gap:.5em;margin:.6em 0}}.need-option{{background:#21262d;border:1px solid #57606a;border-radius:20px;padding:.3em .8em;font-size:14px;overflow-wrap:anywhere;min-width:0}}.need-option.recommended{{background:#12261e;border-color:#238636;color:#7ee787}}.need-option b{{font-size:11px;margin-left:.4em}}
 .b{{color:#fff;padding:2px 8px;border-radius:5px;font-size:12px;height:fit-content;white-space:nowrap;margin-right:.4em}}.why{{color:#c9d1d9;margin:.3em 0}}.st{{color:#adbac7;font-size:14px;margin:.3em 0;word-break:break-word}}summary{{cursor:pointer}}
 ul.dl{{list-style:none;padding-left:0}}ul.dl li{{margin:.5em 0}}ul.dl .st{{display:inline}}
 #filters{{position:sticky;top:0;background:#0d1117;padding:.4em 0;border-bottom:1px solid #30363d;z-index:1}}.chips{{margin:.15em 0}}.lbl{{display:inline-block;width:5.5em;color:#8b949e;font-size:13px}}
@@ -634,6 +750,16 @@ function fromHash(){{new URLSearchParams(location.hash.slice(1)).forEach((v,k)=>
 fromHash();
 window.addEventListener("hashchange",()=>{{fromHash();apply();}});
 document.querySelectorAll(".chip").forEach(c=>c.onclick=()=>{{sel[c.dataset.dim]=c.dataset.v;apply();}});
+document.querySelectorAll(".copy-command").forEach(button=>button.onclick=async()=>{{
+  try{{
+    await navigator.clipboard.writeText(button.previousElementSibling.textContent);
+    button.textContent="Copied";
+    button.setAttribute("aria-label","Command copied");
+  }}catch{{
+    button.textContent="Copy failed";
+    button.setAttribute("aria-label","Copy failed, select the command to copy it manually");
+  }}
+}});
 apply();
 setTimeout(()=>location.reload(),60000);
 </script>

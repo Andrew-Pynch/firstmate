@@ -2742,6 +2742,41 @@ EOF
   pass "session start rejects Pi loaded markers from previous sessions"
 }
 
+test_startup_preserves_68_large_in_flight_tasks() {
+  local rec root home fakebin out i note started elapsed
+  rec=$(new_world large-live-fleet)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  make_fake_ps_claude "$fakebin"
+  note=$(printf 'x%.0s' $(seq 1 3000))
+  {
+    printf '## In flight\n'
+    for i in $(seq 1 68); do
+      printf -- '- [ ] large-%s - Large Task %s (repo: alpha) (kind: ship) (since 2026-07-08)\n  %s\n' "$i" "$i" "$note"
+      fm_write_meta "$home/state/large-$i.meta" \
+        "window=firstmate:fm-large-$i" "backend=tmux" "project=alpha" \
+        "harness=claude" "kind=ship" "mode=direct-PR" "yolo=off"
+    done
+  } > "$home/data/backlog.md"
+  started=$(date +%s)
+  out=$(FM_SESSION_START_TIMEOUT=120 run_named_harness_session_start \
+    claude "$home" "$root" "$fakebin:$BASE_PATH")
+  elapsed=$(( $(date +%s) - started ))
+  assert_not_contains "$out" 'STARTUP TRUNCATED -' "large fleet exhausted the startup deadline"
+  for i in $(seq 1 68); do
+    assert_contains "$out" "--- large-$i ---" "startup omitted metadata for large-$i"
+    assert_contains "$out" "- [ ] large-$i - Large Task $i " "startup omitted an in-flight backlog identity"
+  done
+  [ "$elapsed" -lt 120 ] || fail "68-task startup took $elapsed seconds"
+  wait_for_network_stage "$home" "$root" 180 \
+    || fail "large fleet's deferred stage did not settle: $(network_stage_report "$home" "$root")"
+  pass "startup preserves all 68 in-flight tasks within 120 seconds (observed ${elapsed}s)"
+}
+
+test_startup_preserves_68_large_in_flight_tasks
+
 test_context_digest_absent_empty_present
 test_lock_refusal_read_only_path
 test_lock_write_failure_read_only_path

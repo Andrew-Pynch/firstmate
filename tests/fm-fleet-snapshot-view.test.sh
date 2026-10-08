@@ -1207,7 +1207,35 @@ test_contribution_input_survives_a_large_backlog() {
   pass "contribution input carries a backlog larger than one argv string"
 }
 
+test_full_snapshot_survives_68_large_in_flight_tasks() {
+  local home fakebin out i note expected
+  home=$(make_home large-live-fleet)
+  fakebin=$(make_fakebin "$home")
+  note=$(printf 'x%.0s' $(seq 1 3000))
+  {
+    printf '## In flight\n'
+    for i in $(seq 1 68); do
+      printf -- '- [ ] large-%s - Large Task %s (repo: alpha) (kind: ship) (since 2026-07-08)\n  %s\n' "$i" "$i" "$note"
+      fm_write_meta "$home/state/large-$i.meta" \
+        "window=firstmate:fm-large-$i" "backend=tmux" "project=alpha" \
+        "harness=claude" "kind=ship" "mode=direct-PR" "yolo=off"
+    done
+  } > "$home/data/backlog.md"
+  out=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$SNAPSHOT" --json 2>&1) \
+    || fail "full snapshot failed on 68 large in-flight tasks: ${out:0:300}"
+  [ "$(printf '%s' "$out" | wc -c)" -gt 131072 ] \
+    || fail "full snapshot fixture did not exceed one argv string"
+  expected=$(jq -n '[range(1;69) | "large-\(.)"] | sort')
+  printf '%s' "$out" | jq -e --argjson expected "$expected" '
+    (.tasks | map(.id) | sort) == $expected
+      and (.backlog.records | map(.id) | sort) == $expected
+      and (.main_inventory.orphan_in_flight | length) == 0
+  ' >/dev/null || fail "large full snapshot dropped or detached an in-flight task"
+  pass "full snapshot preserves all 68 in-flight identities beyond the argv string limit"
+}
+
 test_backlog_tasks_axi_forms_and_overrides
 test_view_renders_snapshot
 test_view_renders_dead_secondmate_agent_status
 test_contribution_input_survives_a_large_backlog
+test_full_snapshot_survives_68_large_in_flight_tasks

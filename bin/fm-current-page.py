@@ -949,6 +949,9 @@ background:linear-gradient(90deg,var(--alert-dim),rgba(255,51,102,.04));border-r
 #factory>.lbl{display:block;color:var(--alert);margin-bottom:1px}#factory>.lbl b{color:var(--fg);margin-left:8px}
 .fx{display:flex;align-items:center;gap:12px;min-height:30px;padding:1px 0;border-top:1px solid rgba(255,51,102,.16)}.fx:first-child{border-top:0}
 .fx-q{flex:1;min-width:0;font:600 13.5px var(--sans);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fx-q.has-w{cursor:pointer}.fx-q.has-w::before{content:"\\25B8  ";color:var(--dim)}.fx.open .fx-q.has-w::before{content:"\\25BE  "}
+.fx-w{display:none}.fx.open{flex-wrap:wrap}.fx.open .fx-w{display:block;flex-basis:100%;padding:0 0 6px 16px;font:13px/1.45 var(--sans);color:var(--fg2)}
+.fx-w .answer{margin-top:5px;max-width:560px}
 .fx-u{flex:none;font:11.5px var(--mono);color:var(--data);white-space:nowrap}
 .fx-a{flex:none;display:flex;gap:10px;align-items:center}.fx-a>a{font:12px var(--mono)}
 .answer.compact{margin:0;padding:0;border:0;background:none;display:flex;align-items:center;gap:8px}
@@ -1041,6 +1044,9 @@ function folds(){panes.forEach(p=>p.classList.toggle("fold",MOB.matches&&S.fold.
 function bind(){panes=$$(".pane[data-pane]").sort((a,b)=>a.dataset.pane-b.dataset.pane);folds();
  panes.forEach(p=>{const n=$(".n",p);n.dataset.n=n.textContent;});}
 function inputs(){return $$(".answer input").map(i=>[i.closest(".answer").dataset.ans,i]);}
+const FXO=new Set();   // band rows the reader opened; kept across re-renders
+document.addEventListener("click",ev=>{const q=ev.target.closest&&ev.target.closest(".fx-q.has-w");if(!q)return;
+ const f=q.closest(".fx");f.classList.toggle("open");f.classList.contains("open")?FXO.add(f.dataset.k):FXO.delete(f.dataset.k);});
 function apply(text){const doc=new DOMParser().parseFromString(text,"text/html");
  const typed={},focus=(inputs().find(([,i])=>i===document.activeElement)||[])[0];inputs().forEach(([k,i])=>{if(i.value)typed[k]=i.value;});
  const keys=()=>new Set($$("#needs-now .it").map(x=>x.dataset.key)),before=keys(),done=$$("#done .it").length;
@@ -1053,6 +1059,7 @@ function apply(text){const doc=new DOMParser().parseFromString(text,"text/html")
  const shipped=$$("#done .it").length-done;if(shipped>0)toast("+"+shipped+" SHIPPED");
  if(before.size&&!after.size)toast("INBOX ZERO","big");filter(q.value);
  $$(".it").forEach(x=>x.classList.toggle("open",S.open.has(x.dataset.key)));
+ $$("#factory .fx").forEach(f=>f.classList.toggle("open",FXO.has(f.dataset.k)));
  inputs().forEach(([k,i])=>{if(typed[k])i.value=typed[k];});
  const back=inputs().find(([k,i])=>k===focus&&i.offsetParent);if(back)back[1].focus({preventScroll:true});paint();}
 function esc(s){const d=document.createElement("div");d.textContent=s==null?"":String(s);return d.innerHTML;}
@@ -1189,14 +1196,14 @@ def render(paths, reason):
     def docs(*tasks):
         return docs_line([p for t in dict.fromkeys(t for t in tasks if t) for p in task_docs(t, page_dir, doc_cache)])
 
-    def answer_for(task, title, text, options, rec, compact=False):
+    def answer_for(task, title, text, options, rec, compact=False, derive=True):
         """Register one answerable decision for the answer endpoint and return its buttons; '' when answers are off."""
         if not answers_on:
             return ""
         key = answers.answer_key(task, title)
         if key in decisions and decisions[key]["title"] != title:
             key += "~" + answers.answer_key("", title)[5:11]
-        if not options:
+        if not options and derive:
             options, rec = decision_options(f"{title} {text}")
         rev = answers.revision(key, title, text, options)
         decisions[key] = {"row": task, "title": title, "rev": rev, "options": options}
@@ -1330,13 +1337,17 @@ def render(paths, reason):
         task = str(f.get("task") or "")
         if task and held is not None and (task not in calls or calls[task]["deferred"]):
             return ""
-        title = str(f["t"])
+        title, why = str(f["t"]), str(f.get("why") or "").strip()
         opts = [o for o in f.get("options") or [] if isinstance(o, str) and o.strip()] if isinstance(f.get("options"), list) else []
-        ans = answer_for(task, title, str(f.get("why", "")), opts, f.get("rec"), compact=True) if opts else ""
+        # Buttons sit inline; a row without options takes a typed answer in its opened detail.
+        ans = answer_for(task, title, why, opts, f.get("rec") if opts else None, compact=bool(opts), derive=False)
         links = "".join(f'<a href="{e(str(lk["url"]))}" target="_blank" rel="noopener">{e(str(lk.get("label") or fm_md.link_label(str(lk["url"]))))} &#8599;</a>'
                         for lk in f.get("links") or [] if isinstance(lk, dict) and re.match(r"https://", str(lk.get("url", ""))))
-        return (f'<div class="fx" data-task="{e(task)}"><span class="fx-q" title="{e(title)}">{e(title)}</span>'
-                f'<span class="fx-u">&#8594; {e(str(f.get("unblocks", "")))}</span><span class="fx-a">{ans}{links}</span></div>')
+        inline, below = (ans, "") if opts else ("", ans)
+        detail = f'<div class="fx-w">{fm_md.inline(why)}{below}</div>' if why or below else ""
+        return (f'<div class="fx" data-task="{e(task)}" data-k="{e(answers.answer_key(task, title))}">'
+                f'<span class="fx-q{" has-w" if detail else ""}" title="{e(why or title)}">{e(title)}</span>'
+                f'<span class="fx-u">&#8594; {e(str(f.get("unblocks", "")))}</span><span class="fx-a">{inline}{links}</span>{detail}</div>')
     factory = [d for d in (factory_div(f) for f in cur["factory"]) if d]
     wins = "".join(
         f'<a class="win" href="{e(str(w["url"]))}" target="_blank" rel="noopener"><b>{e(str(w["t"]))}</b>'

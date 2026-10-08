@@ -60,7 +60,7 @@ pass "a refused project-token spawn leaves no task record"
 # shellcheck source=tests/fixtures.sh
 . "$ROOT/tests/fixtures.sh"
 fm_git_identity fmtest fmtest@example.invalid
-for shape in primary secondmate; do
+for shape in primary secondmate primary-flat secondmate-flat unmatched-parent; do
   dir="$TMP_ROOT/$shape"
   home="$dir/home"
   project="$dir/project"
@@ -78,9 +78,14 @@ for shape in primary secondmate; do
   fm_git_worktree "$project" "$wt" "fm-$id"
   fm_test_spawn_brief "$home" "$id"
   parent_label=firstmate
-  if [ "$shape" = secondmate ]; then
+  if [[ "$shape" = secondmate* ]]; then
     printf 'mate-label\n' > "$home/.fm-secondmate-home"
     parent_label=2ndmate-mate-label
+  fi
+  if [[ "$shape" = *-flat ]]; then
+    printf 'off\n' > "$home/config/herdr-presentation-spaces"
+  elif [ "$shape" = unmatched-parent ]; then
+    parent_label=unmatched
   fi
   printf '%s\n' '- project [local-only] subprojects=pilot,parts - Org/project' > "$home/data/projects.md"
   fake=$(fm_test_make_spawn_fakebin "$dir/fake" codex)
@@ -108,6 +113,7 @@ for shape in primary secondmate; do
        (index("--workspace") as $i | .[$i + 1] == "w1"))] | length == 0)
   ' "$stub_state" >/dev/null || fail "$shape spawn changed its parent or lost the explicit project token"
   assert_grep 'project_token=parts' "$home/state/$id.meta" "explicit subproject identity was not recorded"
+  assert_grep 'herdr_workspace_id=w2' "$home/state/$id.meta" "task workspace identity was not recorded"
   pass "$shape spawn labels its new workspace and pane without creating a worker in the parent"
 done
 

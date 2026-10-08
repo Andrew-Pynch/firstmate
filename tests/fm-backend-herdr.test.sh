@@ -1083,24 +1083,6 @@ test_container_ensure_starts_server_and_workspace() {
   pass "fm_backend_herdr_container_ensure: version-gates, starts the server, ensures the firstmate workspace, echoes session:workspace_id + the seeded default tab id"
 }
 
-test_task_workspace_create_makes_a_fresh_workspace_per_task() {
-  local dir log resp fb out calls
-  dir="$TMP_ROOT/task-workspace"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
-  # 1: version_check, 2: server_ensure sees a running server, 3: workspace create.
-  printf '{"client":{"version":"0.7.1","protocol":14}}\n' > "$resp/1.out"
-  printf '{"server":{"running":true}}\n' > "$resp/2.out"
-  printf '{"result":{"workspace":{"workspace_id":"w7","label":"task-a"},"tab":{"tab_id":"w7:t1"},"root_pane":{"pane_id":"w7:p1"}}}\n' > "$resp/3.out"
-  fb=$(make_herdr_fakebin "$dir")
-  out=$( PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" FM_HERDR_SCRIPT_STATUS=1 HERDR_SESSION=fmtest \
-    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_task_workspace_create /tmp task-a' "$ROOT" )
-  [ "$out" = $'fmtest:w7\tw7:t1' ] || fail "task_workspace_create should echo '<session>:<workspace_id>\\t<seeded_default_tab_id>', got '$out'"
-  calls=$(cat "$log")
-  assert_contains "$calls" $'\x1f''workspace'$'\x1f''create'$'\x1f''--cwd'$'\x1f''/tmp'$'\x1f''--label'$'\x1f''task-a'$'\x1f''--no-focus' \
-    "task_workspace_create did not create a workspace labelled with the task id and --no-focus"
-  assert_not_contains "$calls" $'\x1f''workspace'$'\x1f''list' \
-    "task_workspace_create looked up an existing workspace; it must never adopt the home workspace"
-  pass "fm_backend_herdr_task_workspace_create: always creates a fresh workspace labelled with the task id and never adopts the home workspace"
-}
 
 test_server_ensure_scrubs_home_and_harness_identity() {
   local dir log marker fb output name
@@ -5265,7 +5247,6 @@ test_workspace_ensure_refuses_an_ambiguous_label_with_no_launcher
 test_workspace_ensure_other_home_ignores_the_launcher_identity
 test_container_ensure_refuses_an_ambiguous_home_label
 test_container_ensure_starts_server_and_workspace
-test_task_workspace_create_makes_a_fresh_workspace_per_task
 test_server_ensure_scrubs_home_and_harness_identity
 test_container_ensure_reuses_existing_workspace
 test_container_ensure_creates_with_no_focus_flag

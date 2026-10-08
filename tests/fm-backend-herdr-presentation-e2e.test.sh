@@ -538,14 +538,16 @@ write_ship_brief "$HOME_DIR" default-on 'Projection default-on fixture.'
 make_project "$PROJECT_DIR"
 make_project "$RECOVERY_PROJECT_DIR"
 
-# Keep one ordinary primary task live so the durable firstmate workspace is
-# first and remains present while disposable workers are projected around it.
+# Keep one ordinary anchor task live and label its workspace as the test's
+# supervisor fixture, so projected children have an explicit parent.
 spawn_task anchor "$HOME_DIR" "$PROJECT_DIR" > "$TMP_ROOT/anchor.out" 2> "$TMP_ROOT/anchor.err" \
   || fail "opted-out anchor spawn failed: $(cat "$TMP_ROOT/anchor.err")"
 ANCHOR_META="$HOME_DIR/state/anchor.meta"
 remember_meta_worktree "$ANCHOR_META" >/dev/null
 FIRSTMATE_WSID=$(grep '^herdr_workspace_id=' "$ANCHOR_META" | cut -d= -f2-)
 [ -n "$FIRSTMATE_WSID" ] || fail "anchor metadata did not record the firstmate workspace"
+lab workspace rename "$FIRSTMATE_WSID" firstmate >/dev/null \
+  || fail "could not label the supervisor fixture workspace"
 
 # The same task id and project run once opted out and once projected, so
 # Treehouse commands and metadata can be compared after normalizing endpoint
@@ -606,12 +608,8 @@ if [ "$FLOOR_VERDICT" = 0 ]; then
 else
   [ ! -e "$DEFAULT_ON_JOURNAL" ] \
     || fail "an unconfigured home published a presentation journal on below-floor herdr $FLOOR_VERSION"
-  # The flat fallback gives the task its OWN workspace (captain rule 2026-10-01),
-  # never a tab in the home workspace.
   [ -n "$DEFAULT_ON_WSID" ] && [ "$DEFAULT_ON_WSID" != "$FIRSTMATE_WSID" ] \
-    || fail "an unconfigured home did not get its own workspace on below-floor herdr $FLOOR_VERSION (got '${DEFAULT_ON_WSID:-<empty>}')"
-  [ "$(lab workspace get "$DEFAULT_ON_WSID" | jq -r '.result.workspace.label // empty')" = default-on ] \
-    || fail "below-floor flat fallback did not label its own workspace with the task id"
+    || fail "a below-floor spawn adopted the supervisor workspace instead of creating its own"
   grep -q "$FLOOR_VERSION" "$TMP_ROOT/default-on.err" \
     || fail "the below-floor fallback did not name herdr $FLOOR_VERSION: $(cat "$TMP_ROOT/default-on.err")"
   pass "real Herdr lab: a home that configured nothing falls back flat on below-floor herdr $FLOOR_VERSION with one naming warning"
@@ -744,9 +742,7 @@ LOCK_CONTENTION_META="$HOME_DIR/state/lock-contended.meta"
 remember_meta_worktree "$LOCK_CONTENTION_META" >/dev/null
 LOCK_CONTENTION_WSID=$(grep '^herdr_workspace_id=' "$LOCK_CONTENTION_META" | cut -d= -f2-)
 [ -n "$LOCK_CONTENTION_WSID" ] && [ "$LOCK_CONTENTION_WSID" != "$FIRSTMATE_WSID" ] \
-  || fail "bounded lock contention fell back into the firstmate workspace instead of its own"
-[ "$(lab workspace get "$LOCK_CONTENTION_WSID" | jq -r '.result.workspace.label // empty')" = lock-contended ] \
-  || fail "bounded lock contention did not label its own workspace with the task id"
+  || fail "bounded lock contention adopted the supervisor workspace"
 [ ! -e "$HOME_DIR/state/lock-contended.herdr-presentation" ] \
   || fail "bounded lock contention published a projection journal"
 LOCK_CONTENTION_CALLS=$(sed -n "$((LOCK_CONTENTION_START + 1)),\$p" "$HERDR_CALL_LOG")
@@ -762,7 +758,7 @@ fi
 if printf '%s\n' "$LOCK_CONTENTION_CALLS" | awk -F '\t' -v ws="$LOCK_CONTENTION_WSID" '
   $1 == "workspace" && $2 == "create" {
     line = $0
-    if (line !~ /--no-focus/ || line !~ /--label\tlock-contended/) bad = 1
+    if (line !~ /--no-focus/ || line !~ /--label\tfm-lock-contended/) bad = 1
   }
   $1 == "pane" && $2 == "close" && index($3, ws ":") != 1 { bad = 1 }
   END { exit bad ? 0 : 1 }'; then
@@ -1187,8 +1183,8 @@ grep -F "presentation focus lock unavailable; using the ordinary flat layout wit
 remember_meta_worktree "$SECOND_HOME_A/state/aflat.meta" >/dev/null
 AFLAT_WSID=$(grep '^herdr_workspace_id=' "$SECOND_HOME_A/state/aflat.meta" | cut -d= -f2-)
 AFLAT_LABEL=$(lab workspace get "$AFLAT_WSID" | jq -r '.result.workspace.label')
-[ "$AFLAT_LABEL" = aflat ] \
-  || fail "cross-home lock contention did not give the task its own workspace: $AFLAT_LABEL"
+[ "$AFLAT_LABEL" = fm-aflat ] \
+  || fail "cross-home contention adopted a supervisor workspace: $AFLAT_LABEL"
 [ ! -e "$SECOND_HOME_A/state/aflat.herdr-presentation" ] \
   || fail "cross-home lock contention published a projection journal"
 assert_focus_is "$CAPTAIN_FOCUS" "cross-home lock contention flat fallback"

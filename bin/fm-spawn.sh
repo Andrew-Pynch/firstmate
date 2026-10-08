@@ -114,15 +114,10 @@
 #   A backend spawn refusal (missing dependency, version gate, unauthenticated
 #   socket, or unsupported secondmate mode) is terminal for that selected backend;
 #   callers must surface it instead of silently retrying another backend.
-#   A herdr crewmate or scout is placed in the exact workspace of the firstmate
-#   or secondmate process launching it, resolved from that process's own herdr
-#   pane rather than from a workspace label (herdr enforces no label uniqueness,
-#   so a label cannot tell two "firstmate" workspaces apart). A claimed parent
-#   identity that is unreadable, contradictory, stale, or from another herdr
-#   session stops the spawn before any worker endpoint exists. A launcher
-#   outside herdr has no workspace to inherit and uses this home's own labeled
-#   workspace, which must then match exactly one. --secondmate is the deliberate
-#   exception: it stands up that secondmate home's own workspace.
+#   A Herdr crewmate or scout always receives its own task workspace, even when
+#   presentation matching is unavailable. A claimed launcher identity must
+#   still resolve exactly before creating a fallback workspace.
+#   --secondmate stands up that secondmate home's own workspace.
 #   Herdr additionally uses a presentation-only layout by default when the
 #   selected client and running server meet the Herdr 0.8.0 floor. The local
 #   config/herdr-presentation-spaces file can say off to disable it or on to
@@ -1896,10 +1891,25 @@ if [ "$RELAUNCH" -eq 1 ]; then
     # so keep what herdr actually injected: a rebind still has to prove its own
     # launcher identity, and a task's recorded pane is not it.
     RELAUNCH_LAUNCHER_PANE_ID=${HERDR_PANE_ID:-}
+    RELAUNCH_LAUNCHER_WORKSPACE_ID=${HERDR_WORKSPACE_ID:-${HERDR_WORKSPACE:-}}
     HERDR_SES=$(fm_meta_get "$RELAUNCH_META" herdr_session)
     HERDR_WORKSPACE_ID=$(fm_meta_get "$RELAUNCH_META" herdr_workspace_id)
     HERDR_TAB_ID=$(fm_meta_get "$RELAUNCH_META" herdr_tab_id)
     HERDR_PANE_ID=$(fm_meta_get "$RELAUNCH_META" herdr_pane_id)
+    if [ "$KIND" != secondmate ] && [ "$RELAUNCH_REBIND" -eq 0 ]; then
+      # An agent-free task left in Main's workspace must not repeat the old
+      # flat placement. Only the task endpoint changes; leave Main untouched.
+      HERDR_RELAUNCH_WORKSPACE=$(fm_backend_herdr_cli "$HERDR_SES" \
+        workspace get "$HERDR_WORKSPACE_ID" 2>/dev/null || true)
+      HERDR_RELAUNCH_LABEL=$(printf '%s' "$HERDR_RELAUNCH_WORKSPACE" |
+        jq -r '.result.workspace.label // empty' 2>/dev/null || true)
+      if { [ -n "$RELAUNCH_LAUNCHER_WORKSPACE_ID" ] &&
+           [ "$HERDR_WORKSPACE_ID" = "$RELAUNCH_LAUNCHER_WORKSPACE_ID" ]; } ||
+         [ "$HERDR_RELAUNCH_LABEL" = firstmate ] ||
+         [[ "$HERDR_RELAUNCH_LABEL" = 2ndmate-* ]]; then
+        RELAUNCH_REBIND=1
+      fi
+    fi
   fi
   # With no explicit harness, a relaunch reuses the harness already recorded
   # for this task. It must NOT fall through to the fresh-spawn config
@@ -3545,23 +3555,18 @@ if [ "$RELAUNCH" -eq 1 ]; then
     WT_TARGET=$T
     SES=${T%%:*}
   else
-    # The recorded endpoint is authoritatively gone, so there is nothing to
-    # adopt: create ONE fresh endpoint for the same task, opened directly in the
+    # Create one replacement endpoint when the old pane is gone or when an
+    # agent-free task was stranded in its supervisor's workspace, directly in the
     # recorded worktree. The record published below writes window= (and herdr's
     # ids) from these values, which is the whole rebind - the task id, brief,
     # worktree, armed poll and status log are untouched.
     #
-    # Herdr is the ONLY backend that reaches here: the gate above rebinds only
-    # on a PROVEN-gone endpoint, and absence is provable only on herdr, whose
-    # every read is scoped to the session the record names
-    # (fm_control_endpoint_absence_verdict owns that argument). tmux and every
-    # secondmate were already refused, so there is no dispatch left to make.
+    # Herdr also rebinds an agent-free task stranded in its supervisor's
+    # workspace. That pane is left untouched, so Main and any other tabs stay
+    # intact. tmux and secondmates retain their existing recovery boundaries.
     #
-    # This deliberately uses the FLAT container shape rather than Herdr's
-    # presentation projection: projection is a presentation-only layout that is
-    # never endpoint or ownership authority, and flat is already the documented
-    # fallback for every recovery it cannot bind exactly
-    # (docs/herdr-backend.md "Presentation spaces").
+    # Recovery skips the presentation journal but keeps workspace isolation:
+    # create a new task workspace, never a tab in Main's workspace.
     #
     # KNOWN LIMITATION (bead fm-herdr-rebind-leak-20260913): the tab minted
     # below is registered with no abort cleanup, so a later refusal leaves that
@@ -3577,7 +3582,7 @@ if [ "$RELAUNCH" -eq 1 ]; then
     # self-consistent but wrong record.
     HERDR_REBIND_SES=${RELAUNCH_TARGET%%:*}
     HERDR_CONTAINER_RAW=$(HERDR_PANE_ID="$RELAUNCH_LAUNCHER_PANE_ID" \
-      fm_backend_herdr_container_ensure "$PROJ_ABS" launcher-home "$HERDR_REBIND_SES") || {
+      fm_backend_herdr_container_ensure "$PROJ_ABS" "$W" "$HERDR_REBIND_SES") || {
       # container_ensure returns 1 for several unrelated reasons - a failed
       # version check, a server that will not start, an ambiguous workspace
       # label, a cross-session launcher identity, a failed workspace create -
@@ -3643,12 +3648,8 @@ else
     # after each prefixed simple-command call) so the secondmate's tab lands
     # in the secondmate's own workspace, not the primary's "firstmate" one.
     #
-    # Placement, separately from labeling: a crewmate/scout belongs in the
-    # EXACT herdr workspace this launching process is itself running in, which
-    # only its own herdr pane identity can name (a same-labeled sibling
-    # workspace must never be adopted). A --secondmate launch is the exception -
-    # it stands up a DIFFERENT home's own workspace by design - so it asks for
-    # the per-home container instead of inheriting this launcher's.
+    # Secondmates keep their own per-home workspace. Ordinary task fallback
+    # below always creates a new workspace, even without a presentation match.
     HERDR_LABEL_HOME=$FM_HOME
     HERDR_LAUNCHER_RELATIONSHIP=launcher-home
     if [ "$KIND" = secondmate ]; then
@@ -3657,12 +3658,7 @@ else
     fi
     HERDR_PRESENTATION_JOURNAL=$(fm_backend_herdr_projection_journal_path "$STATE" "$ID")
     HERDR_PROJECTED=0
-    # 1 when presentation is enabled for this ordinary task: a flat fallback below
-    # then gets its own workspace. A captain's explicit presentation opt-out keeps
-    # the documented home-workspace flat layout.
-    HERDR_FALLBACK_OWN_WORKSPACE=0
     if [ "$KIND" != secondmate ] && fm_backend_herdr_presentation_enabled "$CONFIG" "$STATE"; then
-      HERDR_FALLBACK_OWN_WORKSPACE=1
       HERDR_SES=$(fm_backend_herdr_session)
       HERDR_PARENT_LABEL=$(FM_HOME="$HERDR_LABEL_HOME" fm_backend_herdr_workspace_label)
       if [ -e "$HERDR_PRESENTATION_JOURNAL" ] || [ -L "$HERDR_PRESENTATION_JOURNAL" ]; then
@@ -3782,18 +3778,9 @@ else
         fi
       fi
     fi
+    [ "$KIND" = secondmate ] || HERDR_LAUNCHER_RELATIONSHIP=$W
     if [ "$HERDR_PROJECTED" -ne 1 ]; then
-      # An ordinary task whose presentation is enabled but fell back to the flat
-      # layout (stale presentation journal on a retry, lock contention, absent
-      # parent, below-floor Herdr) gets its OWN workspace, never a tab in the
-      # launcher's home workspace (captain rule 2026-10-01). A secondmate stands
-      # up its per-home workspace, and an explicit presentation opt-out keeps the
-      # documented home-workspace flat layout.
-      if [ "$HERDR_FALLBACK_OWN_WORKSPACE" = 1 ]; then
-        HERDR_CONTAINER_RAW=$(FM_HOME="$HERDR_LABEL_HOME" fm_backend_herdr_task_workspace_create "$PROJ_ABS" "$ID") || exit 1
-      else
-        HERDR_CONTAINER_RAW=$(FM_HOME="$HERDR_LABEL_HOME" fm_backend_herdr_container_ensure "$PROJ_ABS" "$HERDR_LAUNCHER_RELATIONSHIP") || exit 1
-      fi
+      HERDR_CONTAINER_RAW=$(FM_HOME="$HERDR_LABEL_HOME" fm_backend_herdr_container_ensure "$PROJ_ABS" "$HERDR_LAUNCHER_RELATIONSHIP") || exit 1
       # fm_backend_herdr_container_ensure echoes "<session>:<workspace_id>\t<seeded_default_tab_id>"
       # (the second field empty when this call ADOPTED a pre-existing workspace
       # rather than creating a fresh one). Split on the guaranteed single tab

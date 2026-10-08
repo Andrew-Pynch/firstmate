@@ -125,16 +125,14 @@ What a reclaim is not:
 
 The re-created tab is opened in the herdr session the record names, never in whichever session the recovering seat happens to sit in - relocating a task onto another herdr server would be an identity change published as a self-consistent but wrong record.
 A seat that *claims* a herdr launcher pane belonging to a different session is refused rather than allowed to place the endpoint somewhere else, so reclaim such a task from a seat in the recorded session.
-A seat with no herdr launcher pane at all - a plain ssh or cron shell, which is the ordinary way an operator reclaims - is not refused: placement falls back to the recorded session's labeled container, so the tab still lands in the session the record names.
-The reclaim pins the recorded **session** but not the **workspace**: the container follows the reclaiming seat, so a reclaim run from a seat inside the recorded session places the new tab in *that seat's* workspace rather than the recorded `herdr_workspace_id`, even when the recorded workspace still exists and only the pane was destroyed.
-The record is republished consistently and no work is lost, but the task's `herdr_workspace_id` moves with it.
-The pane id necessarily changes (the pane did not survive), and the record follows it.
-A Herdr reclaim deliberately uses the flat container shape rather than presentation projection: projection is a presentation-only layout that is never endpoint or ownership authority, and flat is already the documented fallback for every recovery it cannot bind exactly ([`docs/herdr-backend.md`](herdr-backend.md)).
+A seat with no herdr launcher pane at all, such as a plain ssh or cron shell, creates a new task workspace in the recorded session.
+Reclaim never adopts the recovering seat's workspace, and the record is republished with the response-derived new workspace and pane ids.
+An agent-free ordinary task already stranded in a supervisor workspace also receives a new workspace on relaunch, without closing its old pane.
+This recovery skips presentation binding but retains the workspace isolation described in [`herdr-backend.md`](herdr-backend.md).
 
 **Known limitation - a refusal before the record is republished leaves a stray husk pane** (follow-up bead `fm-herdr-rebind-leak-20260913`).
 The rebind registers no abort cleanup, so a refusal in the window between the new tab being created and the record being republished leaves that pane behind while the record still names the old, gone one.
-The stray pane holds a bare shell - the harness is not delivered until after publication - so the next reclaim cleans up after it: the re-created tab carries the same `fm-<id>` label, `tab create` finds it, classifies it a husk, and closes and replaces it.
-That self-heals only when the retry resolves the *same* workspace, which the placement rule above does not guarantee.
+A retry creates another isolated workspace rather than adopting or closing that stray pane.
 The worktree and the task's records are unaffected either way.
 
 ### Failure and rollback

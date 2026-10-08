@@ -1949,6 +1949,9 @@ fm_backend_herdr_workspace_prune_seeded_default_tab() {  # <session> <workspace_
 #   other-home    - a --secondmate launch, which stands up a DIFFERENT home's
 #                   own per-home workspace by design. The launcher's workspace
 #                   is deliberately not inherited here.
+#   fm-<id>      - an ordinary task fallback or reclaim. Validate any claimed
+#                   launcher identity, but always create a new task workspace;
+#                   neither a home-label match nor the launcher is adopted.
 # With no herdr ancestry at all there is no launcher workspace to inherit, so
 # the per-home label lookup below stays the resolver - but it must then resolve
 # to exactly ONE workspace. Two same-labeled home workspaces with no launcher
@@ -1961,21 +1964,29 @@ fm_backend_herdr_workspace_ensure() {  # <session> <cwd> [<launcher-relationship
   local session=$1 cwd=$2 relationship=${3:-launcher-home} wsid out label matches count status
   FM_BACKEND_HERDR_WS_ID=""
   FM_BACKEND_HERDR_WS_SEEDED_TAB_ID=""
-  if [ "$relationship" = launcher-home ]; then
+  if [ "$relationship" = launcher-home ] || [[ "$relationship" = fm-* ]]; then
     fm_backend_herdr_launcher_identity "$session" && status=0 || status=$?
     case "$status" in
       0)
-        FM_BACKEND_HERDR_WS_ID=$FM_BACKEND_HERDR_LAUNCHER_WORKSPACE_ID
-        printf '%s' "$FM_BACKEND_HERDR_WS_ID"
-        return 0
+        if [ "$relationship" = launcher-home ]; then
+          FM_BACKEND_HERDR_WS_ID=$FM_BACKEND_HERDR_LAUNCHER_WORKSPACE_ID
+          printf '%s' "$FM_BACKEND_HERDR_WS_ID"
+          return 0
+        fi
         ;;
       2) ;;
       *) return 3 ;;
     esac
   fi
-  label=$(fm_backend_herdr_workspace_label)
-  matches=$(fm_backend_herdr_workspace_find_all "$session")
-  count=$(printf '%s' "$matches" | grep -c '[^[:space:]]' || true)
+  if [[ "$relationship" = fm-* ]]; then
+    label=$relationship
+    matches=''
+    count=0
+  else
+    label=$(fm_backend_herdr_workspace_label)
+    matches=$(fm_backend_herdr_workspace_find_all "$session")
+    count=$(printf '%s' "$matches" | grep -c '[^[:space:]]' || true)
+  fi
   if [ "$count" -gt 1 ]; then
     echo "error: ${count} herdr workspaces in session '$session' are labeled '$label' (${matches//$'\n'/ }) and this spawn has no herdr parent pane to identify which one is its own; rename or close the extras, or run firstmate inside the workspace its workers belong in" >&2
     return 3
@@ -2035,34 +2046,6 @@ fm_backend_herdr_container_ensure() {  # <cwd-for-a-fresh-workspace> [<launcher-
     return 1
   fi
   printf '%s:%s\t%s' "$session" "$FM_BACKEND_HERDR_WS_ID" "$FM_BACKEND_HERDR_WS_SEEDED_TAB_ID"
-}
-
-# fm_backend_herdr_task_workspace_create: the flat-layout container for ONE
-# ordinary task (never a secondmate): a fresh workspace labelled <label>, so a
-# worker that falls back from the presentation projection (stale journal on a
-# retry, lock contention, absent parent, below-floor Herdr) still gets its own
-# workspace and is never a tab in the launcher's home workspace ("first mate").
-# Captain rule 2026-10-01: every worker has its own Herdr workspace. Echoes the
-# same "<session>:<workspace_id>\t<seeded_default_tab_id>" shape as
-# fm_backend_herdr_container_ensure, so fm_backend_herdr_create_task consumes it
-# unchanged and prunes the seeded tab once the task tab exists. Always creates;
-# it never adopts an existing workspace, so a relaunch cannot inherit a recorded
-# placement. --no-focus is passed for the same focus-safety reason as the home
-# workspace create.
-fm_backend_herdr_task_workspace_create() {  # <cwd> <label> [<session>]
-  local cwd=${1:-$PWD} label=${2:-} session=${3:-} out wsid seeded
-  [ -n "$label" ] || { echo "error: herdr task workspace needs a label" >&2; return 1; }
-  fm_backend_herdr_version_check || return 1
-  [ -n "$session" ] || session=$(fm_backend_herdr_session)
-  fm_backend_herdr_server_ensure "$session" || return 1
-  out=$(fm_backend_herdr_cli "$session" workspace create --cwd "$cwd" --label "$label" --no-focus 2>/dev/null) || {
-    echo "error: failed to create herdr workspace '$label' in session '$session'" >&2
-    return 1
-  }
-  wsid=$(printf '%s' "$out" | jq -r '.result.workspace.workspace_id // empty' 2>/dev/null)
-  seeded=$(printf '%s' "$out" | jq -r '.result.tab.tab_id // empty' 2>/dev/null)
-  [ -n "$wsid" ] || { echo "error: herdr did not return a workspace id for '$label'" >&2; return 1; }
-  printf '%s:%s\t%s' "$session" "$wsid" "$seeded"
 }
 
 # fm_backend_herdr_pane_presence_state: classify one exact pane get response

@@ -595,6 +595,69 @@ test_pruned_upstream_branch_no_longer_proves_containment() {
   pass "a pruned upstream branch no longer proves containment; the commit is refused and kept"
 }
 
+test_narrowed_refspec_refreshes_every_containment_branch() {
+  local rec id out status scenario topic before fresh_topic
+  for scenario in drifted reset live-topic; do
+    id="pool-sub-narrowed-$scenario-r1"
+    rec=$(make_submodule_case "sub-narrowed-$scenario" "$id")
+    read_submodule_case "$rec"
+    git -C "$CASE_DIR/sub-origin" checkout --quiet -b topic "$SUBPIN1"
+    printf 'topic work that must remain reachable\n' > "$CASE_DIR/sub-origin/topic.txt"
+    git -C "$CASE_DIR/sub-origin" add topic.txt
+    git -C "$CASE_DIR/sub-origin" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' commit -qm topic
+    topic=$(git -C "$CASE_DIR/sub-origin" rev-parse HEAD)
+    git -C "$POOL_DIR/ui" fetch --quiet origin
+    git -C "$POOL_DIR/ui" checkout --quiet "$topic"
+    git -C "$POOL_DIR/ui" config --replace-all remote.origin.fetch '+refs/heads/main:refs/remotes/origin/main'
+    if [ "$scenario" = reset ]; then
+      git -C "$POOL_DIR" add ui
+      git -C "$POOL_DIR" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' commit -qm topic-pin
+      [ -z "$(git -C "$POOL_DIR" status --porcelain)" ] \
+        || fail "fixture did not leave the slot clean before its own reset"
+    fi
+    before=$(git -C "$POOL_DIR" rev-parse HEAD)
+    if [ "$scenario" = live-topic ]; then
+      printf 'fresh topic tip\n' >> "$CASE_DIR/sub-origin/topic.txt"
+      git -C "$CASE_DIR/sub-origin" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' commit -qam advance-topic
+      fresh_topic=$(git -C "$CASE_DIR/sub-origin" rev-parse HEAD)
+    else
+      git -C "$CASE_DIR/sub-origin" checkout --quiet "$SUBPIN1"
+      git -C "$CASE_DIR/sub-origin" branch -q -D topic
+    fi
+    git -C "$POOL_DIR/ui" fetch --quiet --prune origin
+    [ "$(git -C "$POOL_DIR/ui" rev-parse origin/topic)" = "$topic" ] \
+      || fail "fixture did not retain origin/topic outside the narrowed refspec"
+
+    out=$(run_spawn "$id" --mode no-mistakes --yolo off)
+    status=$?
+    if [ "$scenario" = live-topic ]; then
+      expect_code 0 "$status" "a live origin branch outside the configured refspec should prove containment"$'\n'"$out"
+      [ "$(git -C "$POOL_DIR/ui" rev-parse origin/topic)" = "$fresh_topic" ] \
+        || fail "spawn did not freshly fetch the live topic branch"
+      [ "$(git -C "$POOL_DIR/ui" rev-parse HEAD)" = "$SUBPIN2" ] \
+        || fail "spawn did not converge the submodule onto the new pin"
+      [ -z "$(git -C "$POOL_DIR" status --porcelain)" ] \
+        || fail "spawn launched with submodule drift"
+    else
+      [ "$status" -ne 0 ] || fail "spawn trusted a deleted topic outside the configured refspec ($scenario)"
+      assert_contains "$out" "cannot prove pushed" "spawn did not explain the failed containment proof"
+      [ "$(git -C "$POOL_DIR/ui" rev-parse HEAD)" = "$topic" ] \
+        || fail "spawn moved the submodule off the deleted topic commit"
+      assert_grep 'topic work that must remain reachable' "$POOL_DIR/ui/topic.txt" \
+        "spawn discarded the topic work"
+      [ ! -e "$HOME_DIR/state/$id.meta" ] || fail "refused spawn published task metadata"
+      if [ "$scenario" = drifted ]; then
+        [ "$(git -C "$POOL_DIR" rev-parse HEAD)" = "$before" ] \
+          || fail "spawn reset the superproject despite pre-existing unsafe drift"
+      else
+        [ "$(git -C "$POOL_DIR" rev-parse HEAD)" = "$ADVANCED_SHA" ] \
+          || fail "fixture did not exercise containment after the spawn's base reset"
+      fi
+    fi
+    pass "narrowed origin refspec: $scenario consults freshly fetched branch tips only"
+  done
+}
+
 # Only origin is fetched, so only origin may vouch: a remote-tracking ref of any
 # other remote can be just as stale as a pruned one and proves nothing.
 test_another_remotes_ref_does_not_prove_containment() {
@@ -987,6 +1050,7 @@ test_inactive_conditional_origin_include_launches_pool
 test_spawn_converges_pin_moved_by_its_own_reset
 test_drifted_slot_converges_after_fresh_fetch
 test_pruned_upstream_branch_no_longer_proves_containment
+test_narrowed_refspec_refreshes_every_containment_branch
 test_another_remotes_ref_does_not_prove_containment
 test_stale_submodule_pin_explains_itself
 test_unpushed_submodule_commit_is_still_uncommitted_work

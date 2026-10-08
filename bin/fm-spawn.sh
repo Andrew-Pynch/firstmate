@@ -3500,9 +3500,9 @@ spawn_submodule_checkout_contained() { # <worktree> <path>
   local sub=$1/$2 have unpushed
   [ -z "$(git -C "$sub" status --porcelain 2>/dev/null)" ] || return 1
   git -C "$sub" config --get remote.origin.url >/dev/null 2>&1 || return 1
-  git -C "$sub" fetch --quiet --prune origin >/dev/null 2>&1 || return 1
+  git -C "$sub" fetch --quiet --prune --refmap= origin '+refs/heads/*:refs/remotes/origin/*' >/dev/null 2>&1 || return 1
   have=$(git -C "$sub" rev-parse --verify --quiet HEAD 2>/dev/null) || return 1
-  unpushed=$(git -C "$sub" log --format=%H --max-count=1 "$have" --not --remotes=origin -- 2>/dev/null) || return 1
+  unpushed=$(git -C "$sub" log --format=%H --max-count=1 "$have" --not --exclude=origin/HEAD --remotes=origin -- 2>/dev/null) || return 1
   [ -z "$unpushed" ]
 }
 

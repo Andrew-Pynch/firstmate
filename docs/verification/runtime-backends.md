@@ -1226,6 +1226,69 @@ ok - real herdr E2E: teardown closes only the worker's own pane and leaves the l
 That suite's headline case runs `bin/fm-spawn.sh` inside a real Herdr pane, so the parent identity comes from Herdr's own injection rather than a composed environment.
 Cross-session and contradictory bindings are covered deterministically in `tests/fm-backend-herdr.test.sh`, which can script a second server's socket without provisioning one.
 
+### Grill workspace placement metadata
+
+`bin/fm-grill-place.sh` packs grills two per tab from the live shape of a project's grill workspace.
+The facts that placement rests on were measured on 2026-09-15 against Herdr 0.9.0 inside a guarded non-default `fm-lab-` session, with these exact commands and their literal output.
+
+A created workspace reports the tab and pane it seeded, which is why the first grill takes them instead of splitting them:
+
+```sh
+"$HERDR_LAB_HELPER" run "$LAB" workspace create --cwd "$PWD" --label 'Mono · Grill' --no-focus | jq -c '.result | {workspace:.workspace.workspace_id,tab:.tab.tab_id,tab_label:.tab.label,pane:.root_pane.pane_id,agent_status:.root_pane.agent_status}'
+```
+
+```text
+{"workspace":"w1","tab":"w1:t1","tab_label":"1","pane":"w1:p1","agent_status":"unknown"}
+```
+
+`pane list` carries each pane's `tab_id`, `pane_id`, and native `agent_status`, and its `tokens` only once `pane report-metadata` tagged it:
+
+```sh
+"$HERDR_LAB_HELPER" run "$LAB" pane list --workspace w1 | jq -c '.result.panes[] | {pane_id,tab_id,agent_status,tokens}'
+"$HERDR_LAB_HELPER" run "$LAB" pane report-metadata w1:p1 --source firstmate --token project=alpha --token kind=grill
+"$HERDR_LAB_HELPER" run "$LAB" pane list --workspace w1 | jq -c '.result.panes[] | {pane_id,tab_id,agent_status,tokens}'
+```
+
+```text
+{"pane_id":"w1:p1","tab_id":"w1:t1","agent_status":"unknown","tokens":null}
+{"pane_id":"w1:p1","tab_id":"w1:t1","agent_status":"unknown","tokens":{"kind":"grill","project":"alpha"}}
+```
+
+An untagged pane reports no `tokens` member at all, so the packing count reads that member defensively and counts a pane as a grill only when its own `kind=grill` token says so; the native `agent_status` of a bare shell is `unknown`, and a launch command is only ever written into such a pane.
+`tab list` reports each tab's `number` and `pane_count`, but the packing count never comes from `pane_count`: it counts the live `pane list` rows by `tab_id`, so no tab-level summary can decide placement.
+The tab herdr seeds is relabelled through the ordinary tab command, which reports the tab it changed:
+
+```sh
+"$HERDR_LAB_HELPER" run "$LAB" tab rename w1:t1 grill-alpha
+```
+
+```text
+{"id":"cli:tab:rename","result":{"tab":{"agent_status":"unknown","focused":true,"label":"grill-alpha","number":1,"pane_count":1,"tab_id":"w1:t1","workspace_id":"w1"},"type":"tab_info"}}
+```
+
+Workspace and pane metadata do NOT survive a session restart; ids and labels do.
+A guarded stop followed by a restart left `workspace_id`, `tab_id`, `pane_id`, and the tab label identical while both the workspace's and the pane's `tokens` came back as `null`, and `fm_grill_workspace_find` then matched nothing.
+Placement therefore restarts the packing in a fresh workspace after a restart rather than reusing the old one, because the workspace lookup is a label plus colour-token match and the token is gone.
+Whether that lookup should also accept an exact-label match after a restart belongs to the workspace-lookup design, not to the packing decision, and is recorded here as an open question.
+
+Placement and packing are owned by:
+
+```sh
+HERDR_LAB_HELPER=bin/fm-herdr-lab.sh tests/fm-grill-place-e2e.test.sh
+```
+
+Observed guarantees on 2026-09-15 against Herdr 0.9.0:
+
+```text
+ok - the first grill takes the workspace herdr seeded and is tagged there
+ok - a second grill is split into the same tab as the first
+ok - a third grill opens a new tab once the first tab holds two
+ok - a fourth grill packs beside the third, two grills to a tab
+ok - the grills stay in one project workspace and never touch a foreign one
+```
+
+That suite plants an untagged foreign workspace first, so the same run also proves the lookup still finds the project's own grill workspace beside one.
+
 ### Per-home and presentation topology
 
 Per-home behavior is owned by:

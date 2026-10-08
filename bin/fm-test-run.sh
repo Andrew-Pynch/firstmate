@@ -314,6 +314,7 @@ family_for_basename() {
     fm-backend-herdr-launcher-workspace-e2e.test.sh|\
     fm-backend-herdr-prune-safety-e2e.test.sh|fm-backend-herdr-respawn-idem-e2e.test.sh|\
     fm-backend-herdr-focus-flash-e2e.test.sh|\
+    fm-grill-place-e2e.test.sh|\
     fm-backend-herdr-stale-active-tab-e2e.test.sh|\
     fm-backend-herdr-agent-exit-shell-e2e.test.sh|\
     fm-herdr-attached-viewer-live-e2e.test.sh|fm-herdr-session-cleanup-e2e.test.sh|\
@@ -1570,6 +1571,13 @@ families_for_changed_path() {
     bin/fm-home-summary-refresh.sh)
       printf '%s\n' snapshot-bearings
       ;;
+    bin/fm-grill-lib.sh|bin/fm-grill-place.sh)
+      # The grill packing decision is proven against the real herdr binary, so a
+      # change to either owner re-runs the required real-Herdr lane as well as
+      # the portable command tests.
+      printf '%s\n' pure-contract-unit
+      printf '%s\n' real-herdr-gated
+      ;;
     bin/fm-install-herdr.sh|bin/fm-install-treehouse.sh|bin/fm-herdr-ci-cleanup.sh)
       printf '%s\n' pure-contract-unit
       # Pin or cleanup changes also select the real-Herdr family so the required
@@ -1582,8 +1590,8 @@ families_for_changed_path() {
     bin/fm-captain-hold.sh|bin/fm-decision-hold.sh|bin/fm-supervision*|bin/fm-transition-lib.sh|\
     bin/fm-tmux-lib.sh|bin/fm-marker-lib.sh|bin/fm-operational-input.sh|bin/fm-tasks-axi-lib.sh|\
     bin/fm-vendor-auth-probe.sh|\
-    bin/fm-primary-scope-lib.sh|bin/fm-project-mode.sh|bin/fm-project-lib.sh|bin/fm-grill-lib.sh|\
-    bin/fm-grill-place.sh|bin/fm-promote.sh|\
+    bin/fm-primary-scope-lib.sh|bin/fm-project-mode.sh|bin/fm-project-lib.sh|\
+    bin/fm-promote.sh|\
     bin/fm-ff-lib.sh|bin/fm-gotmp*|bin/*pretool*)
       printf '%s\n' pure-contract-unit
       ;;

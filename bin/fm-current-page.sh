@@ -42,7 +42,8 @@
 # and swaps its panes in place (no reload; the reader's pane, selection, and
 # filter stay), so a need that disappears scores as a cleared call. The top bar
 # reads STALE once the page has not re-rendered for 10 minutes. Above the panes,
-# a Wins strip links the curated `wins` (work that demonstrably shipped).
+# a Wins strip links the curated `wins` (work that demonstrably shipped); over
+# it, and over Your answers, the mouse wheel scrolls the strip sideways, not the page.
 # At 760 px wide or less (a phone) the panes stack, items open in place instead
 # of in the inspector, Done today and Held calls start folded (tap a pane header),
 # keyboard hints are hidden, and type and tap targets grow to phone size. The

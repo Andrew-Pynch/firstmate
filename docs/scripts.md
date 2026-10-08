@@ -34,6 +34,7 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | [`fm-backlog-handoff.sh`](../bin/fm-backlog-handoff.sh) | Move queued backlog items into a secondmate home; its header owns route-specific wake outcomes and retries |
 | `fm-backlog-receive.sh`  | Idempotently ingest one confined remote handoff outbox through tasks-axi             |
 | `fm-captain-hold.sh`     | Hold tasks for the captain, record the captain's answers, gate investigation completion, and report record divergence between the status log and the backlog |
+| `fm-ask.sh`              | Record a question put to the captain while he is present, and park an unanswered one as a captain-held queue row while releasing the agent waiting on it (never by enabling `ask.timeout`) |
 | `fm-decision-hold.sh`    | One-release compatibility shim mapping the retired decision commands onto fm-captain-hold.sh |
 | `fm-intake.sh`           | Route an incoming request by what is still undecided, record the route and its reason on the item, and emit the request's one started line |
 | `fm-wave.sh`             | Report each project's next dispatchable wave and the layer every ticket sits in, from the declared blocked-by edges |

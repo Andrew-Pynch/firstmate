@@ -138,6 +138,7 @@ state/               runtime records and signals; gitignored
   reconcile-requests/ private open obligations to re-check a captain call whose board selection was `reconcile`; written only by bin/fm-captain-hold.sh, retired by its verify-then-decide outcomes or a normal answer that settles the call (section 13; docs/captain-hold-lifecycle.md)
   when/              private condition->action watch specs, their trust bindings, and single-fire markers; written only by bin/fm-procevent-when.sh (section 13's process-event-sources trigger)
   inbox/             captain notes captured out of band by bin/fm-inbox.sh, including the voice handover's queued requests; each note appends one `check` wake and stays pending until acknowledged with `bin/fm-inbox.sh drain --ack <id>`, which moves it to inbox/handled/; request-id reservations, announcement markers, and primary replies live beside the notes (bin/fm-inbox.sh; docs/voice-relay.md)
+  asks/              one record per question put to the captain while he is present, with the waiting agent and the wait; written only by bin/fm-ask.sh, which parks an unanswered ask as a captain-held queue row and releases the agent that was waiting, and whose sibling .ask-park.lock serializes that sweep (section 9; contract: bin/fm-ask.sh)
   x-inbox/           generated Relay pending mention payloads; fmx-respond drains it (section 14)
   x-context/         generated Relay durable per-request reply context and one-wake offer markers, keyed by request_id; survives inbox cleanup and expires within seven days (section 14; bin/fm-x-lib.sh)
   x-outbox/          generated Relay dry-run reply and dismiss previews; inspect it when FMX_DRY_RUN is set (section 14)
@@ -462,6 +463,7 @@ Treat any `RECORD DIVERGENCE` section as a contradiction between two records of 
 After handling all emitted wakes and reconciling the OPEN DECISIONS and UNREAD STATUS sections, run the exact generation-bound `--ack-through` command printed as `WAKE_ACK_REQUIRED`; interruption before that acknowledgement deliberately leaves the work durable for idempotent re-handling.
 A status line is a wake event, not current state; use `bin/fm-crew-state.sh` when current state matters, especially before re-escalating an old decision, blocker, or pause.
 A declared `paused:` event means a bounded external wait expected to clear on its own, while `blocked:` means firstmate action is needed.
+Whenever this session becomes live again - at session start and at the start of every wake-handling turn - sweep the recorded asks with `bin/fm-ask.sh park`, which files every ask past its wait as a captain-held queue row and releases the agent that was waiting on it; an ask never holds an agent indefinitely.
 
 Handle actionable wakes as follows:
 
@@ -555,6 +557,8 @@ For a captain-requested completion, or any wake that needs the captain's review,
 Ask for the captain's word only when the next step requires a review, approval, merge, or design pick.
 Batch non-urgent updates into the next natural reply.
 Use plain chat for a yes-or-no decision and `lavish-axi` only when several options or a structured report benefit from a visual surface.
+An ask is a question you put to the captain in the turn that depends on it; record it with `bin/fm-ask.sh open` before you present it, because anything that can wait is a queue row instead, and `bin/fm-ask.sh`'s header owns the record and the park path.
+Never enable `ask.timeout` or any other harness setting to escape an unanswered ask: a timeout-selected option is not the captain's answer.
 Whenever a PR is mentioned, and for any review or merge ask, include the PR's full `https://...` URL in MAIN's final captain-facing response, copied verbatim from the task's ready status or `pr=` metadata and never assembled from memory or left to a transcript entry that already shows it; when neither source has one, report only the identifier you actually have.
 Mention cost as a courtesy when unusually much work is running, but never block on it.
 

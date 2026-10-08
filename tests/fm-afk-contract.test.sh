@@ -72,6 +72,34 @@ EOF
 
 # No parser reads the words: any text the captain gives is recorded verbatim,
 # including wording a grammar would have judged, and the read-back mirrors it.
+test_spend_ignores_stale_endpoints_but_counts_live_and_window_starts() {
+  local home fake out epoch
+  home=$(make_home spend-endpoints)
+  fake="$home/fakebin"
+  mkdir -p "$fake"
+  cat > "$fake/tmux" <<'SH'
+#!/usr/bin/env bash
+case "$*" in
+  *live-before-away*) printf '%%1\n'; exit 0 ;;
+  *) exit 1 ;;
+esac
+SH
+  chmod +x "$fake/tmux"
+  contract "$home" enter --spend 2 >/dev/null || fail "spend entry failed"
+  epoch=$(contract "$home" field entered_epoch)
+  for id in stale-a stale-b stale-c; do
+    printf 'kind=ship\nwindow=test:%s\nspawn_gen=s1.1.1\n' "$id" > "$home/state/$id.meta"
+  done
+  printf 'kind=ship\nwindow=test:live-before-away\nspawn_gen=s1.1.1\n' > "$home/state/live.meta"
+  out=$(PATH="$fake:$PATH" FM_HOME="$home" "$ROOT/bin/fm-spawn.sh" fresh --mode local-only --yolo off 2>&1) || true
+  assert_not_contains "$out" "caps concurrent workers" "stale stopped endpoints exhausted the spend cap"
+  printf 'kind=scout\nwindow=test:new-stopped\nspawn_gen=s%s.1.1\n' "$epoch" > "$home/state/new.meta"
+  out=$(PATH="$fake:$PATH" FM_HOME="$home" "$ROOT/bin/fm-spawn.sh" fresh --mode local-only --yolo off 2>&1) || true
+  assert_contains "$out" "caps concurrent workers at 2 and 2 ordinary task(s)" \
+    "a live prior endpoint and a worker started during this window must both count"
+  pass "spend excludes old stopped endpoints and counts live endpoints plus away-window starts"
+}
+
 test_readback_renders_words_verbatim_with_the_record_scalars() {
   local home out words
   home=$(make_home readback)
@@ -631,6 +659,7 @@ test_missing_objective_on_an_existing_record_stays_readable() {
   pass "a pre-objective live record remains readable and reports the objective absent"
 }
 test_empty_objective_refuses_entry_and_restates_cleanly
+test_spend_ignores_stale_endpoints_but_counts_live_and_window_starts
 test_objective_round_trips_and_archives
 test_missing_objective_on_an_existing_record_stays_readable
 test_readback_renders_words_verbatim_with_the_record_scalars

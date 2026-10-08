@@ -98,6 +98,11 @@
 #   fm-afk-contract.sh state      one line: absent | confirmed <entered> | invalid <path>
 #   fm-afk-contract.sh words [--path <record>]
 #   fm-afk-contract.sh validate [--path <record>]  exit 0 when the record is readable and complete
+#   fm-afk-contract.sh worker-count
+#     Count ordinary task records with a live backend endpoint or a spawn in
+#     this away window. Secondmates and older stopped records do not count.
+#     Records with no backend endpoint are not workers, even with a fresh mtime.
+#     spawn_gen supplies the start epoch; legacy records use their file mtime.
 #   fm-afk-contract.sh archive              move the record aside; print its path
 #   fm-afk-contract.sh archived <entered_epoch>   print that archived record's path
 #
@@ -458,6 +463,43 @@ fm_afk_contract_render_announcement() {  # <path>
     "$(fm_afk_contract_read_field "$path" spend_max_concurrent_workers)"
 }
 
+fm_afk_contract_worker_count() {
+  local record entered count=0 meta started gen backend target
+  record=$(fm_afk_contract_path)
+  fm_afk_contract_validate "$record" || return 1
+  entered=$(fm_afk_contract_read_field "$record" entered_epoch)
+  # shellcheck source=bin/fm-backend.sh
+  . "$FM_AFK_CONTRACT_DIR/fm-backend.sh"
+  for meta in "$FM_AFK_CONTRACT_STATE"/*.meta; do
+    [ -f "$meta" ] || continue
+    [ "$(fm_meta_get "$meta" kind)" != secondmate ] || continue
+    target=$(fm_backend_target_of_meta "$meta") || continue
+    [ -n "$target" ] || continue
+    gen=$(fm_meta_get "$meta" spawn_gen)
+    started=${gen#s}
+    started=${started%%.*}
+    case "$gen:$started" in
+      s*:[0-9]*) case "$started" in *[!0-9]*) started='' ;; esac ;;
+      *) started='' ;;
+    esac
+    if [ -z "$started" ]; then
+      started=$(stat -c %Y "$meta" 2>/dev/null || stat -f %m "$meta" 2>/dev/null || true)
+    fi
+    case "$started" in
+      ''|*[!0-9]*) ;;
+      *) if [ "$started" -ge "$entered" ]; then
+           count=$((count + 1))
+           continue
+         fi ;;
+    esac
+    backend=$(fm_backend_of_meta "$meta")
+    if fm_backend_target_exists "$backend" "$target"; then
+      count=$((count + 1))
+    fi
+  done
+  printf '%s\n' "$count"
+}
+
 # --- subcommands ------------------------------------------------------------
 
 fm_afk_contract_parse_inputs() {  # <args...>; sets WORDS, OBJECTIVE, EXPECTED_RETURN, SPEND
@@ -687,6 +729,9 @@ fm_afk_contract_main() {
     validate)
       path=$(fm_afk_contract_select_path "$@") || { fm_afk_contract_usage >&2; return 2; }
       fm_afk_contract_validate "$path" ;;
+    worker-count)
+      [ "$#" -eq 0 ] || { fm_afk_contract_usage >&2; return 2; }
+      fm_afk_contract_worker_count ;;
     clauses|flags|refused|grants)
       fm_afk_contract_log "'$cmd' was retired with the clause and merge-grant apparatus: the record is the captain's words (read them with 'words' or 'readback')"
       return 2 ;;

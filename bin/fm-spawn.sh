@@ -1573,7 +1573,7 @@ if [ "$RELAUNCH" -ne 1 ]; then
   fm_lease_forbid_branch "new-task spawn (fm-spawn)" --away-relocated
 fi
 spawn_refuse_if_away_spend_cap() {
-  local cap live meta target
+  local cap live
   [ "$RELAUNCH" -ne 1 ] || return 0
   [ "$KIND" != secondmate ] || return 0
   [ -f "$STATE/.afk-contract" ] || return 0
@@ -1582,22 +1582,10 @@ spawn_refuse_if_away_spend_cap() {
   case "$cap" in
   '' | *[!0-9]* | 0) return 0 ;;
   esac
-  live=0
-  for meta in "$STATE"/*.meta; do
-    [ -f "$meta" ] || continue
-    [ "$(grep '^kind=' "$meta" 2>/dev/null | tail -1 | cut -d= -f2-)" != secondmate ] || continue
-    # A record with no recorded endpoint (a merge record) or whose endpoint reads
-    # dead or missing runs no worker, so it is not concurrent spend. Every other
-    # reading (alive, ambiguous, unreadable, unverified) still counts.
-    # fm_backend_target_of_meta returns 1 for a record with no window= (a merge
-    # record); under set -e that must read as "no endpoint", not abort the spawn.
-    target=$(fm_backend_target_of_meta "$meta") || target=
-    [ -n "$target" ] || continue
-    case "$(fm_backend_agent_state "$(fm_backend_of_meta "$meta")" "$target")" in
-    dead | missing) continue ;;
-    esac
-    live=$((live + 1))
-  done
+  live=$(FM_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/fm-afk-contract.sh" worker-count) || {
+    echo "error: spawn refused - the away worker count could not be established" >&2
+    exit 1
+  }
   if [ "$live" -ge "$cap" ]; then
     echo "error: spawn refused - the away-posture record caps concurrent workers at $cap and $live ordinary task(s) are live in this home; task $ID stays queued for the captain's return or for a worker to finish (spend cap: bin/fm-afk-contract.sh)" >&2
     exit 1
@@ -1605,14 +1593,12 @@ spawn_refuse_if_away_spend_cap() {
 }
 # Spend cap (bin/fm-afk-contract.sh's spend_max_concurrent_workers): while the
 # away-posture record exists, a fresh ordinary spawn refuses for BOTH actors
-# once this home already runs that many ordinary tasks: every state/*.meta whose
-# kind is not secondmate and whose endpoint is not recorded as absent (no
-# endpoint) or read dead or missing by fm_backend_agent_state. Stale records
-# that outlive their worker no longer consume the cap. A relaunch replaces a
-# worker that already counts, and a secondmate is a persistent home rather than
-# spend, so both are exempt. Checked before any endpoint, worktree, or record
-# exists, so a refusal costs nothing to unwind; rechecked after the task-set
-# lock so two fresh spawns cannot both publish from a stale count.
+# once this home already holds that many workers, counted by
+# bin/fm-afk-contract.sh worker-count. A relaunch replaces an existing worker,
+# and a secondmate is a persistent home rather than spend, so both are
+# exempt. Checked before any endpoint, worktree, or record exists, so a refusal
+# costs nothing to unwind; rechecked after the task-set lock so two fresh
+# spawns cannot both publish from a stale count.
 spawn_refuse_if_away_spend_cap
 # Worker headroom (this file's header owns the rule's use here;
 # bin/fm-fleet-resources.sh owns the read and bin/fm-place.sh the alternative).

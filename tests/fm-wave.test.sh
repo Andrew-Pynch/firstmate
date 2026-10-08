@@ -294,6 +294,64 @@ test_a_cycle_is_reported_and_never_dispatched() {
   pass "a cycle is reported and never dispatched"
 }
 
+test_one_landed_wave_packet_parks_only_its_own_ask() {
+  local home packet artifact first json
+  home=$(make_home packet)
+  packet="$home/packet.json"
+  seed "$home" landed-a firstmate
+  seed "$home" landed-b firstmate
+  seed "$home" followup firstmate
+  block_on "$home" followup landed-a
+  seed "$home" elsewhere life
+  cat > "$packet" <<'JSON'
+{"id":"release-one","project":"firstmate","items":["landed-a","landed-b"],
+ "proves":"Both command paths now preserve decisions.",
+ "not_done":"No deployment or delivery defaults changed.",
+ "unblocks":"The followup can now start.",
+ "ask":"Read the linked command output."}
+JSON
+  wave "$home" summary --packet "$packet"
+  [ "$WAVE_RC" -ne 0 ] || fail "an unfinished wave produced a summary"
+  start_task "$home" landed-a
+  (cd "$home" && tasks-axi 'done' landed-a --pr https://github.com/example/repo/pull/1 >/dev/null) || fail "could not land a"
+  start_task "$home" landed-b
+  (cd "$home" && tasks-axi 'done' landed-b --pr https://github.com/example/repo/pull/2 >/dev/null) || fail "could not land b"
+  wave "$home" summary --packet "$packet"
+  expect_code 0 "$WAVE_RC" "landed wave summary: $(cat "$TMP_ROOT/wave.stderr")"
+  first=$WAVE_OUT
+  [ "$(printf '%s\n' "$first" | wc -l | tr -d ' ')" -eq 1 ] || fail "wave produced more than one chat line"
+  assert_contains "$first" "Read the linked command output." "summary line lost its one ask"
+  artifact="$home/data/fm-wave-firstmate-release-one/report.md"
+  [ -f "$artifact" ] || fail "landed wave omitted its artifact"
+  assert_contains "$(cat "$artifact")" "https://github.com/example/repo/pull/1" "first item lost its link"
+  assert_contains "$(cat "$artifact")" "https://github.com/example/repo/pull/2" "second item lost its link"
+  assert_contains "$(cat "$artifact")" "No deployment or delivery defaults changed." "summary omitted what it did not do"
+  wave "$home" summary --packet "$packet"
+  expect_code 0 "$WAVE_RC" "repeated wave summary"
+  [ -z "$WAVE_OUT" ] || fail "repeat summary produced another chat line"
+  jq '.ask = "A different ask."' "$packet" > "$home/changed-packet.json"
+  wave "$home" summary --packet "$home/changed-packet.json"
+  [ "$WAVE_RC" -ne 0 ] || fail "a repeated wave id changed the recorded ask"
+  json=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" "$ROOT/bin/fm-fleet-snapshot.sh" --json)
+  printf '%s' "$json" | jq -e '.backlog.records | map(select(.id == "fm-wave-firstmate-release-one")) | length == 1 and all(.[]; .hold_kind == "captain" and .hold_reason == "Read the linked command output.")' >/dev/null \
+    || fail "packet did not park its ask in the same queue"
+  wave "$home" next
+  assert_contains "$WAVE_OUT" "start=followup" "unreviewed packet stopped a declared ticket dependency that already landed"
+  assert_contains "$WAVE_OUT" "project=life wave=1 start=elsewhere" "unreviewed packet blocked another project"
+  seed "$home" review-dependent firstmate
+  block_on "$home" review-dependent fm-wave-firstmate-release-one
+  wave "$home" next
+  assert_not_contains "$WAVE_OUT" "review-dependent" "a declared packet dependent ignored its review wait"
+  jq '.id = "action-free" | .ask = "Nothing." | .needs_review = false' "$packet" > "$home/no-ask.json"
+  wave "$home" summary --packet "$home/no-ask.json"
+  expect_code 0 "$WAVE_RC" "action-free wave summary"
+  json=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" "$ROOT/bin/fm-fleet-snapshot.sh" --json)
+  printf '%s' "$json" | jq -e '.backlog.records[] | select(.id == "fm-wave-firstmate-action-free") | .state == "done" and .hold_kind != "captain"' >/dev/null \
+    || fail "an action-free packet invented a captain wait"
+  pass "one landed-wave artifact, queue ask and chat line; only declared review dependents wait"
+}
+
+test_one_landed_wave_packet_parks_only_its_own_ask
 test_two_projects_dispatch_their_own_waves
 test_a_ticket_starts_once_its_own_blockers_land
 test_an_unreviewed_item_blocks_only_its_dependents

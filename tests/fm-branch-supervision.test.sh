@@ -905,6 +905,13 @@ test_away_record_relocates_main_owned_actions_to_the_branch() {
   status=$?
   [ "$status" -eq 1 ] || fail "spend-cap refusal exited $status, not 1: $out"
   assert_contains "$out" "caps concurrent workers at 2 and 2 ordinary task(s) are live" "spend-cap refusal lost its count"
+  # Records that run no worker are not spend: a merge record with no recorded
+  # endpoint must not raise the count above the two real tasks.
+  fm_write_meta "$home/state/merge-rec.meta" "kind=ship" "owner=main-merge"
+  out=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$root" FM_SUPERVISION_ACTOR=branch \
+    "$ROOT/bin/fm-spawn.sh" task-new --mode no-mistakes --yolo off 2>&1)
+  assert_contains "$out" "caps concurrent workers at 2 and 2 ordinary task(s) are live" "an endpoint-less merge record was counted as concurrent spend"
+  rm -f "$home/state/merge-rec.meta"
   # The cap binds main too: the posture, not the actor, is what caps spend.
   out=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$root" "$ROOT/bin/fm-spawn.sh" task-new --mode no-mistakes --yolo off 2>&1)
   status=$?

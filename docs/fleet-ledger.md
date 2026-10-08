@@ -76,3 +76,17 @@ These are possible follow-ups, deliberately left out of this version:
 - secret scrubbing beyond what status lines already contain, and privacy guarantees stronger than those of `state/`.
 
 `bin/fm-fleet-ledger.sh`'s header owns the writer mechanics and lists every producer.
+
+## Status page
+
+`bin/fm-status-page.sh` uses `fm-bearings-snapshot.sh --json --fields page` without GitHub polling and this ledger to publish `state/status-page-public/index.html`.
+Its cursor and decision receipts stay in `state/.status-page`, outside the served document root.
+When `config/fleet-ledger` exists, the existing detached home-summary publisher refreshes the page after successful summary publication; there is no second timer.
+Run `FM_HOME=<home> bin/fm-status-page.sh` once for the initial page, then `FM_HOME=<home> bin/fm-status-serve.sh` as a persistent local service.
+The server listens only on `127.0.0.1`, using `config/status-page-port` or port `8795` when absent.
+Mount it on the tailnet with `tailscale serve --bg --set-path=/fm-status 8795`; use the configured port instead of `8795` when overridden.
+Only the HTML and its decision endpoint are reachable through that mount, not the operational home's raw records.
+Read access is tailnet-only; writing an answer also requires the exact Tailscale Serve login in local `config/status-page-owner`, a current per-render form token, and a same-origin browser POST from the served `.ts.net` host.
+Serve strips caller-supplied identity headers before it adds its own; direct loopback requests without an identity header are rejected (local processes remain in the host trust boundary).
+Submitting an accepted card calls `fm-inbox.sh note --request-id` and refreshes the page; Main handles the resulting inbox check.
+Do not enable Funnel or publish this route to the public internet.

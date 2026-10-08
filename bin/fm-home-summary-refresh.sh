@@ -22,9 +22,10 @@
 # With --best-effort, a failure is appended to the bounded home-local
 # state/.home-summary-refresh.log when available, with stderr as the bounded
 # fallback, and the command exits zero. Session start, watcher, spawn, and
-# teardown use that mode so this side-band publication can never change their
-# result. Without it, failures are printed and returned to the direct caller
-# for tests and diagnostics.
+# teardown use that mode so this side-band publication cannot change their
+# result. When config/fleet-ledger exists, successful publication starts a
+# separate best-effort status-page render after the summary lock is released.
+# It cannot consume the summary's deadline or alter its result.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -245,6 +246,9 @@ if [ "$HOME_SUMMARY_MODE" = parent ]; then
 fi
 
 if home_summary_refresh_once; then
+  if [ -f "$CONFIG/fleet-ledger" ]; then
+    FM_HOME="$FM_HOME" python3 "$SCRIPT_DIR/fm-status-page.py" --detach || true
+  fi
   exit 0
 else
   refresh_rc=$?

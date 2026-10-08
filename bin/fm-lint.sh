@@ -7,8 +7,8 @@
 # both use this owner without duplicating lint configuration.
 # The explicit --fast mode is local-only and disables ShellCheck's extended
 # dataflow analysis while preserving ordinary shell lint checks and source
-# following. CI, main, and merge-base-less runs keep --norc --external-sources
-# with full dataflow over the whole canonical set. An ordinary local branch
+# following. CI and main runs keep --norc --external-sources with full dataflow
+# over the whole canonical set. An ordinary local branch
 # (changed-file mode, including the no-mistakes lint step) drops
 # --external-sources, keeps dataflow, and excludes SC1091, SC2034, SC2153,
 # and SC2329, the codes that need library context. Those codes still run in
@@ -22,18 +22,28 @@
 #
 # With no explicit paths, the file set and source-following posture depend
 # on context:
-#   - In CI (GITHUB_ACTIONS=true or CI=true), on the main branch, or when no
-#     merge-base against origin/main (or local main) can be found, it lints
-#     the full canonical set: bin/*.sh bin/backends/*.sh tests/*.sh, with
+#   - In CI (GITHUB_ACTIONS=true or CI=true) or on the main branch it lints the
+#     full canonical set: bin/*.sh bin/backends/*.sh tests/*.sh, with
 #     --external-sources and full dataflow. This is what CI always runs, so
 #     CI coverage never depends on a local diff.
-#   - Otherwise (an ordinary local branch with a real merge-base) it lints
-#     only the canonical-set files changed since that merge-base, including
-#     uncommitted local edits, via plain local `git diff` (no network, no
-#     `gh`). That local pass drops --external-sources and excludes SC1091,
-#     SC2034, SC2153, and SC2329. A branch with zero matching changed files
-#     skips ShellCheck and prints a "no changed lint targets" note, then
-#     still runs the backend-purity check and validates workflows.
+#   - Otherwise it lints only the canonical-set files changed since the diff
+#     base (see below), including uncommitted local edits, via plain local
+#     `git diff` (no network, no `gh`). That local pass drops
+#     --external-sources and excludes SC1091, SC2034, SC2153, and SC2329. A
+#     branch with zero matching changed files skips ShellCheck and prints a
+#     "no changed lint targets" note, then still runs the backend-purity check
+#     and validates workflows.
+#
+# Diff base. A local run resolves its base from the candidate refs origin/main,
+# local main, and the farm patch lineage head refs/farm-patches/current, which is
+# what a detached checkout of a replayed farm patch set carries, and takes the
+# candidate whose merge base is nearest to HEAD. A detached or linked worktree
+# therefore lints what this checkout actually changed instead of everything it
+# carries. A local run whose base cannot be resolved refuses with a clear message
+# and exit 2 without invoking ShellCheck: this owner never falls back to linting
+# the whole tree from a local checkout, because one whole-tree pass can cost
+# several GiB. To lint everything anyway, name the roots explicitly
+# (fm-lint.sh bin/*.sh) or run in CI.
 # Explicit paths always bypass this file-set selection and lint exactly the
 # given paths, matching the same config, without the workflow YAML check.
 # Explicit core bin/ and bin/backends/ scripts still receive the
@@ -41,15 +51,21 @@
 # invocations in the core bin/ and bin/backends/ scripts so every configured
 # backlog backend follows the same tasks-axi lifecycle path.
 #
-# Lint defaults to two bounded workers over two stable logical shards.
+# Canonical lint defaults to two bounded workers over two stable logical shards.
 # Diagnostics replay in stable shard/root order. FM_LINT_JOBS=1 changes
-# concurrency, not diagnostics or exit selection.
-# --partition 1of2/2of2 splits the entire canonical inventory across
-# two CI runners, each with those same bounded workers. Partitions are complete,
+# concurrency, not diagnostics or exit selection. Without FM_LINT_JOBS the
+# default drops to one worker when available memory is under the 8 GiB two
+# workers need. FM_LINT_MEMINFO selects the memory source (default
+# /proc/meminfo); an unreadable source keeps the bounded default of two.
+# --partition 1of2/2of2 splits the entire canonical inventory across two CI
+# runners, each with those same bounded workers. Partitions are complete,
 # disjoint, and byte-weight balanced; --list-files exposes their actual roots.
 # Partition mode is always full source-aware analysis, never changed-only or
 # --fast, and does not accept explicit paths. Each partition also runs workflow
 # lint and backend-purity checks, keeping either invocation independently useful.
+#
+# The worker-local lint is FM_LINT_JOBS=1 bin/fm-lint.sh --fast: one worker,
+# extended dataflow analysis off, over just the files this checkout changed.
 #
 # Optional quiet telemetry writes one bounded TSV snapshot of content and source
 # graph identity, wall/CPU/RSS, shard load, and competing ShellCheck processes.
@@ -57,6 +73,7 @@
 # Usage:
 #   fm-lint.sh                         lint the context-selected file set (see above)
 #   fm-lint.sh --fast [path]...       local lint with extended analysis disabled
+#   FM_LINT_JOBS=1 fm-lint.sh --fast   worker-local lint (see above)
 #   fm-lint.sh <path>...               lint explicit roots with the same config
 #   fm-lint.sh --jobs <1|2> [path]...  override bounded worker count
 #   fm-lint.sh --partition <1of2|2of2> lint one full-rigor canonical CI partition
@@ -398,7 +415,29 @@ fm_lint_run_backend_purity() {
   }
 }
 
-JOBS=${FM_LINT_JOBS:-2}
+# Two canonical workers need this much available memory: one whole-tree
+# ShellCheck process with extended analysis peaks near 4 GiB (measured
+# 2026-09-15, when two concurrent whole-tree runs on this tree filled RAM and
+# swap). Below it the worker default drops to one.
+FM_LINT_TWO_WORKER_MEMORY_KIB=$((4 * 1024 * 1024))
+
+# fm_lint_available_memory_kib prints the available memory in KiB reported by the
+# memory source (FM_LINT_MEMINFO, default /proc/meminfo). Returns nonzero when
+# that source is unreadable or carries no MemAvailable figure, so a host whose
+# memory cannot be measured keeps the bounded default instead of guessing.
+fm_lint_available_memory_kib() {
+  local meminfo=${FM_LINT_MEMINFO:-/proc/meminfo} key value rest
+  [ -r "$meminfo" ] || return 1
+  while read -r key value rest; do
+    [ "$key" = MemAvailable: ] || continue
+    case "$value" in ''|*[!0-9]*) return 1 ;; esac
+    printf '%s\n' "$value"
+    return 0
+  done < "$meminfo"
+  return 1
+}
+
+JOBS=${FM_LINT_JOBS:-}
 TELEMETRY=${FM_LINT_TELEMETRY:-}
 FAST=0
 ANALYSIS_MODE=full
@@ -457,6 +496,19 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
+# Without FM_LINT_JOBS or --jobs the worker default is memory-aware: one worker
+# when available memory is under what two need, so a whole-tree pass cannot start
+# a second worker into a machine that is already short of memory.
+if [ -z "$JOBS" ]; then
+  JOBS=2
+  memory_kib=$(fm_lint_available_memory_kib) || memory_kib=
+  if [ -n "$memory_kib" ] && [ "$memory_kib" -lt "$FM_LINT_TWO_WORKER_MEMORY_KIB" ]; then
+    JOBS=1
+    printf 'fm-lint.sh: %s KiB available is under the %s KiB two workers need; using one worker (FM_LINT_JOBS=2 overrides)\n' \
+      "$memory_kib" "$FM_LINT_TWO_WORKER_MEMORY_KIB" >&2
+  fi
+fi
+
 case "$JOBS" in
   1|2) ;;
   *) printf 'fm-lint.sh: jobs must be 1 or 2, got %s.\n' "$JOBS" >&2; exit 2 ;;
@@ -483,20 +535,42 @@ if [ "$FAST" -eq 1 ] && { [ "${GITHUB_ACTIONS:-}" = true ] || [ "${CI:-}" = true
   exit 2
 fi
 
-# fm_lint_changed_base_ref prints the ref to diff the working branch against:
-# the local origin/main tracking ref when present, else local main. Returns
-# nonzero when neither is resolvable, which the caller treats as "no
-# merge-base found" and falls back to a full lint.
-fm_lint_changed_base_ref() {
-  if git rev-parse --verify -q origin/main >/dev/null 2>&1; then
-    printf 'origin/main\n'
-    return 0
-  fi
-  if git rev-parse --verify -q main >/dev/null 2>&1; then
-    printf 'main\n'
-    return 0
-  fi
-  return 1
+# fm_lint_changed_merge_base prints the commit a local changed-file lint diffs
+# the working tree against, choosing the recorded base NEAREST to HEAD among the
+# candidate refs: the local origin/main tracking ref, local main, and the farm
+# patch lineage head refs/farm-patches/current that a detached farm home is
+# checked out on. Nearest means fewest commits between that base and HEAD, so a
+# detached or linked worktree lints what this checkout changed rather than every
+# patch it carries. Returns nonzero with no output when no candidate resolves a
+# merge base with HEAD, which the caller refuses instead of linting the whole
+# tree.
+fm_lint_changed_merge_base() {
+  local ref merge_base distance best best_distance
+  best=
+  best_distance=
+  for ref in origin/main main refs/farm-patches/current; do
+    merge_base=$(git merge-base "$ref" HEAD 2>/dev/null) || continue
+    [ -n "$merge_base" ] || continue
+    distance=$(git rev-list --count "$merge_base..HEAD" 2>/dev/null) || continue
+    case "$distance" in ''|*[!0-9]*) continue ;; esac
+    if [ -n "$best" ] && [ "$distance" -ge "$best_distance" ]; then
+      continue
+    fi
+    best=$merge_base
+    best_distance=$distance
+  done
+  [ -n "$best" ] || return 1
+  printf '%s\n' "$best"
+}
+
+# fm_lint_refuse_no_base <reason>: refuse a local changed-file lint whose diff
+# base cannot be resolved, naming <reason> and the routes that still lint. The
+# owner never falls back to shellchecking the whole tree from a local checkout,
+# so this exits 2 without running ShellCheck at all.
+fm_lint_refuse_no_base() {
+  printf 'fm-lint.sh: cannot derive a changed-file diff base: %s.\n' "$1" >&2
+  printf 'fm-lint.sh: refusing to lint the whole tree; lint explicit paths (fm-lint.sh <path>...), or run in CI (CI=true) for the canonical set.\n' >&2
+  exit 2
 }
 
 # fm_lint_is_canonical_root tests membership in the canonical set (a direct
@@ -527,14 +601,16 @@ if [ "$#" -gt 0 ]; then
   ROOTS=("$@")
 else
   full_lint=1
-  if [ -z "$PARTITION" ] && [ "${GITHUB_ACTIONS:-}" != true ] && [ "${CI:-}" != true ] \
-    && command -v git >/dev/null 2>&1 \
-    && git rev-parse --is-inside-work-tree >/dev/null 2>&1 \
-    && [ "$(git rev-parse --abbrev-ref HEAD 2>/dev/null)" != main ]; then
-    base_ref=$(fm_lint_changed_base_ref) || base_ref=
-    merge_base=
-    [ -z "$base_ref" ] || merge_base=$(git merge-base "$base_ref" HEAD 2>/dev/null) || merge_base=
-    [ -z "$merge_base" ] || full_lint=0
+  if [ -z "$PARTITION" ] && [ "${GITHUB_ACTIONS:-}" != true ] && [ "${CI:-}" != true ]; then
+    if ! command -v git >/dev/null 2>&1; then
+      fm_lint_refuse_no_base 'git is not installed'
+    fi
+    if [ "$(git rev-parse --abbrev-ref HEAD 2>/dev/null)" != main ]; then
+      merge_base=$(fm_lint_changed_merge_base) || merge_base=
+      [ -n "$merge_base" ] || fm_lint_refuse_no_base \
+        'no candidate ref (origin/main, main, refs/farm-patches/current) resolves a merge base with HEAD'
+      full_lint=0
+    fi
   fi
 
   if [ "$full_lint" -eq 1 ]; then

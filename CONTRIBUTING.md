@@ -98,7 +98,7 @@ The pipeline publishes that evidence itself, so never hand-commit `.no-mistakes/
 Check and test the toolbelt before pushing:
 
 ```sh
-while IFS= read -r script; do /bin/bash -n "$script" || exit; done < <(bin/fm-lint.sh --list-files)   # syntax-check the shell surface fm-lint.sh will cover (changed files locally, full set in CI/on main)
+while IFS= read -r script; do /bin/bash -n "$script" || exit; done < <(bin/fm-lint.sh --list-files)   # syntax-check the shell surface fm-lint.sh will cover (changed files locally, full set in CI/on main; a local checkout whose diff base cannot be resolved exits 2 and lists nothing)
 bin/fm-lint.sh   # lint that shell surface plus GitHub workflows via pinned actionlint; the single owner CI and the no-mistakes gate both run
 bin/fm-test-run.sh tests/<subject>.test.sh   # one script (primary local focus path, timed)
 bin/fm-test-run.sh tests/<a>.test.sh tests/<b>.test.sh   # several subjects at once: bounded automatic concurrency

@@ -163,6 +163,10 @@ test_help_reports_the_complete_interface() {
   assert_contains "$help" "SC2034" "fm-lint.sh --help omitted the local SC2034 exclusion"
   assert_contains "$help" "SC2153" "fm-lint.sh --help omitted the local SC2153 exclusion"
   assert_contains "$help" "SC2329" "fm-lint.sh --help omitted the local SC2329 exclusion"
+  assert_contains "$help" "refs/farm-patches/current" \
+    "fm-lint.sh --help omitted the farm lineage diff base"
+  assert_contains "$help" "FM_LINT_JOBS=1 fm-lint.sh --fast" \
+    "fm-lint.sh --help omitted the worker-local lint mode"
   pass "fm-lint.sh --help reports the complete executable interface"
 }
 
@@ -224,32 +228,19 @@ test_canonical_partitions_preserve_full_lint() {
 # tests below. Its answers are driven by env vars the caller sets before
 # invoking fm-lint.sh, so those tests can steer git state without depending on
 # this worktree's actual branch, remotes, or history:
-#   FM_TEST_GIT_INSIDE_WORKTREE  1 (default) or 0
 #   FM_TEST_GIT_BRANCH           branch name for `rev-parse --abbrev-ref HEAD`
-#   FM_TEST_GIT_HAS_ORIGIN_MAIN  1 (default) or 0
-#   FM_TEST_GIT_HAS_MAIN         1 (default) or 0
 #   FM_TEST_GIT_MERGE_BASE_OK    1 (default) or 0
 #   FM_TEST_GIT_MERGE_BASE       merge-base value to print when OK
+#   FM_TEST_GIT_REV_LIST_COUNT   commit count for `rev-list --count` (default 1)
 #   FM_TEST_GIT_DIFF_FILE        path to a file of NUL-separated changed paths
 fm_lint_stub_git() {
   local fakebin=$1
   cat > "$fakebin/git" <<'SH'
 #!/usr/bin/env bash
 case "$*" in
-  "rev-parse --is-inside-work-tree")
-    [ "${FM_TEST_GIT_INSIDE_WORKTREE:-1}" = 1 ] || exit 1
-    printf 'true\n'
-    exit 0
-    ;;
   "rev-parse --abbrev-ref HEAD")
     printf '%s\n' "${FM_TEST_GIT_BRANCH:-feature}"
     exit 0
-    ;;
-  "rev-parse --verify -q origin/main")
-    [ "${FM_TEST_GIT_HAS_ORIGIN_MAIN:-1}" = 1 ] && exit 0 || exit 1
-    ;;
-  "rev-parse --verify -q main")
-    [ "${FM_TEST_GIT_HAS_MAIN:-1}" = 1 ] && exit 0 || exit 1
     ;;
   "merge-base "*)
     if [ "${FM_TEST_GIT_MERGE_BASE_OK:-1}" = 1 ]; then
@@ -257,6 +248,10 @@ case "$*" in
       exit 0
     fi
     exit 1
+    ;;
+  "rev-list --count "*)
+    printf '%s\n' "${FM_TEST_GIT_REV_LIST_COUNT:-1}"
+    exit 0
     ;;
   "diff --name-only --diff-filter=ACMR -z "*)
     if [ -n "${FM_TEST_GIT_DIFF_FILE:-}" ] && [ -f "$FM_TEST_GIT_DIFF_FILE" ]; then
@@ -278,6 +273,26 @@ fm_lint_write_diff_file() {
   local file=$1
   shift
   printf '%s\0' "$@" > "$file"
+}
+
+# fm_lint_fixture_repo <dir>: build a throwaway firstmate-shaped checkout for the
+# real-git diff-base tests: the lint owner and its workflow owner copied from this
+# repo, two canonical roots, one minimal valid workflow, all committed on main.
+# A case then shapes that repo's refs, remotes, and worktrees itself, so the
+# changed-set selection runs against real git state instead of a stub.
+fm_lint_fixture_repo() {
+  local dir=$1
+  mkdir -p "$dir/bin" "$dir/tests" "$dir/.github/workflows"
+  cp "$LINT" "$dir/bin/fm-lint.sh"
+  cp "$ROOT/bin/fm-lint-workflows.sh" "$dir/bin/fm-lint-workflows.sh"
+  chmod +x "$dir/bin/fm-lint.sh" "$dir/bin/fm-lint-workflows.sh"
+  printf '%s\n' '#!/usr/bin/env bash' 'printf "%s\n" plain' > "$dir/bin/fm-plain.sh"
+  printf '%s\n' '#!/usr/bin/env bash' 'printf "%s\n" plain' > "$dir/tests/fm-plain.test.sh"
+  printf 'name: fixture\non: [push]\njobs:\n  ok:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo ok\n' \
+    > "$dir/.github/workflows/fixture.yml"
+  fm_git_init_commit "$dir"
+  git -C "$dir" add -A
+  git -C "$dir" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' commit -qm scaffold
 }
 
 # fm_lint_stub_shellcheck <fakebin-dir> <log-file>: install a ShellCheck stub
@@ -646,21 +661,127 @@ test_main_branch_keeps_external_sources() {
   pass "fm-lint.sh on main keeps source following without the local exclusion list"
 }
 
-test_merge_base_less_keeps_external_sources() {
-  local tmp fakebin log flag_log out
-  tmp=$(fm_test_tmproot fm-lint-nomergebase-follow)
+test_unresolvable_diff_base_refuses_without_linting() {
+  local tmp fakebin log out rc
+  tmp=$(fm_test_tmproot fm-lint-no-base)
   fakebin=$(fm_fakebin "$tmp")
   fm_lint_stub_git "$fakebin"
   log="$tmp/shellcheck.log"
-  flag_log="$tmp/flags.log"
   fm_lint_stub_shellcheck "$fakebin" "$log"
 
+  rc=0
   out=$(PATH="$fakebin:$PATH" GITHUB_ACTIONS='' CI='' FM_LINT_JOBS=1 \
     FM_TEST_GIT_BRANCH=feature FM_TEST_GIT_MERGE_BASE_OK=0 \
-    FM_TEST_FLAG_LOG="$flag_log" "$LINT" 2>&1) \
-    || fail "merge-base-less lint failed"$'\n'"$out"
-  fm_lint_assert_flag_log "$flag_log" yes none
-  pass "fm-lint.sh without a merge-base keeps source following without the local exclusion list"
+    "$LINT" 2>&1) || rc=$?
+  [ "$rc" -eq 2 ] \
+    || fail "an unresolvable diff base must refuse with exit 2, got $rc"$'\n'"$out"
+  assert_contains "$out" "cannot derive a changed-file diff base" \
+    "the refusal did not name the missing diff base"
+  assert_contains "$out" "refusing to lint the whole tree" \
+    "the refusal did not state that the whole tree is off limits"
+  [ ! -s "$log" ] \
+    || fail "a refused run linted files anyway"$'\n'"$(cat "$log")"
+  pass "fm-lint.sh refuses an unresolvable diff base instead of linting the whole tree"
+}
+
+test_detached_worktree_lints_only_the_touched_file() {
+  local tmp repo worktree fakebin log scaffold_commit upstream_commit out rc
+  tmp=$(fm_test_tmproot fm-lint-detached-base)
+  repo="$tmp/repo"
+  worktree="$tmp/worktree"
+  fakebin=$(fm_fakebin "$tmp")
+  log="$tmp/shellcheck.log"
+  fm_lint_stub_shellcheck "$fakebin" "$log"
+  fm_lint_fixture_repo "$repo"
+  scaffold_commit=$(git -C "$repo" rev-parse refs/heads/main)
+  git -C "$repo" update-ref refs/farm-patches/current "$scaffold_commit"
+
+  # origin/main and local main both resolve, but neither shares history with the
+  # farm lineage this worktree is detached on, so refs/farm-patches/current is the
+  # only base left and a whole-tree lint is never an option.
+  git -C "$repo" checkout -q --orphan upstream
+  git -C "$repo" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' commit -qm upstream
+  upstream_commit=$(git -C "$repo" rev-parse HEAD)
+  git -C "$repo" update-ref refs/heads/main "$upstream_commit"
+  git -C "$repo" update-ref refs/remotes/origin/main "$upstream_commit"
+  git -C "$repo" checkout -q main
+  git -C "$repo" worktree add --detach -q "$worktree" refs/farm-patches/current
+  printf '%s\n' '#!/usr/bin/env bash' 'printf "%s\n" edited' > "$worktree/bin/fm-plain.sh"
+
+  rc=0
+  out=$(PATH="$fakebin:$PATH" GITHUB_ACTIONS='' CI='' FM_LINT_JOBS=1 \
+    "$worktree/bin/fm-lint.sh" 2>&1) || rc=$?
+  [ "$rc" -eq 0 ] || fail "detached-worktree lint failed (exit $rc)"$'\n'"$out"
+  [ "$(cat "$log")" = "bin/fm-plain.sh" ] \
+    || fail "a detached worktree did not lint exactly the touched file"$'\n'"linted: $(cat "$log")"
+  pass "fm-lint.sh lints only the touched file from a detached worktree with no merge base"
+}
+
+test_detached_worktree_prefers_the_nearest_recorded_base() {
+  local tmp repo worktree fakebin log out rc
+  tmp=$(fm_test_tmproot fm-lint-nearest-base)
+  repo="$tmp/repo"
+  worktree="$tmp/worktree"
+  fakebin=$(fm_fakebin "$tmp")
+  log="$tmp/shellcheck.log"
+  fm_lint_stub_shellcheck "$fakebin" "$log"
+  fm_lint_fixture_repo "$repo"
+  fm_git_add_origin "$repo" "$repo.origin.git"
+
+  # A farm lineage one commit past origin/main's tip: both bases resolve, and the
+  # farm head is the nearest one, so the lint must not diff against the older base
+  # and sweep the farm patch into a task that never touched it.
+  git -C "$repo" checkout -q -b lineage
+  printf '%s\n' '#!/usr/bin/env bash' 'printf "%s\n" farm' > "$repo/bin/fm-farm.sh"
+  git -C "$repo" add bin/fm-farm.sh
+  git -C "$repo" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' commit -qm farm
+  git -C "$repo" update-ref refs/farm-patches/current HEAD
+  git -C "$repo" checkout -q main
+  git -C "$repo" worktree add --detach -q "$worktree" refs/farm-patches/current
+  printf '%s\n' '#!/usr/bin/env bash' 'printf "%s\n" edited' > "$worktree/bin/fm-plain.sh"
+
+  rc=0
+  out=$(PATH="$fakebin:$PATH" GITHUB_ACTIONS='' CI='' FM_LINT_JOBS=1 \
+    "$worktree/bin/fm-lint.sh" 2>&1) || rc=$?
+  [ "$rc" -eq 0 ] || fail "detached-worktree lint failed (exit $rc)"$'\n'"$out"
+  [ "$(cat "$log")" = "bin/fm-plain.sh" ] \
+    || fail "the nearer recorded base was not chosen"$'\n'"linted: $(cat "$log")"
+  pass "fm-lint.sh diffs a detached farm worktree against the base nearest to HEAD"
+}
+
+test_worker_default_drops_to_one_under_memory_pressure() {
+  local tmp fakebin log fixture telemetry meminfo out
+  tmp=$(fm_test_tmproot fm-lint-memory)
+  fakebin=$(fm_fakebin "$tmp")
+  log="$tmp/shellcheck.log"
+  fm_lint_stub_shellcheck "$fakebin" "$log"
+  fixture="$tmp/fixture.sh"
+  printf '%s\n' '#!/usr/bin/env bash' 'printf "%s\n" ok' > "$fixture"
+  telemetry="$tmp/telemetry.tsv"
+  meminfo="$tmp/meminfo"
+  printf 'MemTotal:       65007996 kB\nMemAvailable:    1000000 kB\n' > "$meminfo"
+
+  out=$(PATH="$fakebin:$PATH" FM_LINT_MEMINFO="$meminfo" \
+    FM_LINT_TELEMETRY="$telemetry" "$LINT" "$fixture" 2>&1) \
+    || fail "lint with a tight memory source failed"$'\n'"$out"
+  assert_grep $'jobs\t1' "$telemetry" "a tight memory source did not drop to one worker"
+  assert_contains "$out" "using one worker" "the worker reduction was not disclosed"
+
+  out=$(PATH="$fakebin:$PATH" FM_LINT_MEMINFO="$meminfo" FM_LINT_JOBS=2 \
+    FM_LINT_TELEMETRY="$telemetry" "$LINT" "$fixture" 2>&1) \
+    || fail "lint with an explicit worker count failed"$'\n'"$out"
+  assert_grep $'jobs\t2' "$telemetry" "FM_LINT_JOBS did not override the memory default"
+  assert_not_contains "$out" "using one worker" \
+    "an explicit worker count still reported a memory reduction"
+
+  out=$(PATH="$fakebin:$PATH" FM_LINT_MEMINFO="$tmp/absent-meminfo" \
+    FM_LINT_TELEMETRY="$telemetry" "$LINT" "$fixture" 2>&1) \
+    || fail "lint with an unreadable memory source failed"$'\n'"$out"
+  assert_grep $'jobs\t2' "$telemetry" \
+    "an unreadable memory source did not keep the bounded default of two workers"
+  assert_not_contains "$out" "using one worker" \
+    "an unreadable memory source reported a memory reduction"
+  pass "fm-lint.sh caps the worker default by available memory and honours an explicit count"
 }
 
 test_explicit_path_keeps_external_sources() {
@@ -1438,7 +1559,10 @@ test_changed_mode_drops_external_sources_and_excludes_cross_file_codes
 test_changed_mode_invokes_shellcheck_once_per_root
 test_ci_keeps_external_sources_without_local_exclusions
 test_main_branch_keeps_external_sources
-test_merge_base_less_keeps_external_sources
+test_unresolvable_diff_base_refuses_without_linting
+test_detached_worktree_lints_only_the_touched_file
+test_detached_worktree_prefers_the_nearest_recorded_base
+test_worker_default_drops_to_one_under_memory_pressure
 test_explicit_path_keeps_external_sources
 test_fast_mode_on_a_local_branch_keeps_source_following
 test_changed_mode_hides_cross_file_codes_that_ci_still_sees

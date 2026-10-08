@@ -460,8 +460,30 @@ def notes_timeline(notes, today):
     return "".join(out)
 
 
+def need_message(need):
+    """Optional recipient-ready message: verbatim text, inline code shown as code, one Copy for the raw text."""
+    message = need.get("message")
+    if not isinstance(message, str) or not message.strip():
+        return ""
+    to = need.get("to")
+    if isinstance(to, list):
+        to = ", ".join(str(x) for x in to if str(x).strip())
+    head = f'<b>Message{" to " + e(to) if isinstance(to, str) and to.strip() else ""}</b>'
+    parts, end = [], 0
+    for match in re.finditer(r"`([^`\n]+)`", message):
+        parts.append(e(message[end:match.start()]))
+        parts.append(f"<code>{e(match.group(1))}</code>")
+        end = match.end()
+    parts.append(e(message[end:]))
+    # The parser folds a raw CR into LF, so a character reference keeps the copied text byte-exact.
+    raw = e(message).replace("\r", "&#13;")
+    return (f'<div class="need-message"><div class="need-message-head">{head}'
+            f'<button type="button" class="copy-message" data-copy="{raw}" aria-label="Copy message">Copy message</button></div>'
+            f'<blockquote>{"".join(parts)}</blockquote></div>')
+
+
 def need_details(need):
-    """Optional action and recommendation, leaving legacy needs unchanged."""
+    """Optional action, message, and recommendation, leaving legacy needs unchanged."""
     out = []
     action = need.get("do")
     if isinstance(action, str) and action.strip():
@@ -473,6 +495,7 @@ def need_details(need):
             end = match.end()
         parts.append(inline_md(action[end:]))
         out.append(f'<div class="need-action"><b>Do</b><div>{"".join(parts)}</div></div>')
+    out.append(need_message(need))
     options = need.get("options")
     if isinstance(options, list):
         chips = []
@@ -719,6 +742,7 @@ def render(paths, reason):
 .timeline{{list-style:none;margin:.5em 0;padding:0}}.timeline .note-event{{display:grid;grid-template-columns:5ch 5.5em minmax(0,1fr);align-items:baseline;gap:.8em;border-top:1px solid #30363d;padding:.65em 0;margin:0}}.note-event time{{font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}}.note-kind{{font-size:12px;font-weight:700;text-align:center;border:1px solid;border-radius:5px;padding:2px 6px}}.note-kind.merged,.note-kind.fixed,.note-kind.live{{color:#7ee787;background:#12261e;border-color:#238636}}.note-kind.decided{{color:#79c0ff;background:#10233f;border-color:#1f6feb}}.note-kind.needs{{color:#e3b341;background:#2b2110;border-color:#9e6a03}}.note-kind.blocked{{color:#ff7b72;background:#2d1517;border-color:#da3633}}.note-kind.info{{color:#c9d1d9;background:#21262d;border-color:#57606a}}.note-text{{overflow-wrap:anywhere}}.notes details{{margin:.7em 0;color:#c9d1d9}}@media(max-width:480px){{.timeline .note-event{{gap:.5em;grid-template-columns:5ch 5em minmax(0,1fr);font-size:14px}}.notes{{padding:.4em .7em}}}}
 .card{{background:#161b22;border:1px solid #30363d;border-radius:12px;padding:.9em 1.1em;margin:.7em 0}}.need{{border-left:6px solid #d29922}}.top{{display:flex;justify-content:space-between;gap:1em;font-size:17px}}
 .need-action{{display:flex;align-items:baseline;gap:.8em;background:#2b2110;border:1px solid #9e6a03;border-radius:8px;padding:.7em .9em;margin:.7em 0;color:#e6edf3}}.need-action>div{{min-width:0;overflow-wrap:anywhere}}.need-action>b{{color:#e3b341}}.need-command code{{font-family:ui-monospace,monospace;white-space:pre-wrap;color:#f0f6fc}}.copy-command{{font:12px system-ui;color:#c9d1d9;background:#21262d;border:1px solid #57606a;border-radius:5px;padding:.2em .6em;margin-left:.5em;cursor:pointer}}.copy-command:focus-visible{{outline:2px solid #58a6ff;outline-offset:2px}}.need-options{{display:flex;flex-wrap:wrap;gap:.5em;margin:.6em 0}}.need-option{{background:#21262d;border:1px solid #57606a;border-radius:20px;padding:.3em .8em;font-size:14px;overflow-wrap:anywhere;min-width:0}}.need-option.recommended{{background:#12261e;border-color:#238636;color:#7ee787}}.need-option b{{font-size:11px;margin-left:.4em}}
+.need-message{{background:#10233f;border:1px solid #1f6feb;border-radius:8px;padding:.7em .9em;margin:.7em 0}}.need-message-head{{display:flex;justify-content:space-between;align-items:center;gap:.8em}}.need-message-head>b{{color:#79c0ff}}.need-message blockquote{{margin:.6em 0 0;padding:.5em .9em;border-left:4px solid #388bfd;background:#0d1117;border-radius:4px;white-space:pre-wrap;overflow-wrap:anywhere;color:#f0f6fc}}.need-message blockquote code{{font-family:ui-monospace,monospace;background:#21262d;border-radius:4px;padding:0 .3em}}.copy-message{{font:600 15px system-ui;color:#fff;background:#1f6feb;border:1px solid #388bfd;border-radius:6px;padding:.45em 1.1em;cursor:pointer;white-space:nowrap}}.copy-message:hover{{background:#388bfd}}.copy-message:focus-visible{{outline:2px solid #f0f6fc;outline-offset:2px}}
 .b{{color:#fff;padding:2px 8px;border-radius:5px;font-size:12px;height:fit-content;white-space:nowrap;margin-right:.4em}}.why{{color:#c9d1d9;margin:.3em 0}}.st{{color:#adbac7;font-size:14px;margin:.3em 0;word-break:break-word}}summary{{cursor:pointer}}
 ul.dl{{list-style:none;padding-left:0}}ul.dl li{{margin:.5em 0}}ul.dl .st{{display:inline}}
 #filters{{position:sticky;top:0;background:#0d1117;padding:.4em 0;border-bottom:1px solid #30363d;z-index:1}}.chips{{margin:.15em 0}}.lbl{{display:inline-block;width:5.5em;color:#8b949e;font-size:13px}}
@@ -750,14 +774,32 @@ function fromHash(){{new URLSearchParams(location.hash.slice(1)).forEach((v,k)=>
 fromHash();
 window.addEventListener("hashchange",()=>{{fromHash();apply();}});
 document.querySelectorAll(".chip").forEach(c=>c.onclick=()=>{{sel[c.dataset.dim]=c.dataset.v;apply();}});
+async function copyText(text){{
+  try{{await navigator.clipboard.writeText(text);return;}}catch{{}}
+  const area=document.createElement("textarea");
+  area.value=text;area.setAttribute("readonly","");area.style.cssText="position:fixed;opacity:0";
+  document.body.appendChild(area);area.select();
+  const ok=document.execCommand("copy");area.remove();
+  if(!ok)throw new Error("copy refused");
+}}
 document.querySelectorAll(".copy-command").forEach(button=>button.onclick=async()=>{{
   try{{
-    await navigator.clipboard.writeText(button.previousElementSibling.textContent);
+    await copyText(button.previousElementSibling.textContent);
     button.textContent="Copied";
     button.setAttribute("aria-label","Command copied");
   }}catch{{
     button.textContent="Copy failed";
     button.setAttribute("aria-label","Copy failed, select the command to copy it manually");
+  }}
+}});
+document.querySelectorAll(".copy-message").forEach(button=>button.onclick=async()=>{{
+  try{{
+    await copyText(button.dataset.copy);
+    button.textContent="Copied";
+    button.setAttribute("aria-label","Message copied");
+  }}catch{{
+    button.textContent="Copy failed";
+    button.setAttribute("aria-label","Copy failed, select the message to copy it manually");
   }}
 }});
 apply();

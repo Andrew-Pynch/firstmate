@@ -44,7 +44,7 @@
 #
 # Curated file (keeper-maintained JSON object):
 #   next   {"do", "why", "unblocks"}            the NEXT box
-#   needs  [{"t", "why", "who", "machine", "do", "options", "rec"}]
+#   needs  [{"t", "why", "who", "machine", "do", "message", "to", "options", "rec"}]
 #          "t": bold question/action title; "why": one-line reason.
 #          "who": task or secondmate id for machine/worker meta and filters.
 #          "machine": optional machine override.
@@ -52,7 +52,12 @@
 #                backticks for monospace text and its Copy button.
 #          "options": optional array of option strings shown as chips.
 #          "rec": optional exact option string marked Recommended.
-#          Missing "do", "options", and "rec" preserves the old title/reason card.
+#          "message": optional recipient-ready text (newlines and backticks
+#                kept) shown as a quote with a Copy message button that
+#                copies the exact raw string; `inline code` renders as code.
+#          "to": optional recipient string (or array of names) for "message".
+#          Missing "do", "message", "options", and "rec" preserves the old
+#          title/reason card.
 #   why    {"<task-id>": "<one-line title>"}    card titles
 #   plain  {"<task-id>": "<plain status>"}      card text instead of the status line
 #   hide   ["<task-id>", ...]                   rows left off the page

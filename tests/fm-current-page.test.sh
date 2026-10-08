@@ -89,6 +89,44 @@ assert_not_contains "$page" 'data/gamma' "home data paths stay off the page"
 assert_not_contains "$page" '<code>delta-old</code>' "curated hide leaves a row off the page"
 pass "card text uses curated plain lines, plain words, and hide"
 
+python3 - "$HOME_DIR/data/keeper/curated.json" <<'PY'
+import json, sys
+msg = 'Hi TJ and Jeremy,\n"Quoted" & <b>not bold</b>, run `fm-x --y \'z\'` today.\r\nUnclosed ` tick stays.\n\n  - indented line'
+json.dump({"needs": [{"t": "Message TJ and Jeremy", "why": "They need the reason.", "to": ["TJ", "Jeremy"], "message": msg},
+                     {"t": "Legacy need", "why": "No message."}]}, open(sys.argv[1], "w"))
+open(sys.argv[1] + ".expected", "w", newline="").write(msg)
+PY
+"$ROOT/bin/fm-current-page.sh" >/dev/null
+page=$(cat "$PAGE")
+python3 - "$PAGE" "$HOME_DIR/data/keeper/curated.json.expected" <<'PY' || fail "message copy text differs from the raw message"
+import html.parser, sys
+want = open(sys.argv[2], newline="").read()
+class P(html.parser.HTMLParser):
+    copies, in_quote, quote = [], False, ""
+    def handle_starttag(self, tag, attrs):
+        a = dict(attrs)
+        if "copy-message" in (a.get("class") or ""):
+            self.copies.append(a.get("data-copy"))
+        self.in_quote |= tag == "blockquote"
+    def handle_endtag(self, tag):
+        self.in_quote &= tag != "blockquote"
+    def handle_data(self, data):
+        if self.in_quote:
+            self.quote += data
+p = P(convert_charrefs=True)
+p.feed(open(sys.argv[1], newline="").read())
+assert p.copies == [want], p.copies
+assert p.quote.replace("\r", "") == want.replace("`fm-x --y 'z'`", "fm-x --y 'z'").replace("\r", ""), repr(p.quote)
+PY
+needs=${page#*Needs you (}
+needs=${needs%%Live workstreams (*}
+assert_contains "$needs" '<b>Message to TJ, Jeremy</b>' "message recipients render"
+assert_contains "$needs" "run <code>fm-x --y &#x27;z&#x27;</code> today." "inline code in a message renders as code"
+assert_not_contains "$needs" '<b>not bold</b>' "message text is escaped"
+legacy=${needs#*Legacy need}
+assert_not_contains "${legacy%%</div></div>*}" 'copy-message' "a need without a message gets no message block"
+pass "a need message renders verbatim with a Copy button holding the exact raw text"
+
 for f in "$STATE"/.*open-decisions-cursor; do
   [ ! -e "$f" ] || fail "render wrote a drain cursor: $f"
 done

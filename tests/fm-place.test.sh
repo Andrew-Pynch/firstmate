@@ -393,6 +393,73 @@ test_handoff_leaves_a_local_decision_alone() {
   pass "a local decision reports handoff=none and moves nothing"
 }
 
+# The captain's 2026-09-28 rule: an eligible mate with more worker headroom
+# takes the row even while this home is still under its cap.
+test_the_host_with_the_most_headroom_wins() {
+  local home reports ssh_fake proc out
+  home=$(make_home most-headroom)
+  reports="$TMP_ROOT/most-headroom-reports"
+  proc="$TMP_ROOT/most-headroom-proc"
+  fm_test_proc_fixture "$proc" 20 61
+  write_cap "$home" 12
+  write_worker "$home" alpha
+  ssh_fake=$(make_fake_ssh "$TMP_ROOT/most-headroom-ssh")
+  seed_mate "$home" tight tight-host "$TMP_ROOT/most-headroom-tight" remote
+  seed_mate "$home" roomy roomy-host "$TMP_ROOT/most-headroom-roomy" remote
+  write_mate_report "$reports" tight-host Linux not-applicable 'platform Linux is not a macOS laptop' \
+    IDLE 'IDLE: no live job' 14
+  write_mate_report "$reports" roomy-host Linux not-applicable 'platform Linux is not a macOS laptop' \
+    IDLE 'IDLE: no live job' 50
+  PATH_PREFIX="$ssh_fake:$TMUX_FAKE"
+  FM_PLACE_PROC_DIR=$proc FM_FAKE_SSH_REPORTS=$reports run_place "$home"
+  PATH_PREFIX=
+  out=$PLACE_OUT
+  expect_code 0 "$PLACE_STATUS" "a fleet with eligible hosts should place the row"
+  assert_contains "$out" 'PLACE home=roomy host=roomy-host' \
+    "the host with the most worker headroom should win over an eligible primary"
+  assert_contains "$out" 'headroom_workers=14 ranked=roomy:14,local:4,tight:2' \
+    "the placement should rank every eligible host by headroom"
+  pass "the eligible host with the most worker headroom takes the row"
+}
+
+test_a_headroom_tie_keeps_the_row_on_this_home() {
+  local home reports ssh_fake proc out
+  home=$(make_home headroom-tie)
+  reports="$TMP_ROOT/headroom-tie-reports"
+  proc="$TMP_ROOT/headroom-tie-proc"
+  fm_test_proc_fixture "$proc" 20 61
+  write_cap "$home" 12
+  ssh_fake=$(make_fake_ssh "$TMP_ROOT/headroom-tie-ssh")
+  seed_mate "$home" mate even-host "$TMP_ROOT/headroom-tie-mate" remote
+  write_mate_report "$reports" even-host Linux not-applicable 'platform Linux is not a macOS laptop' \
+    IDLE 'IDLE: no live job' 21
+  PATH_PREFIX="$ssh_fake:$TMUX_FAKE"
+  FM_PLACE_PROC_DIR=$proc FM_FAKE_SSH_REPORTS=$reports run_place "$home"
+  PATH_PREFIX=
+  out=$PLACE_OUT
+  expect_code 0 "$PLACE_STATUS" "a tie is still a placement"
+  assert_contains "$out" 'PLACE home=local' "equal headroom should keep the row on this home"
+  assert_contains "$out" 'ranked=local:4,mate:4' "both tied hosts should be ranked"
+  pass "equal worker headroom prefers this home"
+}
+
+test_a_host_without_worker_headroom_is_refused() {
+  local home proc out
+  home=$(make_home no-headroom)
+  proc="$TMP_ROOT/no-headroom-proc"
+  fm_test_proc_fixture "$proc" 10 61
+  write_cap "$home" 12
+  : > "$home/data/secondmates.md"
+  PATH_PREFIX=$TMUX_FAKE
+  FM_PLACE_PROC_DIR=$proc run_place "$home"
+  PATH_PREFIX=
+  out=$PLACE_OUT
+  expect_code 3 "$PLACE_STATUS" "a host with room for no worker must refuse the row"
+  assert_contains "$out" 'local(memory: 10 GiB available leaves no room for a worker above the 8 GiB floor at 3 GiB per worker)' \
+    "the refusal should name the headroom gate and its numbers"
+  pass "a host above the floor but short of one worker's budget is refused"
+}
+
 test_places_locally_when_under_the_cap
 test_cap_overflow_places_the_row_on_an_eligible_mate
 test_refuses_a_host_running_a_simulation
@@ -403,5 +470,8 @@ test_refuses_a_row_that_is_not_queued
 test_refuses_a_row_that_is_not_ship_or_scout
 test_handoff_moves_the_row_and_instructs_the_mate
 test_handoff_leaves_a_local_decision_alone
+test_the_host_with_the_most_headroom_wins
+test_a_headroom_tie_keeps_the_row_on_this_home
+test_a_host_without_worker_headroom_is_refused
 
 echo "ALL TESTS PASSED"

@@ -35,8 +35,11 @@ SH
 make_spawn_fakebin() {
   local dir=$1 fakebin
   fakebin=$(fm_test_make_spawn_fakebin "$dir")
+  # A pass-through timeout: drops the options and the duration it is given
+  # (bin/fm-timeout-lib.sh passes `-k <grace> <seconds>`) and runs the command.
   cat > "$fakebin/timeout" <<'SH'
 #!/usr/bin/env bash
+[ "${1:-}" != -k ] || shift 2
 shift
 exec "$@"
 SH

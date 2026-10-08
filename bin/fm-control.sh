@@ -1112,6 +1112,9 @@ case "$VERB" in
   exit)
     result=$(do_exit)
     echo "$result $ID harness=$HARNESS backend=$BACKEND endpoint=$T worktree=$WT"
+    # The stopped agent ran on this host (remote mates are refused above), so
+    # its freed headroom is this host's resource line. Informational only.
+    "$SCRIPT_DIR/fm-fleet-resources.sh" --local --summary 2>/dev/null || true
     ;;
   relaunch)
     do_relaunch

@@ -46,8 +46,10 @@
 #   6. fleet digest   - a compact data/backlog.md identity/metadata listing,
 #                       every state/*.meta, a bounded state/*.status tail,
 #                       the away posture (state/.afk-contract and the legacy
-#                       state/.afk daemon flag), and a cheap per-task
-#                       endpoint-liveness read:
+#                       state/.afk daemon flag), a cheap per-task
+#                       endpoint-liveness read, and one fleet resources line
+#                       (bin/fm-fleet-resources.sh, started detached at step 1
+#                       and printed only if finished, else this host's line):
 #                       read-only, always runs.
 #   7. network checks - the result of the deferred network stage started back at
 #                       step 1, harvested WITHOUT waiting for it.
@@ -677,6 +679,18 @@ if [ "$READ_ONLY" -eq 0 ]; then
     --locked "$NETWORK_STAGE_LOCKED" --harvest-pid $$ >/dev/null 2>&1 || true
 fi
 
+# The fleet resources line reads remote hosts over ssh, so it starts here,
+# detached into a private file, and the fleet-state stage prints it only when it
+# has already finished: the digest never waits on it (NO NETWORK ON THE BLOCKING
+# PATH above). Read-only, so it runs in both session modes.
+FLEET_RESOURCES_FILE=$(mktemp "${TMPDIR:-/tmp}/fm-session-start-resources.XXXXXX" 2>/dev/null) || FLEET_RESOURCES_FILE=
+FLEET_RESOURCES_PID=
+if [ -n "$FLEET_RESOURCES_FILE" ]; then
+  FM_PLACE_HOST_TIMEOUT=${FM_PLACE_HOST_TIMEOUT:-15} \
+    "$SCRIPT_DIR/fm-fleet-resources.sh" --summary >"$FLEET_RESOURCES_FILE" 2>/dev/null </dev/null &
+  FLEET_RESOURCES_PID=$!
+fi
+
 # --- 2. bootstrap --------------------------------------------------------
 # FM_BOOTSTRAP_NETWORK=skip on every path: bootstrap's own network half is what
 # the deferred stage above is running right now, and running it twice would both
@@ -874,6 +888,18 @@ for status in "$STATE"/*.status; do
   print_status_tail "$status"
 done
 [ "$ORPHAN_STATUS_FOUND" -eq 1 ] || printf '(none)\n'
+
+subsection "Fleet resources (bin/fm-fleet-resources.sh)"
+# The whole-fleet line when its detached read already finished; otherwise this
+# host's line, which is a local read, and the unfinished read is stopped.
+if [ -n "$FLEET_RESOURCES_FILE" ] && [ -s "$FLEET_RESOURCES_FILE" ]; then
+  cat "$FLEET_RESOURCES_FILE"
+else
+  [ -z "$FLEET_RESOURCES_PID" ] || kill "$FLEET_RESOURCES_PID" 2>/dev/null || true
+  printf '%s (remote hosts not read yet: run bin/fm-fleet-resources.sh)\n' \
+    "$("$SCRIPT_DIR/fm-fleet-resources.sh" --local --summary 2>/dev/null </dev/null)"
+fi
+[ -z "$FLEET_RESOURCES_FILE" ] || rm -f "$FLEET_RESOURCES_FILE"
 
 subsection "AFK"
 # The away posture comes from its owner (bin/fm-afk-contract.sh): the state line

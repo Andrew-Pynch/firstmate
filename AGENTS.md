@@ -347,6 +347,7 @@ Fill the task subsections according to section 11.
 
 When no host and no mate's scope decides where a queued row goes, `bin/fm-place.sh` owns that placement decision: the target home, the reason, and every admission gate that refused.
 `bin/fm-place.sh --item <key> --handoff` applies it by moving the queued row to the chosen mate and instructing that mate; a local decision is dispatched here with `bin/fm-spawn.sh`.
+Placement and local spawns follow each host's worker headroom; [`docs/configuration.md` "Resource-aware placement"](docs/configuration.md#resource-aware-placement) owns that rule, and `bin/fm-fleet-resources.sh` prints it for every host.
 Queued work dispatches per project: each project's tickets form their own dependency graph, and a wave is one layer of it.
 `bin/fm-wave.sh next` reports every project's dispatchable wave from the declared blocked-by edges, so one project's unfinished ticket never holds up another and the projects run their waves in parallel.
 A ticket starts as soon as its own declared blockers have landed, and an item waiting on the captain holds only the tickets that declare it.

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Spawn a direct report: a crewmate in a treehouse or Orca worktree, or a
 # secondmate in its isolated firstmate home.
-# Usage: fm-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--project-token <token>]
-#        fm-spawn.sh <task-id> <project-dir> --scout [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--project-token <token>]
+# Usage: fm-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--project-token <token>] [--force-local]
+#        fm-spawn.sh <task-id> <project-dir> --scout [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--project-token <token>] [--force-local]
 #        fm-spawn.sh <task-id> [<firstmate-home>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] --secondmate [--code-root <dir>]
 #   --mode and --yolo are this task's delivery contract, REQUIRED for every ship
 #   spawn and refused on --scout and --secondmate spawns. Firstmate resolves both
@@ -84,6 +84,16 @@
 #   hand labelling step. An unresolvable project prints one loud warning and the
 #   worker still launches; a Herdr metadata failure is noted once and never
 #   blocks the launch. The token is recorded in the task's meta as project_token=.
+#   Every fresh ship or scout spawn first reads this host's worker headroom
+#   through bin/fm-fleet-resources.sh --local (bin/fm-host-probe-lib.sh owns the
+#   rule) and REFUSES, before any worktree, endpoint, or record exists, when the
+#   host has room for fewer than one more worker or its memory cannot be read.
+#   The refusal prints the host's resource line and bin/fm-place.sh's decision,
+#   which names the mate to hand the row to (bin/fm-place.sh --item <key>
+#   --handoff). --force-local launches here anyway, for that one spawn, with a
+#   warning. --relaunch (which replaces an agent already counted) and
+#   --secondmate (a persistent home, not a worker) are exempt from the check
+#   and refuse --force-local.
 #   --backend <name> is the explicit runtime session-provider backend for this
 #   exact task only (docs/configuration.md "Runtime backend" owns when that flag
 #   is authorized). Without it, the script resolves FM_BACKEND, then
@@ -647,6 +657,7 @@ YOLO_SET=0
 TRACEPARENT_SET=0
 PROJECT_TOKEN_SET=0
 RELAUNCH=0
+FORCE_LOCAL=0
 POS=()
 want_value=
 for a in "$@"; do
@@ -712,6 +723,7 @@ for a in "$@"; do
     KIND_SET=1
     ;;
   --relaunch) RELAUNCH=1 ;;
+  --force-local) FORCE_LOCAL=1 ;;
   --harness) want_value=harness ;;
   --harness=*)
     HARNESS_ARG=${a#--harness=}
@@ -846,6 +858,11 @@ case "$EFFORT" in
   exit 1
   ;;
 esac
+
+if [ "$FORCE_LOCAL" -eq 1 ] && { [ "$RELAUNCH" -eq 1 ] || [ "$KIND" = secondmate ]; }; then
+  echo "error: --force-local applies only to a fresh ship or scout spawn; a relaunch or secondmate spawn never runs the worker headroom check it overrides" >&2
+  exit 1
+fi
 
 # --relaunch reuses an existing task's endpoint, worktree, project, and kind,
 # so every axis this block resolves for a fresh spawn instead comes from that
@@ -1503,6 +1520,7 @@ if [ "${#POS[@]}" -gt 0 ] && [ "${POS[0]}" != "$idpart" ] && case "$idpart" in *
   # spanning several modes is two invocations rather than a silent mixed dispatch.
   [ "$MODE_SET" -eq 0 ] || shared_args+=(--mode "$MODE")
   [ "$YOLO_SET" -eq 0 ] || shared_args+=(--yolo "$YOLO")
+  [ "$FORCE_LOCAL" -eq 0 ] || shared_args+=(--force-local)
   for pair in "${POS[@]}"; do
     case "$pair" in
     *=*) : ;;
@@ -1590,6 +1608,34 @@ spawn_refuse_if_away_spend_cap() {
 # costs nothing to unwind; rechecked after the task-set lock so two fresh
 # spawns cannot both publish from a stale count.
 spawn_refuse_if_away_spend_cap
+# Worker headroom (this file's header owns the rule's use here;
+# bin/fm-fleet-resources.sh owns the read and bin/fm-place.sh the alternative).
+# Checked before any endpoint, worktree, or record exists, like the spend cap
+# above, so a refusal costs nothing to unwind.
+spawn_refuse_if_no_local_headroom() {
+  local out row headroom place
+  [ "$RELAUNCH" -ne 1 ] || return 0
+  [ "$KIND" != secondmate ] || return 0
+  # Exit 3 (host unreadable) is a verdict this function reports, not an error
+  # for errexit to turn into a silent abort.
+  out=$("$SCRIPT_DIR/fm-fleet-resources.sh" --local 2>&1) || true
+  row=$(printf '%s\n' "$out" | sed -n 's/^RESOURCES //p' | head -1)
+  headroom=$(printf '%s\n' "$row" | sed -n 's/.* headroom_workers=\([0-9][0-9]*\).*/\1/p')
+  if [ -n "$headroom" ] && [ "$headroom" -ge 1 ]; then
+    return 0
+  fi
+  [ -n "$row" ] || row=$(printf '%s\n' "$out" | head -1)
+  if [ "$FORCE_LOCAL" -eq 1 ]; then
+    echo "warning: --force-local: launching $ID on this host although it has no worker headroom ($row)" >&2
+    return 0
+  fi
+  place=$("$SCRIPT_DIR/fm-place.sh" 2>&1 | tail -1)
+  echo "error: spawn refused - this host has no worker headroom for $ID: $row" >&2
+  echo "placement: $place" >&2
+  echo "hand the queued row to the placed mate with bin/fm-place.sh --item $ID --handoff, or re-run with --force-local to launch here anyway" >&2
+  exit 1
+}
+spawn_refuse_if_no_local_headroom
 spawn_require_relocated_queued_work() {
   local actor
   [ "$RELAUNCH" -ne 1 ] || return 0

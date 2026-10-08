@@ -284,7 +284,7 @@ The skill text owns the marker spelling, the tick order, and the reinforcement r
 
 Persistent secondmate routes live locally in `data/secondmates.md`.
 The concise single-line route contract is owned by the [`secondmate-provisioning` skill](../.agents/skills/secondmate-provisioning/SKILL.md#routing-table), including the parser-compatible fields, one-sentence summary requirement, `home:` pointer to the seeded charter, and limit on extra registry prose.
-A remote route adds `host:` and `root:` before the existing fields and places the whole secondmate home on that SSH host; it does not make ordinary workers remotely placeable.
+A remote route adds `host:` and `root:` before the existing fields and places the whole secondmate home on that SSH host; this home's workers still run on this host, and work reaches the remote host only as a queued row handed to that secondmate (see [Resource-aware placement](#resource-aware-placement)).
 [`remote-secondmates.md`](remote-secondmates.md) owns current remote setup, operation, and safety behavior.
 Use `fm-home-seed.sh validate` to check the complete operational registry contract documented by the command itself.
 The main first mate routes by reading those scopes with judgment; the project list is provisioning data, not exclusive ownership.
@@ -306,6 +306,21 @@ The tracked root `.gitignore` ignores both markers, so validation can read them 
 This does not relax protection for any other untracked file.
 An existing linked-worktree home that predates this rule advances through its marker-only state during its next bootstrap or spawn local sync, after which Git ignores the marker normally.
 A local standalone-clone home cannot receive a primary-local commit through that no-fetch sync, so it receives the rule through `/updatefirstmate`'s origin refresh instead.
+
+## Resource-aware placement
+
+Each host's worker headroom decides where new work runs: how many more workers its available memory can hold above a floor the host keeps for itself.
+`bin/fm-host-probe-lib.sh` owns the rule, `headroom_workers = floor((available GiB - FM_PLACE_MIN_FREE_GIB) / FM_PLACE_PER_WORKER_GIB)`, and its measured defaults: an 8 GiB floor, because big-ron froze with 3 GiB available, and 3 GiB per worker, because omp workers there sit at 0.8 to 4.3 GiB resident.
+`bin/fm-fleet-resources.sh` is the fact command.
+It reads this host and every host in `data/secondmates.md` at once, and prints each one's available and total memory, load per core, live omp workers and their resident memory, and headroom, or why that host could not be read.
+The rule is applied in four places:
+
+- `bin/fm-place.sh` sends a queued row to the eligible home with the most headroom and prefers this home on a tie; the cap, laptop, and Nucleus gates still decide eligibility, and a home without room for one worker is not eligible.
+- `bin/fm-spawn.sh` refuses a fresh local ship or scout spawn when this host's headroom is below one, prints the mate `bin/fm-place.sh` would choose, and launches anyway only with `--force-local`; relaunches and secondmate spawns are exempt.
+- `bin/fm-teardown.sh` and `bin/fm-control.sh exit` print the freed host's resource line when they finish.
+- The session-start digest and every drained heartbeat print one fleet resources line.
+
+Headroom reads memory as it is now, so workers launched in one burst are all judged against the same reading before any of them has grown.
 
 ## Project registry (data/projects.md)
 

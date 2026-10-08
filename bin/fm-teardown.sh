@@ -3997,4 +3997,9 @@ elif teardown_owns_worktree; then
 else
   echo "teardown $ID complete (window ${T:-none}; pool slot $WT left to task $TEARDOWN_SLOT_REASSIGNED_TO${TEARDOWN_SLOT_REASSIGNED_HOME:+ (home $TEARDOWN_SLOT_REASSIGNED_HOME)}, which it was reassigned to)"
 fi
+# The worker ran on this host, so its freed headroom is this host's resource
+# line (bin/fm-fleet-resources.sh). Informational: it never changes the result.
+if [ "$KIND" != secondmate ]; then
+  "$SCRIPT_DIR/fm-fleet-resources.sh" --local --summary 2>/dev/null || true
+fi
 backlog_refresh_reminder

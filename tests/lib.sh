@@ -195,6 +195,30 @@ trap 'fm_test_cleanup; exit 143' TERM
 trap 'fm_test_cleanup; exit 129' HUP
 trap 'fm_test_cleanup; exit 131' QUIT
 
+# fm_test_proc_fixture <dir> <avail-gib> [total-gib] [load-1m] [cpus]: writes the
+# Linux procfs files bin/fm-host-probe-lib.sh reads for a local probe when
+# FM_PLACE_PROC_DIR names <dir>.
+fm_test_proc_fixture() {
+  local dir=$1 avail=$2 total=${3:-128} load=${4:-0.50} cpus=${5:-8} i=0
+  mkdir -p "$dir" || return 1
+  printf 'MemTotal:       %s kB\nMemFree:        1024 kB\nMemAvailable:   %s kB\n' \
+    "$((total * 1048576))" "$((avail * 1048576))" > "$dir/meminfo" || return 1
+  printf '%s 0.40 0.30 1/100 4242\n' "$load" > "$dir/loadavg" || return 1
+  : > "$dir/cpuinfo" || return 1
+  while [ "$i" -lt "$cpus" ]; do
+    printf 'processor\t: %s\n\n' "$i" >> "$dir/cpuinfo" || return 1
+    i=$((i + 1))
+  done
+}
+
+# Every suite reads this host's memory through a roomy fixture by default, so
+# the worker-headroom checks in bin/fm-spawn.sh and bin/fm-place.sh decide the
+# same way whatever the machine running the suite has free. A case that tests
+# those checks points FM_PLACE_PROC_DIR at its own fixture.
+FM_TEST_PROC_DIR=$(fm_test_tmproot fm-test-proc) &&
+  fm_test_proc_fixture "$FM_TEST_PROC_DIR" 64 &&
+  export FM_PLACE_PROC_DIR="$FM_TEST_PROC_DIR"
+
 # fm_test_reap_orphans: best-effort sweep for fixture roots left behind by a
 # prior run that was killed hard enough to skip the traps above (e.g. a
 # SIGKILL timeout). Only removes directories carrying the .fm-test-fixture

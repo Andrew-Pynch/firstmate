@@ -2421,6 +2421,16 @@ refuse_shared_slot_record() {  # <record-id> <slot> <other-id> <field>
   echo "Reconcile whichever record is wrong (bin/fm-crew-state.sh $1; bin/fm-crew-state.sh $3), then re-run teardown." >&2
 }
 
+# A merge record (owner=main-merge, written by Main to track one PR through
+# bin/fm-pr-merge.sh) never spawned an endpoint: it carries no window=, so there
+# is no worker behind it to protect, and it takes no part in pool slot ownership.
+# Treating its missing endpoint as "unreadable, may be live" made the slot
+# owner's own teardown refuse for as long as any such record named its slot.
+slot_record_holds_no_worker() {  # <other-meta>
+  [ "$(fm_meta_get "$1" owner)" = main-merge ] || return 1
+  [ -z "$(fm_backend_target_of_meta "$1" || true)" ]
+}
+
 # Whether a record naming the same pool slot could still have a live worker
 # behind it, read from that record's own endpoint through the recovery-grade
 # classifier (bin/fm-backend.sh's fm_backend_agent_state): any reading other
@@ -2488,6 +2498,7 @@ require_exclusive_worktree_slot_record() {  # <record-meta> <record-id> <record-
     for other in "$state_dir"/*.meta; do
       [ -f "$other" ] && [ ! -L "$other" ] || continue
       [ "$other" != "$record_meta" ] || continue
+      if slot_record_holds_no_worker "$other"; then continue; fi
       other_id=$(basename "$other" .meta)
       for field in worktree home; do
         other_path=$(fm_meta_get "$other" "$field")

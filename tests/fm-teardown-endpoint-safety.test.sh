@@ -1038,6 +1038,36 @@ test_reassigned_slot_record_still_tears_down_beside_the_claimants_record() {
 # record whose endpoint is provably agent-less holds no live worker, so it is
 # reported by name and the claimant returns its own slot; the same conflict with a
 # live harness in the pane still refuses, because that could be a live worker.
+# Merge records (owner=main-merge) track a PR for Main and never had an endpoint.
+# They hold no worker, so they must neither refuse the slot owner's teardown nor
+# be removed by it, with or without a slot claim.
+test_merge_records_do_not_block_the_slot_owner_teardown() {
+  local dir id=current-task claim
+
+  for claim in claimed unclaimed; do
+    dir=$(make_case "slot-merge-record-$claim")
+    mark_case_as_treehouse_pool "$dir"
+    fm_write_meta "$dir/home/state/$id.meta" \
+      "window=firstmate:fm-$id" "endpoint_task_id=$id" \
+      "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
+    fm_write_meta "$dir/home/state/merge-pr-1.meta" \
+      "endpoint_task_id=merge-pr-1" "worktree=$dir/worktree" "project=$dir/project" \
+      "kind=ship" "owner=main-merge"
+    fm_write_meta "$dir/home/state/merge-pr-2.meta" \
+      "endpoint_task_id=merge-pr-2" "worktree=$dir/worktree" "project=$dir/project" \
+      "kind=ship" "owner=main-merge"
+    [ "$claim" != claimed ] || claim_pool_slot "$dir" "$id"
+
+    run_case "$dir" "$id" > "$dir/stdout" 2> "$dir/stderr" \
+      || fail "$claim: merge records refused the slot owner's teardown: $(cat "$dir/stderr")"
+    assert_absent "$dir/home/state/$id.meta" "$claim: owner teardown left its own record"
+    assert_present "$dir/home/state/merge-pr-1.meta" "$claim: owner teardown removed a merge record Main still needs"
+    assert_present "$dir/home/state/merge-pr-2.meta" "$claim: owner teardown removed a merge record Main still needs"
+  done
+
+  pass "fm-teardown: endpoint-less merge records neither block the slot owner's teardown nor get removed by it"
+}
+
 test_claimant_teardown_crosses_only_a_provably_agent_less_record() {
   local dir id=current-task other=stale-task rc
 
@@ -1679,6 +1709,7 @@ test_sole_slot_record_still_tears_down
 test_reassigned_pool_slot_finishes_own_cleanup_without_touching_the_slot
 test_reassigned_slot_record_still_tears_down_beside_the_claimants_record
 test_claimant_teardown_crosses_only_a_provably_agent_less_record
+test_merge_records_do_not_block_the_slot_owner_teardown
 test_two_unordered_records_without_a_claim_still_refuse_even_when_both_endpoints_are_agent_less
 test_own_and_absent_slot_claims_still_tear_down
 test_claimless_shared_slot_settles_by_allocation_order

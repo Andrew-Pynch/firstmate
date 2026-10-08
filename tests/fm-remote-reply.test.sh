@@ -509,6 +509,17 @@ assert_no_document_decision "an oversize document raised a document decision"
 mirrored_cursor_is_current "an oversize document held the cursor back"
 pass "a remote refusal surfaces its own reason without opening a decision"
 
+mirror_lines \
+  'reply: data/captain-shared.md is absent by design' \
+  'reply: data/parent-only/report.md belongs to the parent, not this home'
+assert_no_document_decision "documented absent or parent-only prose paths raised a document decision"
+assert_absent "$PARENT/data/remote-secondmates/ios/data/captain-shared.md" \
+  "an absent shared preference file was mirrored"
+assert_no_grep 'note: remote document did not transfer for ios: data/parent-only/report.md' \
+  "$PARENT/state/ios.status" "a parent-only prose mention triggered a fetch"
+mirrored_cursor_is_current "documented absent paths prevented cursor advancement"
+pass "absent shared preferences and parent-only mentions create no transfer obligation"
+
 # A failed extraction pass must leave the delta wholly uncommitted. Once the
 # parser works again, the same captured delta applies in full.
 printf '# extraction-failure probe\n' > "$REMOTE/data/reply/extractfail.md"

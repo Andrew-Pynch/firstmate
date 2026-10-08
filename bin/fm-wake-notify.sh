@@ -18,6 +18,7 @@
 #   fm-wake-notify.sh replay  # reads a replayed notification on stdin; prints "skip",
 #                             # or "deliver" and then the message to deliver
 #   fm-wake-notify.sh state   # prints the recorded sequence, or "none"
+#   fm-wake-notify.sh health  # last successful handling and oldest queued age
 #   fm-wake-notify.sh --help
 #
 # `claim` and `replay` exit 0 whenever they produced a decision, so a caller
@@ -33,12 +34,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 usage() {
   cat <<'EOF'
-usage: fm-wake-notify.sh claim | replay | state
+usage: fm-wake-notify.sh claim | replay | state | health
   claim   decide whether one more supervisor notification adds anything;
           prints "deliver" or "skip" and records the claim when delivering
   replay  decide what a notification replayed from an earlier session still
           owes; reads it on stdin, prints "skip" or "deliver" and the message
   state   print the recorded covered sequence, or "none"
+  health  print last successful drain epoch and oldest queued wake age
 EOF
 }
 
@@ -66,6 +68,14 @@ case "${1:-}" in
     [ "$#" -eq 1 ] || { echo "fm-wake-notify: state takes no arguments" >&2; exit 2; }
     _fm_wake_notify_record_read || printf 'none'
     printf '\n'
+    ;;
+  health)
+    [ "$#" -eq 1 ] || { echo "fm-wake-notify: health takes no arguments" >&2; exit 2; }
+    fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK" || exit 1
+    fm_wake_health
+    health_status=$?
+    fm_lock_release "$FM_WAKE_QUEUE_LOCK"
+    exit "$health_status"
     ;;
   --help|-h|help)
     usage

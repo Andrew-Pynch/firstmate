@@ -786,6 +786,22 @@ secondmate_oldest_queue_row() {  # <queue-path>
   ' "$queue" 2>/dev/null || true
 }
 
+# A healthy watcher beacon is not proof that Main handled its notifications.
+# Reuse the claim cadence so this reminder survives restarts without flooding,
+# and do not append a watchdog row that could keep its own alarm alive.
+main_quiet_tick() {
+  local now health
+  now=$(date +%s)
+  fm_main_quiet_due "$now" || return 0
+  if [ -f "$STATE/.main-quiet-alert" ] \
+    && [ "$(fm_path_age "$STATE/.main-quiet-alert")" -lt "$(fm_main_quiet_seconds)" ]; then
+    return 0
+  fi
+  health=$(fm_wake_health) || return 1
+  touch "$STATE/.main-quiet-alert" || return 1
+  wake "check: main wake-loop stalled: $health; drain and handle the durable queue"
+}
+
 # 0 iff <task> is demonstrably inside an active turn, through the watcher's own
 # busy-state knowledge: an exact busy verdict from the semantic contract, bounded
 # by the same BUSY_TURN_MAX_SECS that stops a busy pane from proving liveness
@@ -2439,6 +2455,7 @@ while :; do
   # alive. Supervision scripts warn when this goes stale with tasks in flight.
   touch "$STATE/.last-watcher-beat"
   prune_unrecorded_window_markers || exit 1
+  main_quiet_tick || exit 1
 
   # Opt-in fleet activity ledger (docs/fleet-ledger.md): pick up newly appended
   # status lines before this cycle can exit on a wake. Off costs one file test.

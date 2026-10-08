@@ -1923,6 +1923,66 @@ fm_wake_queued_keys_locked() {
 # them.
 FM_WAKE_ANNOUNCED_THROUGH="${FM_WAKE_ANNOUNCED_THROUGH:-$STATE/.wake-announced-through}"
 
+# Main drain health uses the existing queue, never a second work list.
+# FM_MAIN_QUIET_SECS bounds an undrained actionable queue (default 900 seconds).
+# Successful handling acknowledgements own .last-successful-drain; merely
+# presenting rows or a beating watcher does not prove handling progress.
+# Away observations grant a full interval on return. Heartbeats and declared
+# external waits cannot trigger the watchdog. Re-delivery is interval-bounded
+# by the existing notification claim's mtime, including across watcher restarts.
+fm_main_quiet_seconds() {
+  local seconds=${FM_MAIN_QUIET_SECS:-900}
+  case "$seconds" in ''|*[!0-9]*|0) seconds=900 ;; esac
+  printf '%s\n' "$seconds"
+}
+
+fm_wake_oldest_epoch() { # <all|actionable>
+  [ -f "$FM_WAKE_QUEUE" ] || return 0
+  awk -F '\t' -v mode="$1" '
+    NF >= 5 && $1 ~ /^[0-9]+$/ && $2 ~ /^[0-9]+$/ {
+      if (mode == "actionable" && ($3 == "heartbeat" ||
+        ($3 == "stale" && $5 ~ /awaiting external - declared (pause,|paused\))/)))
+        next
+      if (!oldest || $1 < oldest) oldest = $1
+    }
+    END { if (oldest) print oldest }
+  ' "$FM_WAKE_QUEUE"
+}
+
+fm_main_quiet_due() { # <now>
+  local now=$1 oldest last boundary seconds
+  if [ -e "$STATE/.afk" ]; then
+    touch "$STATE/.main-quiet-away" || return 2
+    return 1
+  fi
+  oldest=$(fm_wake_oldest_epoch actionable) || return 2
+  [ -n "$oldest" ] || return 1
+  boundary=$oldest
+  for last in "$STATE/.last-successful-drain" "$STATE/.main-quiet-away" "$FM_WAKE_ANNOUNCED_THROUGH"; do
+    if [ -f "$last" ]; then
+      last=$(fm_path_mtime "$last") || return 2
+      [ "$last" -le "$boundary" ] || boundary=$last
+    fi
+  done
+  seconds=$(fm_main_quiet_seconds)
+  [ "$((now - boundary))" -ge "$seconds" ]
+}
+
+fm_wake_health() {
+  local now oldest last=never age=none
+  now=$(date +%s)
+  if [ -f "$STATE/.last-successful-drain" ]; then
+    last=$(cat "$STATE/.last-successful-drain") || return 1
+  fi
+  oldest=$(fm_wake_oldest_epoch all) || return 1
+  if [ -n "$oldest" ]; then
+    age=$((now - oldest))
+    [ "$age" -ge 0 ] || age=0
+    age="${age}s"
+  fi
+  printf 'last_successful_drain=%s oldest_queued_wake_age=%s\n' "$last" "$age"
+}
+
 # Print "<min> <max>" of the queue's row sequences, or nothing for an empty or
 # unreadable queue. A row without a numeric sequence is ignored rather than
 # treated as sequence zero, which would make every claim look covered.
@@ -1973,8 +2033,10 @@ fm_wake_notify_claim() {
   min=${bounds%% *}
   max=${bounds##* }
   if covered=$(_fm_wake_notify_record_read) && [ "$min" -le "$covered" ]; then
-    fm_lock_release "$FM_WAKE_QUEUE_LOCK"
-    return 1
+    if ! fm_main_quiet_due "$(date +%s)"; then
+      fm_lock_release "$FM_WAKE_QUEUE_LOCK"
+      return 1
+    fi
   fi
   _fm_wake_notify_record_write "$max" || status=2
   fm_lock_release "$FM_WAKE_QUEUE_LOCK"

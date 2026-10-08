@@ -17,6 +17,8 @@
 # caller whose stdout no reader sees.
 # FM_STATUS_PRESENTATION_LOCK_TIMEOUT sets the positive whole-second wait for
 # presentation-path locks (default 10); queue mutation locks remain blocking.
+# Successful main handling acknowledgements record state/.last-successful-drain
+# for fm-wake-notify.sh health and the Main-quiet watchdog.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -850,6 +852,12 @@ if [ -n "$ACK_THROUGH" ]; then
     consume_actor_rows_locked "$ELIGIBLE_ROWS_FILE" "$ACK_THROUGH" || exit 1
   else
     consume_actor_rows_locked "$MAIN_ROWS_FILE" "$ACK_THROUGH" || exit 1
+  fi
+  if [ "$ACTOR" = main ] && [ "$ACK_REMOVED" -gt 0 ]; then
+    DRAIN_TMP=$(mktemp "$STATE/.last-successful-drain.XXXXXX") || exit 1
+    date +%s > "$DRAIN_TMP" || exit 1
+    _fm_atomic_replace "$DRAIN_TMP" "$STATE/.last-successful-drain" || exit 1
+    DRAIN_TMP=
   fi
   fm_lock_release "$FM_WAKE_QUEUE_LOCK"
   DRAIN_LOCK_HELD=false

@@ -12,6 +12,9 @@
 #   say     Same as `note`, but the body comes from spoken audio on stdin.
 #           Speech is an INPUT METHOD here, not an architecture: it transcribes
 #           and then takes exactly the `note` path.
+#           Without an AWS region, treats the given arguments (or stdin) as
+#           text, queues a plain note, and reports that voice was skipped.
+#           `say --text` always chooses text, even when voice is configured.
 #   status  Answer "what is happening" from durable records, reconciled by the
 #           one current-state reader. Appends NO wake, so it never interrupts
 #           work and is safe to run in a loop. Row state is the reconciled
@@ -34,7 +37,8 @@
 #   fm-inbox.sh reply [--json] <id> <text>... | reply [--json] <id> -
 #   fm-inbox.sh receipts [--after <cursor>] [--all-pending] [--all-handled] [--all-replies]
 #   fm-inbox.sh ready
-#   fm-inbox.sh say  [<file.wav>]       (default: audio on stdin)
+#   fm-inbox.sh say  [--text <text>... | <file.wav>] (default: stdin)
+#   fm-inbox.sh --text [note options] <text>... | --text -
 #   fm-inbox.sh status
 #   fm-inbox.sh ask  <question>...
 #   fm-inbox.sh list
@@ -77,12 +81,12 @@
 # Configuration. A region, a model id and an AWS profile name somebody's account
 # and somebody's choices, so this file carries no default for any of them. Each is
 # read from the home's gitignored config/ directory, or from the matching
-# environment variable, and the model-backed subcommands refuse with the path to
-# write rather than reaching for a value that belongs to another home. That
-# configuration is also the opt-in: `say` and `ask` are off until it exists.
+# environment variable. Model calls refuse missing configuration rather than
+# reaching for a value that belongs to another home. `ask` remains off until
+# configured; `say` without a region uses the local text-note path instead.
 #
-#   config/inbox-region     FM_INBOX_REGION     AWS region.            required
-#   config/inbox-stt-model  FM_INBOX_STT_MODEL  speech-to-text model.  required by say
+#   config/inbox-region     FM_INBOX_REGION     AWS region.            required for model calls
+#   config/inbox-stt-model  FM_INBOX_STT_MODEL  speech-to-text model.  required by voice say
 #   config/inbox-ask-model  FM_INBOX_ASK_MODEL  side-question model.   required by ask
 #   config/inbox-profile    FM_INBOX_PROFILE    AWS profile.           optional
 #
@@ -98,7 +102,7 @@
 # Environment:
 #   FM_HOME              operational home whose state/ and data/ are used.
 #
-# PRIVACY: `say` sends your audio and `ask` sends your question to Bedrock.
+# PRIVACY: voice `say` sends your audio and `ask` sends your question to Bedrock.
 # `note`, `announce`, `reply`, `receipts`, `ready`, `status`, `list` and `drain`
 # make no network call at all.
 #
@@ -982,6 +986,19 @@ PY
 # ---------------------------------------------------------------- say
 
 cmd_say() {
+  if [ "${1:-}" = --text ]; then
+    shift
+    printf 'fm-inbox: voice skipped (text requested)\n' >&2
+    cmd_note "$@"
+    return
+  fi
+  [ -n "$REGION" ] || REGION=$(read_setting inbox-region)
+  if [ -z "$REGION" ]; then
+    printf 'fm-inbox: voice skipped (no AWS region configured); queuing text\n' >&2
+    [ "$#" -gt 0 ] || set -- -
+    cmd_note "$@"
+    return
+  fi
   # Before the tool checks, so an unconfigured home is told what to configure
   # rather than what to install for a call it is not yet allowed to make.
   need_stt_model
@@ -1223,7 +1240,7 @@ cmd_drain() {
 # ---------------------------------------------------------------- dispatch
 
 case "${1:-}" in
-  note)     shift; cmd_note "$@" ;;
+  note|--text) shift; cmd_note "$@" ;;
   announce) shift; cmd_announce "$@" ;;
   reply)    shift; cmd_reply "$@" ;;
   receipts) shift; cmd_receipts "$@" ;;

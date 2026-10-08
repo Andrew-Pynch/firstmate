@@ -58,6 +58,35 @@ count_wakes() {
   fi
 }
 
+# Missing voice configuration must not drop a text reminder.
+home=$(make_home say-text-fallback)
+out=$(FM_INBOX_REGION='' FM_INBOX_STT_MODEL='' run_inbox "$home" say "morning report is ready" 2>&1) \
+  || fail "say without a region should queue its text reminder"
+assert_contains "$out" "voice skipped" "fallback should explain why no voice call ran"
+assert_equals "1" "$(count_notes "$home")" "fallback must save exactly one note"
+assert_equals "1" "$(count_wakes "$home")" "fallback must wake firstmate once"
+assert_contains "$(run_inbox "$home" list)" "morning report is ready" "fallback lost the text"
+pass "say without a region saves the reminder and publishes its wake"
+
+home=$(make_home text-alias)
+FM_INBOX_REGION=example-region FM_INBOX_STT_MODEL=example-model \
+  run_inbox "$home" --text "explicit text reminder" >/dev/null \
+  || fail "--text should work without a speech call"
+FM_INBOX_REGION=example-region FM_INBOX_STT_MODEL=example-model \
+  run_inbox "$home" say --text "second text reminder" >/dev/null \
+  || fail "say --text should bypass voice even with a configured region"
+assert_equals "2" "$(count_wakes "$home")" "each explicit text reminder must wake once"
+assert_contains "$(run_inbox "$home" list)" "second text reminder" "say --text lost its body"
+pass "--text and say --text explicitly queue text without voice"
+
+home=$(make_home say-text-stdin)
+body=$'morning report\nsecond line\n'
+out=$(printf '%s' "$body" | FM_INBOX_REGION='' FM_INBOX_STT_MODEL='' \
+  run_inbox "$home" say 2>&1) || fail "unconfigured say should capture stdin as text"
+assert_contains "$(run_inbox "$home" list)" "second line" "stdin fallback lost multiline text"
+assert_equals "1" "$(count_wakes "$home")" "stdin fallback must publish one wake"
+pass "unconfigured say preserves text reminders from stdin"
+
 # --- human note path is unchanged without the new flags ---------------------
 
 home=$(make_home human)

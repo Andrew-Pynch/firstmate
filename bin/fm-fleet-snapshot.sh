@@ -229,6 +229,13 @@ esac
 . "$SCRIPT_DIR/fm-landed-lib.sh"  # FM_LANDED_JQ_DEFS: the shared landed selector
 # shellcheck source=bin/fm-merge-authority-lib.sh
 . "$SCRIPT_DIR/fm-merge-authority-lib.sh"
+# shellcheck source=bin/fm-project-lib.sh
+# shellcheck disable=SC1091
+. "$SCRIPT_DIR/fm-project-lib.sh"  # FM_PROJECT_JQ_DEFS: the shared project resolver
+# The registry map is read ONCE per snapshot and threaded into every jq program
+# that resolves a row, so a renderer's per-row answer can never come from a
+# different parse of data/projects.md than the spawn-time label did.
+SNAPSHOT_PROJECT_MAP=$(fm_project_registry_map_json 2>/dev/null || printf '{}')
 
 usage() {
   cat <<'EOF'
@@ -390,7 +397,9 @@ backlog_json() {  # [<backlog-path>] - defaults to this home's $BACKLOG
 
   # shellcheck disable=SC2094
   jq -Rn --arg path "$backlog" --arg today "$SNAPSHOT_TODAY" --arg now "$SNAPSHOT_NOW" \
-    --argjson age_days "$FM_SNAPSHOT_UNDATED_HOLD_AGE_DAYS" '
+    --argjson age_days "$FM_SNAPSHOT_UNDATED_HOLD_AGE_DAYS" \
+    --argjson projectmap "$SNAPSHOT_PROJECT_MAP" \
+    "$FM_PROJECT_JQ_DEFS"'
     def trim: gsub("^[[:space:]]+|[[:space:]]+$"; "");
     def timestamp_epoch($d):
       if ($d | type) != "string" then null
@@ -568,6 +577,7 @@ backlog_json() {  # [<backlog-path>] - defaults to this home's $BACKLOG
                     and .hold_age_days >= $age_days then "aged"
                else "live" end)
           | .captain_actionable = (.hold_bucket == "live")
+          | .project_resolution = fm_project_resolve($record.repo; null; $projectmap)
         else . end)
     | del(.section,.order)
   ' < "$backlog"
@@ -740,7 +750,7 @@ prefetch_task_current_states() {
 }
 
 task_json_lines() {
-  local meta original_meta id kind harness mode yolo project worktree home projects spawn_gen backend target status_log report_path
+  local meta original_meta id kind harness mode yolo project project_token worktree home projects spawn_gen backend target status_log report_path
   local remote_host remote_root current_file endpoint_file observation_line index=0
   local pr pr_source event_json current_json endpoint_exists agent_alive meta_json status_json report_json worktree_json home_json
   local last_event_raw current_state current_source pending_decision blocked_event report_present=0 pr_from_status
@@ -757,6 +767,7 @@ task_json_lines() {
     mode=$(meta_value "$meta" mode)
     yolo=$(meta_value "$meta" yolo)
     project=$(meta_value "$meta" project)
+    project_token=$(meta_value "$meta" project_token)
     worktree=$(meta_value "$meta" worktree)
     home=$(meta_value "$meta" home)
     projects=$(meta_value "$meta" projects)
@@ -858,6 +869,7 @@ task_json_lines() {
       --arg mode "$mode" \
       --arg yolo "$yolo" \
       --arg project "$project" \
+      --arg project_token "$project_token" \
       --arg worktree "$worktree" \
       --arg home "$home" \
       --arg projects "$projects" \
@@ -883,13 +895,19 @@ task_json_lines() {
       --argjson pending_decision "$(bool_json "$pending_decision")" \
       --argjson blocked_event "$(bool_json "$blocked_event")" \
       --argjson report_present "$(bool_json "$report_present")" \
-      '{
+      --argjson projectmap "$SNAPSHOT_PROJECT_MAP" \
+      "$FM_PROJECT_JQ_DEFS"'{
         id:$id,
         kind:$kind,
         harness:($harness // ""),
         mode:($mode // ""),
         yolo:($yolo // ""),
         project:($project // ""),
+        project_resolution:(fm_project_resolve(
+          (if $kind == "secondmate" and ($projects | length) > 0
+           then ($projects | split(",") | map(gsub("^[[:space:]]+|[[:space:]]+$"; "")) | map(select(. != "")) | .[0] // $project)
+           else $project end);
+          $project_token; $projectmap)),
         spawn_gen:($spawn_gen | if . == "" then null else . end),
         backend:$backend,
         remote:(if $remote_host == "" then null else {host:$remote_host,root:$remote_root} end),

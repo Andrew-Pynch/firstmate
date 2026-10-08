@@ -145,7 +145,9 @@ Default collection performs bounded concurrent remote-ledger reads for registere
 remote homes under one shared snapshot budget and may refresh the parent-side cache.
 --include-prs additionally performs live GitHub discovery and checks.
 
-Default fields: schema, home, generated, prs, in_flight{id,kind,state,repo,name,doing},
+Default fields: schema, home, generated, prs,
+  in_flight{id,kind,state,repo,project,name,doing}, where project is the row's
+  resolved Herdr colour token or "unresolved: <reason>",
   secondmates{id,state,doing,provenance,freshness,age_seconds,contradiction,reason},
   secondmate_reconcile{id,spawn_gen,host,kind,ids},
   decisions_open{id,key,verb,summary,owner}, landed{id,what,artifact,owner},
@@ -496,6 +498,8 @@ MODEL=$(printf '%s' "$SNAP" | jq \
        | {id, kind,
         state: .current_state.state,
         repo:(.backlog.repo // .project // null),
+        project:(if (.project_resolution.status // "") == "resolved" then .project_resolution.token
+                 else "unresolved: " + (.project_resolution.reason // "project could not be resolved") end),
         name:((.backlog.title // "") as $name
               | (if ($name | test("[^[:space:]]")) then $name else .id end) | trunc(70)),
         doing: ((.current_state.detail // "") as $d

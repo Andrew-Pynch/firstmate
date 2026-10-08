@@ -307,6 +307,37 @@ This does not relax protection for any other untracked file.
 An existing linked-worktree home that predates this rule advances through its marker-only state during its next bootstrap or spawn local sync, after which Git ignores the marker normally.
 A local standalone-clone home cannot receive a primary-local commit through that no-fetch sync, so it receives the rule through `/updatefirstmate`'s origin refresh instead.
 
+## Project registry (data/projects.md)
+
+`data/projects.md` is the private fleet registry: one line per project, recording the captain's standing delivery posture and the project's Herdr colour tokens.
+`bin/fm-project-mode.sh` resolves the posture and owns that half of the line's grammar.
+`bin/fm-project-lib.sh` resolves a task's repo plus an optional sub-project token to a registered project and its colour token, and is the single owner of the resolution contract described here.
+
+Line grammar:
+
+```
+- <name> [<mode>[ +yolo]] [subprojects=<token>[,<token>...]] - <desc> (added <date>)
+```
+
+- `<name>` is the project name, and is also the basename firstmate records on a task (`project=` in `state/<id>.meta`) or on a backlog row (`repo:`).
+  An absolute path is accepted and reduced to its basename.
+- `[<mode>[ +yolo]]` is the registered delivery posture, unchanged: `no-mistakes`, `direct-PR`, `local-only`, or the conditional `no-mistakes-prod-only` policy.
+- `subprojects=` is optional and whitespace-free.
+  It lists the Herdr display tokens (`project=<token>`) this project may be labelled with, such as `pilot` and `vigil` for a monorepo.
+  The **first** listed token is the project's declared default, used only when a caller supplies no sub-project token, and a result resolved that way reports `source=default` so no consumer has to guess why it got that token.
+- A project with no `subprojects=` field resolves only when a caller supplies a token it declares, so such a project is reported unresolved naming exactly that missing field.
+
+Resolution outcomes are `resolved` (with the project, the token, and whether the token was explicit, the project's only token, or its declared default) or `unresolved` (with a reason string a caller prints verbatim).
+An unregistered repo, a project that declares no token, and a token that project does not declare are each explicitly unresolved; resolution never falls back to a plausible token.
+Adding a project is project intake, not something the resolver invents.
+
+The colour value behind a token lives in the captain's Herdr sidebar configuration and is never duplicated into firstmate configuration; the registry carries only the token.
+
+Consumers: `bin/fm-spawn.sh` resolves the token for its new Herdr workspace and pane, optionally overridden by `--project-token` and recorded in the task's meta as `project_token=`, and warns without blocking when a project is unresolved.
+`bin/fm-fleet-snapshot.sh` attaches a `project_resolution` to every task and backlog row, which `bin/fm-fleet-view.sh` and `bin/fm-bearings-snapshot.sh` render as the token or as `unresolved: <reason>`.
+`bin/fm-grill-place.sh` resolves the token of the project a grill belongs to.
+A secondmate row resolves through the projects it serves (`projects=` in its meta) rather than the repo it runs from.
+
 ## FM_HOME
 
 `FM_HOME` selects the operational home for one firstmate instance.

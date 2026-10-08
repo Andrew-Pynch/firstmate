@@ -15,6 +15,10 @@
 #   - <name> - <desc> (added <date>)                  -> no-mistakes off  (legacy default)
 #   - <name> [<mode>] - <desc> (added <date>)          -> <mode> off
 #   - <name> [<mode> +yolo] - <desc> (added <date>)    -> <mode> on
+# An optional whitespace-free `subprojects=<t1>[,<t2>...]` field may follow the
+# mode bracket; this script ignores it. It carries the project's Herdr colour
+# tokens and is resolved by bin/fm-project-lib.sh, which owns that half of the
+# grammar; docs/configuration.md "Project registry" owns the schema.
 #
 # Registered modes:
 #   no-mistakes            full pipeline -> PR -> configured merge authority (default)

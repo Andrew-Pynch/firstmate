@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Spawn a direct report: a crewmate in a treehouse or Orca worktree, or a
 # secondmate in its isolated firstmate home.
-# Usage: fm-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>]
-#        fm-spawn.sh <task-id> <project-dir> --scout [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>]
+# Usage: fm-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--project-token <token>]
+#        fm-spawn.sh <task-id> <project-dir> --scout [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--project-token <token>]
 #        fm-spawn.sh <task-id> [<firstmate-home>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] --secondmate [--code-root <dir>]
 #   --mode and --yolo are this task's delivery contract, REQUIRED for every ship
 #   spawn and refused on --scout and --secondmate spawns. Firstmate resolves both
@@ -76,6 +76,14 @@
 #   from that harness's launch rather than guessed. Ultra is the explicit
 #   exception: bin/fm-harness.sh validate-native-effort owns its model scope;
 #   supported Pi launches receive --codex-effort ultra, never --thinking ultra.
+#   --project-token <token> is the optional sub-project Herdr colour token for a
+#   repo whose registered project declares more than one (e.g. vigil for
+#   monorepo, pam for personal-agent-monorepo). A Herdr spawn resolves the token
+#   from data/projects.md through bin/fm-project-lib.sh and reports it as
+#   `project=<token>` metadata on the new workspace and pane, so no spawn needs a
+#   hand labelling step. An unresolvable project prints one loud warning and the
+#   worker still launches; a Herdr metadata failure is noted once and never
+#   blocks the launch. The token is recorded in the task's meta as project_token=.
 #   --backend <name> is the explicit runtime session-provider backend for this
 #   exact task only (docs/configuration.md "Runtime backend" owns when that flag
 #   is authorized). Without it, the script resolves FM_BACKEND, then
@@ -598,6 +606,8 @@ fm_backlog_directory_present "$STATE" "state directory" || {
 . "$SCRIPT_DIR/fm-trace-context-lib.sh"
 # shellcheck source=bin/fm-remote-readiness-lib.sh
 . "$SCRIPT_DIR/fm-remote-readiness-lib.sh"
+# shellcheck source=bin/fm-project-lib.sh
+. "$SCRIPT_DIR/fm-project-lib.sh"
 # shellcheck source=bin/fm-timeout-lib.sh
 . "$SCRIPT_DIR/fm-timeout-lib.sh"
 # Fail closed before any fleet mutation: a no-mistakes gate agent must never spawn
@@ -618,6 +628,7 @@ TRACEPARENT_ARG=
 SECONDMATE_CODE_ROOT=${FM_SECONDMATE_CODE_ROOT:-}
 CODE_ROOT_SET=0
 PANE_CWD=
+PROJECT_TOKEN=
 HARNESS_SET=0
 MODEL_SET=0
 EFFORT_SET=0
@@ -625,6 +636,7 @@ BACKEND_SET=0
 MODE_SET=0
 YOLO_SET=0
 TRACEPARENT_SET=0
+PROJECT_TOKEN_SET=0
 RELAUNCH=0
 POS=()
 want_value=
@@ -632,7 +644,7 @@ for a in "$@"; do
   if [ -n "$want_value" ]; then
     case "$a" in
     --*)
-      echo "error: --$want_value requires a value" >&2
+      echo "error: --${want_value//_/-} requires a value" >&2
       exit 1
       ;;
     esac
@@ -669,8 +681,12 @@ for a in "$@"; do
       SECONDMATE_CODE_ROOT=$a
       CODE_ROOT_SET=1
       ;;
+    project_token)
+      PROJECT_TOKEN=$a
+      PROJECT_TOKEN_SET=1
+      ;;
     *)
-      echo "error: internal parser state for --$want_value" >&2
+      echo "error: internal parser state for --${want_value//_/-}" >&2
       exit 1
       ;;
     esac
@@ -727,11 +743,16 @@ for a in "$@"; do
     SECONDMATE_CODE_ROOT=${a#--code-root=}
     CODE_ROOT_SET=1
     ;;
+  --project-token) want_value=project_token ;;
+  --project-token=*)
+    PROJECT_TOKEN=${a#--project-token=}
+    PROJECT_TOKEN_SET=1
+    ;;
   *) POS+=("$a") ;;
   esac
 done
 [ -z "$want_value" ] || {
-  echo "error: --$want_value requires a value" >&2
+  echo "error: --${want_value//_/-} requires a value" >&2
   exit 1
 }
 [ "$HARNESS_SET" -eq 0 ] || [ -n "$HARNESS_ARG" ] || {
@@ -766,6 +787,26 @@ done
   echo "error: --code-root requires a non-empty value" >&2
   exit 1
 }
+[ "$PROJECT_TOKEN_SET" -eq 0 ] || [ -n "$PROJECT_TOKEN" ] || {
+  echo "error: --project-token requires a non-empty value" >&2
+  exit 1
+}
+# The token is one task's Herdr colour token, so it is refused for a secondmate
+# spawn, whose display identity is its own home's workspace label rather than a
+# single project. Whitespace would split the metadata token, so it is refused
+# here rather than silently mangled at the herdr call.
+case "$PROJECT_TOKEN" in
+*[[:space:]]*)
+  echo "error: --project-token must be one whitespace-free token (e.g. pilot, vigil, pam)" >&2
+  exit 1
+  ;;
+esac
+if [ "$PROJECT_TOKEN_SET" -eq 1 ]; then
+  [ "$KIND" != secondmate ] || {
+    echo "error: --project-token applies to a ship or scout spawn; a secondmate's display identity is its own home workspace" >&2
+    exit 1
+  }
+fi
 # A parent-delivered carrier replaces this home's own resolution, so it is
 # refused unless it is a secondmate spawn carrying a strictly valid W3C value.
 # Nothing else may reach the pane's TRACEPARENT export.
@@ -816,6 +857,10 @@ if [ "$RELAUNCH" -eq 1 ]; then
   }
   [ "$YOLO_SET" -eq 0 ] || {
     echo "error: --relaunch reuses the task's recorded yolo posture; --yolo cannot override it" >&2
+    exit 1
+  }
+  [ "$PROJECT_TOKEN_SET" -eq 0 ] || {
+    echo "error: --relaunch keeps the task's recorded Herdr project label; re-label the workspace and pane directly instead of re-spawning" >&2
     exit 1
   }
 else
@@ -3303,6 +3348,45 @@ herdr_projection_existing_meta_allows_flat() { # <meta>
   esac
 }
 
+# Apply this task's display-only Herdr project label to the workspace and pane a
+# spawn just created (data/captain.md "Herdr sidebar labels"). The colour token
+# is the registered project's `project=<token>` metadata, resolved from
+# data/projects.md by bin/fm-project-lib.sh; --project-token supplies a
+# sub-project token for a repo that declares more than one. The caller does the
+# work Main used to do by hand after every Herdr spawn.
+#
+# Never blocks a launch: a metadata failure is noted once and the spawn
+# continues, and an unresolved project is reported loudly in the spawn's output
+# while the worker still starts. A task the grep below cannot label keeps its
+# bare workspace and is visible to Main in the fleet view as unresolved rather
+# than silently unlabelled.
+spawn_apply_herdr_project_labels() { # <session> <workspace-id> <pane-id>
+  local session=$1 workspace=$2 pane=$3
+  local name status='' token='' source='' reason='' line out
+  name=$(basename "$PROJ_ABS")
+  while IFS= read -r line; do
+    case "$line" in
+    status=*) status=${line#*=} ;;
+    token=*) token=${line#*=} ;;
+    source=*) source=${line#*=} ;;
+    reason=*) reason=${line#*=} ;;
+    esac
+  done < <(fm_project_resolve_lines "$name" "${PROJECT_TOKEN:-}" 2>/dev/null || true)
+  if [ "$status" != resolved ]; then
+    echo "warning: $ID has no Herdr project label: ${reason:-project could not be resolved}; the worker still launches, and the project can be labelled by hand" >&2
+    return 0
+  fi
+  if ! out=$(fm_backend_herdr_cli "$session" workspace report-metadata "$workspace" \
+    --source firstmate --token "project=$token" 2>&1); then
+    echo "note: herdr workspace project label could not be applied for $ID (project=$token, source=$source): $(printf '%s' "$out" | head -n 1)" >&2
+  fi
+  if ! out=$(fm_backend_herdr_cli "$session" pane report-metadata "$pane" \
+    --source firstmate --token "project=$token" 2>&1); then
+    echo "note: herdr pane project label could not be applied for $ID (project=$token, source=$source): $(printf '%s' "$out" | head -n 1)" >&2
+  fi
+  return 0
+}
+
 # Backlog preflight (bin/fm-backlog-transition-lib.sh). This spawn is about to
 # become the sole owner of the row's In-flight transition, so prove the row is
 # transitionable BEFORE any endpoint, worktree, or record exists: a refusal here
@@ -3619,6 +3703,7 @@ EOF
       echo "error: herdr did not return a tab/pane id for $W" >&2
       exit 1
     fi
+    spawn_apply_herdr_project_labels "$HERDR_SES" "$HERDR_WORKSPACE_ID" "$HERDR_PANE_ID"
     T="$HERDR_SES:$HERDR_PANE_ID"
     ;;
   zellij)
@@ -4682,6 +4767,7 @@ preserve_relaunch_meta() {
     echo "worktree=$WT"
   fi
   echo "project=$PROJ_ABS"
+  [ -z "$PROJECT_TOKEN" ] || echo "project_token=$PROJECT_TOKEN"
   echo "harness=$HARNESS"
   echo "kind=$KIND"
   [ -z "$MODE" ] || echo "mode=$MODE"

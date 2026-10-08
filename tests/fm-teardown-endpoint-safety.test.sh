@@ -1099,10 +1099,11 @@ test_claimant_teardown_crosses_only_a_provably_agent_less_record() {
   pass "fm-teardown: the slot's own claimant crosses a leftover record only when no agent is behind it"
 }
 
-# No claim proves which record holds the slot, so two records naming it stay the
-# reuse collision itself and the scan refuses - even when both endpoints read
-# agent-less, because agent-lessness alone never says which record holds the slot.
-test_two_records_without_a_claim_still_refuse_even_when_both_endpoints_are_agent_less() {
+# Neither a claim nor a spawn_gen= proves which record holds the slot, so two
+# unordered records naming it stay the reuse collision itself and the scan
+# refuses - even when both endpoints read agent-less, because agent-lessness
+# alone never says which record holds the slot.
+test_two_unordered_records_without_a_claim_still_refuse_even_when_both_endpoints_are_agent_less() {
   local dir id=first-task other=second-task rc
 
   dir=$(make_case slot-two-records-no-claim)
@@ -1128,7 +1129,7 @@ test_two_records_without_a_claim_still_refuse_even_when_both_endpoints_are_agent
   assert_contains "$(cat "$dir/stderr")" "$other" \
     "the ambiguity refusal should name the other task holding the slot"
 
-  pass "fm-teardown: two records naming one slot still refuse while no claim settles which one holds it"
+  pass "fm-teardown: two unordered records naming one slot still refuse while no claim settles which one holds it"
 }
 
 # The two states that must never become a false refusal: the task's own claim,
@@ -1163,6 +1164,131 @@ test_own_and_absent_slot_claims_still_tear_down() {
     || fail "unclaimed-slot teardown did not return its pool slot: $(cat "$dir/runtime.log")"
 
   pass "fm-teardown: a task's own slot claim, and an unclaimed slot, both still tear down"
+}
+
+# Two claimless records naming one pool slot: the pool reused the slot after the
+# earlier task finished, before slot claims existed. The pool hands a slot to
+# one task at a time, so the most recently spawned record owns it and every
+# older one is stale. The slot is left dirty (the sentinel is untracked) so a
+# teardown that ran any slot check without --force would refuse on it.
+write_shared_slot_records() {  # <case> <older-id> <newer-id>
+  local dir=$1 older=$2 newer=$3
+  fm_write_meta "$dir/home/state/$older.meta" \
+    "window=firstmate:fm-$older" "endpoint_task_id=$older" \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=ship" \
+    "spawn_gen=s1789426761.100.1"
+  fm_write_meta "$dir/home/state/$newer.meta" \
+    "window=firstmate:fm-$newer" "endpoint_task_id=$newer" \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=ship" \
+    "spawn_gen=s1789429484.200.2"
+}
+
+run_case_unforced() {  # <case> <id>
+  local dir=$1 id=$2
+  FM_HOME="$dir/home" FM_ROOT_OVERRIDE="$ROOT" \
+  FM_RUNTIME_LOG="$dir/runtime.log" PATH="$dir/fakebin:$PATH" \
+    "$TEARDOWN" "$id"
+}
+
+# A tmux shim whose session holds <live-id>'s window with an agent running in
+# it. Reads answer without logging, so runtime.log records only mutations.
+write_live_window_tmux_shim() {  # <case> <live-id>
+  local dir=$1 live=$2
+  cat > "$dir/fakebin/tmux" <<SH
+#!/usr/bin/env bash
+case "\${1:-}" in
+  list-windows) printf '%s\n' 'fm-$live'; exit 0 ;;
+  display-message)
+    case "\$*" in *pane_current_command*) printf 'claude\n' ;; esac
+    exit 0
+    ;;
+esac
+printf 'tmux' >> "\${FM_RUNTIME_LOG:?}"
+printf ' <%s>' "\$@" >> "\${FM_RUNTIME_LOG:?}"
+printf '\n' >> "\${FM_RUNTIME_LOG:?}"
+exit 0
+SH
+  chmod +x "$dir/fakebin/tmux"
+}
+
+test_claimless_shared_slot_settles_by_allocation_order() {
+  local dir older=older-task newer=newer-task third=third-task rc
+
+  # The older record is stale: its own cleanup runs, the slot is untouched.
+  dir=$(make_case slot-shared-older)
+  mark_case_as_treehouse_pool "$dir"
+  write_shared_slot_records "$dir" "$older" "$newer"
+  set +e
+  run_case_unforced "$dir" "$older" > "$dir/stdout" 2> "$dir/stderr"
+  rc=$?
+  set -e
+  [ "$rc" -eq 0 ] || fail "teardown of the older record on a shared slot failed: $(cat "$dir/stderr")"
+  assert_absent "$dir/home/state/$older.meta" "older shared-slot record was not removed"
+  assert_present "$dir/home/state/$newer.meta" "older shared-slot teardown removed the newer record"
+  assert_present "$dir/worktree/sentinel" "older shared-slot teardown reset the slot"
+  assert_absent "$dir/pool/1/.fm-slot-owner" "older shared-slot teardown wrote a slot claim"
+  ! grep -Fq "treehouse <return>" "$dir/runtime.log" \
+    || fail "older shared-slot teardown returned the slot: $(cat "$dir/runtime.log")"
+  assert_contains "$(cat "$dir/stderr")" "$newer" \
+    "older shared-slot warning should name the newer record"
+  assert_contains "$(cat "$dir/stdout")" "left to task $newer" \
+    "older shared-slot completion should name the slot's owner"
+
+  # The newer record owns the slot and keeps every slot check: the dirty copy
+  # refuses without --force, and --force returns the slot.
+  dir=$(make_case slot-shared-newer)
+  mark_case_as_treehouse_pool "$dir"
+  write_shared_slot_records "$dir" "$older" "$newer"
+  set +e
+  run_case_unforced "$dir" "$newer" > "$dir/stdout" 2> "$dir/stderr"
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "newer shared-slot record skipped the dirty-slot refusal"
+  assert_present "$dir/home/state/$newer.meta" "newer shared-slot refusal removed its record"
+  assert_present "$dir/worktree/sentinel" "newer shared-slot refusal reset the slot"
+  assert_contains "$(cat "$dir/stderr")" "uncommitted" \
+    "newer shared-slot refusal should come from the slot's own dirty check"
+  : > "$dir/runtime.log"
+  run_case "$dir" "$newer" > "$dir/stdout" 2> "$dir/stderr" \
+    || fail "forced teardown of the newer shared-slot record failed: $(cat "$dir/stderr")"
+  assert_absent "$dir/home/state/$newer.meta" "newer shared-slot teardown left its record"
+  assert_present "$dir/home/state/$older.meta" "newer shared-slot teardown removed the older record"
+  grep -Fq "treehouse <return>" "$dir/runtime.log" \
+    || fail "newer shared-slot teardown did not return the slot it owns: $(cat "$dir/runtime.log")"
+
+  # A sibling whose endpoint is live refuses either record, even with --force.
+  dir=$(make_case slot-shared-live-newer)
+  mark_case_as_treehouse_pool "$dir"
+  write_shared_slot_records "$dir" "$older" "$newer"
+  write_live_window_tmux_shim "$dir" "$newer"
+  assert_refused_without_mutation "$dir" "$older" "older record beside a live newer endpoint"
+  assert_present "$dir/home/state/$newer.meta" "live-sibling refusal removed the live record"
+  assert_contains "$(cat "$dir/stderr")" "reads 'alive'" \
+    "live-sibling refusal should name the sibling's endpoint state"
+  dir=$(make_case slot-shared-live-older)
+  mark_case_as_treehouse_pool "$dir"
+  write_shared_slot_records "$dir" "$older" "$newer"
+  write_live_window_tmux_shim "$dir" "$older"
+  assert_refused_without_mutation "$dir" "$newer" "newer record beside a live older endpoint"
+  assert_contains "$(cat "$dir/stderr")" "$older" \
+    "live-sibling refusal should name the live record"
+
+  # A claim naming a third task wins over allocation order: even the newest
+  # record's slot was reassigned, so it too is torn down record-only.
+  dir=$(make_case slot-shared-claimed)
+  mark_case_as_treehouse_pool "$dir"
+  write_shared_slot_records "$dir" "$older" "$newer"
+  claim_pool_slot "$dir" "$third" "$dir/other-home"
+  set +e
+  run_case_unforced "$dir" "$newer" > "$dir/stdout" 2> "$dir/stderr"
+  rc=$?
+  set -e
+  [ "$rc" -eq 0 ] || fail "teardown of a shared-slot record claimed by a third task failed: $(cat "$dir/stderr")"
+  assert_present "$dir/worktree/sentinel" "third-task claim: the slot was reset"
+  assert_present "$dir/home/state/$older.meta" "third-task claim: the older record was removed"
+  assert_reassigned_slot_left_alone "$dir" "$newer" "$third" "shared slot claimed by a third task"
+
+  pass "fm-teardown: claimless records sharing a slot settle by allocation order, refuse beside a live sibling, and defer to a claim"
 }
 
 # The tmux shim used by the endpoint-close tests below: every subcommand
@@ -1553,8 +1679,9 @@ test_sole_slot_record_still_tears_down
 test_reassigned_pool_slot_finishes_own_cleanup_without_touching_the_slot
 test_reassigned_slot_record_still_tears_down_beside_the_claimants_record
 test_claimant_teardown_crosses_only_a_provably_agent_less_record
-test_two_records_without_a_claim_still_refuse_even_when_both_endpoints_are_agent_less
+test_two_unordered_records_without_a_claim_still_refuse_even_when_both_endpoints_are_agent_less
 test_own_and_absent_slot_claims_still_tear_down
+test_claimless_shared_slot_settles_by_allocation_order
 test_recorded_endpoint_that_changed_directory_still_tears_down
 test_project_lock_anchors_at_the_local_root_across_home_layouts
 test_remote_seeded_home_returns_its_uncontested_slot

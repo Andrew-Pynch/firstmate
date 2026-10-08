@@ -123,9 +123,16 @@
 # released-then-reassigned slot was returned out from under a live worker
 # (observed 2026-09-07).
 # An absent claim - a slot taken before claims existed, or already returned -
-# leaves one live path named by two records as the reuse collision itself,
-# whichever record is stale, and the scan refuses without touching either; nothing
-# there proves which record holds the slot.
+# settles task records sharing the slot through worktree= by allocation order,
+# because the pool hands a slot to one task at a time. A home= match, a missing
+# spawn_gen= on either record, or an epoch tie still refuses without touching
+# either record. Otherwise every other record's endpoint must read dead or
+# missing through the classifier below, or it refuses. The record with the latest
+# spawn_gen= epoch then owns the slot and keeps every slot step, while each older
+# record is stale and is torn down exactly like a reassigned slot. A relaunch
+# refreshes spawn_gen=, which can only make a record look newer; the record judged
+# newest still runs every dirty and landed-work check on the slot itself, so a
+# misordering never skips that inspection.
 # A claim naming THIS task proves the slot is this task's, so a conflicting record
 # refuses only while a live worker behind it cannot be ruled out: that record's own
 # endpoint is read with the recovery-grade classifier (bin/fm-backend.sh's
@@ -2408,25 +2415,22 @@ collect_local_firstmate_states() {
   done
 }
 
-# Whether a record naming the same pool slot still blocks releasing it, read from
-# that record's own endpoint through the recovery-grade classifier
-# (bin/fm-backend.sh's fm_backend_agent_state). A claim naming THIS task proves
-# the slot is this task's, so only a conflicting record that could still have a
-# live worker behind it - any reading other than dead or missing - keeps the
-# refusal. Without that claim nothing proves which record holds the slot, so the
-# conflict blocks on the record alone and no endpoint is read at all; that path is
-# byte-for-byte the refusal that predates the claim.
-# Sets TEARDOWN_CONFLICT_BACKEND, TEARDOWN_CONFLICT_TARGET, and
-# TEARDOWN_CONFLICT_STATE for the caller's message.
+refuse_shared_slot_record() {  # <record-id> <slot> <other-id> <field>
+  echo "REFUSED: task $1's recorded worktree $2 is also task $3's recorded $4." >&2
+  echo "Returning that pool slot would kill $3's processes and reset its copy, so nothing was changed - not even with --force." >&2
+  echo "Reconcile whichever record is wrong (bin/fm-crew-state.sh $1; bin/fm-crew-state.sh $3), then re-run teardown." >&2
+}
+
+# Whether a record naming the same pool slot could still have a live worker
+# behind it, read from that record's own endpoint through the recovery-grade
+# classifier (bin/fm-backend.sh's fm_backend_agent_state): any reading other
+# than dead or missing. Sets TEARDOWN_CONFLICT_BACKEND, TEARDOWN_CONFLICT_TARGET,
+# and TEARDOWN_CONFLICT_STATE for the caller's message.
 TEARDOWN_CONFLICT_BACKEND=
 TEARDOWN_CONFLICT_TARGET=
 TEARDOWN_CONFLICT_STATE=
-conflicting_record_blocks_slot_return() {  # <other-meta> <claim-state>
-  local other_meta=$1 claim_state=$2
-  TEARDOWN_CONFLICT_BACKEND=
-  TEARDOWN_CONFLICT_TARGET=
-  TEARDOWN_CONFLICT_STATE=
-  [ "$claim_state" = mine ] || return 0
+slot_record_endpoint_may_be_live() {  # <other-meta>
+  local other_meta=$1
   TEARDOWN_CONFLICT_BACKEND=$(fm_backend_of_meta "$other_meta")
   TEARDOWN_CONFLICT_TARGET=$(fm_backend_target_of_meta "$other_meta")
   TEARDOWN_CONFLICT_STATE=unreadable
@@ -2438,10 +2442,46 @@ conflicting_record_blocks_slot_return() {  # <other-meta> <claim-state>
   return 0
 }
 
+# Whether a record naming the same pool slot still blocks releasing it under a
+# claim naming THIS task: the claim proves the slot is this task's, so only a
+# conflicting record that could still have a live worker behind it keeps the
+# refusal. Any other claim state blocks on the record alone and reads no
+# endpoint here; the claimless allocation-order settlement below reads them itself.
+conflicting_record_blocks_slot_return() {  # <other-meta> <claim-state>
+  local other_meta=$1 claim_state=$2
+  TEARDOWN_CONFLICT_BACKEND=
+  TEARDOWN_CONFLICT_TARGET=
+  TEARDOWN_CONFLICT_STATE=
+  [ "$claim_state" = mine ] || return 0
+  slot_record_endpoint_may_be_live "$other_meta"
+}
+
+# The allocation epoch of a task record: the seconds field of the spawn_gen=
+# token bin/fm-spawn.sh writes as s<epoch>.<pid>.<random>. Fails when the record
+# has none, so an unordered record never settles a shared slot.
+slot_record_spawn_epoch() {  # <meta>
+  local gen
+  gen=$(fm_meta_get "$1" spawn_gen)
+  gen=${gen#s}
+  gen=${gen%%.*}
+  case "$gen" in ''|*[!0-9]*) return 1 ;; esac
+  printf '%s\n' "$gen"
+}
+
+# Record exclusivity for one slot; the script header owns the rules. A stale
+# claimless record returns TEARDOWN_SLOT_REASSIGNED_RC with the newest record
+# naming the slot in TEARDOWN_SLOT_SUPERSEDED_BY and its home in
+# TEARDOWN_SLOT_SUPERSEDED_HOME.
+TEARDOWN_SLOT_SUPERSEDED_BY=
+TEARDOWN_SLOT_SUPERSEDED_HOME=
 require_exclusive_worktree_slot_record() {  # <record-meta> <record-id> <record-state> <worktree> <claim-state>
   local record_meta=$1 record_id=$2 record_state=$3 worktree=$4
   local claim_state=${5:-absent}
-  local slot state_dir other other_id field other_path other_slot
+  local slot state_dir other other_id field other_path other_slot i
+  local record_epoch other_epoch newest_epoch='' newest_id='' newest_home=''
+  local -a sibling_metas=() sibling_ids=()
+  TEARDOWN_SLOT_SUPERSEDED_BY=
+  TEARDOWN_SLOT_SUPERSEDED_HOME=
   slot=$(canonical_existing_dir "$worktree") || return 0
   collect_local_firstmate_states "$record_state" || return 1
   for state_dir in "${TREEHOUSE_OWNER_STATES[@]}"; do
@@ -2454,14 +2494,17 @@ require_exclusive_worktree_slot_record() {  # <record-meta> <record-id> <record-
         [ -n "$other_path" ] || continue
         other_slot=$(canonical_existing_dir "$other_path") || continue
         [ "$other_slot" = "$slot" ] || continue
+        if [ "$claim_state" = absent ] && [ "$field" = worktree ]; then
+          sibling_metas+=("$other")
+          sibling_ids+=("$other_id")
+          continue
+        fi
         if ! conflicting_record_blocks_slot_return "$other" "$claim_state"; then
           echo "warning: task $record_id's recorded worktree $slot is also task $other_id's recorded $field, but that record's endpoint ($TEARDOWN_CONFLICT_BACKEND $TEARDOWN_CONFLICT_TARGET) reads $TEARDOWN_CONFLICT_STATE, so no agent is left behind it." >&2
           echo "$record_id's own slot claim proves that slot is $record_id's, so its cleanup proceeds and returns the slot; clear the leftover record too (bin/fm-teardown.sh $other_id)." >&2
           break
         fi
-        echo "REFUSED: task $record_id's recorded worktree $slot is also task $other_id's recorded $field." >&2
-        echo "Returning that pool slot would kill $other_id's processes and reset its copy, so nothing was changed - not even with --force." >&2
-        echo "Reconcile whichever record is wrong (bin/fm-crew-state.sh $record_id; bin/fm-crew-state.sh $other_id), then re-run teardown." >&2
+        refuse_shared_slot_record "$record_id" "$slot" "$other_id" "$field"
         if [ "$claim_state" = mine ]; then
           echo "$other_id's recorded endpoint ($TEARDOWN_CONFLICT_BACKEND $TEARDOWN_CONFLICT_TARGET) reads $TEARDOWN_CONFLICT_STATE, so it could still hold a live worker in that slot; finish that record first, then re-run teardown of $record_id." >&2
         fi
@@ -2469,21 +2512,60 @@ require_exclusive_worktree_slot_record() {  # <record-meta> <record-id> <record-
       done
     done
   done
+  # Only a claimless scan collects siblings; order them before reading any endpoint.
+  [ "${#sibling_metas[@]}" -gt 0 ] || return 0
+  record_epoch=$(slot_record_spawn_epoch "$record_meta") || {
+    refuse_shared_slot_record "$record_id" "$slot" "${sibling_ids[0]}" worktree
+    return 1
+  }
+  for i in "${!sibling_metas[@]}"; do
+    other_epoch=$(slot_record_spawn_epoch "${sibling_metas[$i]}") \
+      && [ "$other_epoch" != "$record_epoch" ] || {
+      refuse_shared_slot_record "$record_id" "$slot" "${sibling_ids[$i]}" worktree
+      return 1
+    }
+    if [ -z "$newest_epoch" ] || [ "$other_epoch" -gt "$newest_epoch" ]; then
+      newest_epoch=$other_epoch
+      newest_id=${sibling_ids[$i]}
+      newest_home=$(dirname "$(dirname "${sibling_metas[$i]}")")
+    fi
+  done
+  for i in "${!sibling_metas[@]}"; do
+    slot_record_endpoint_may_be_live "${sibling_metas[$i]}" || continue
+    refuse_shared_slot_record "$record_id" "$slot" "${sibling_ids[$i]}" worktree
+    echo "Task ${sibling_ids[$i]}'s recorded endpoint ($TEARDOWN_CONFLICT_BACKEND $TEARDOWN_CONFLICT_TARGET) reads '$TEARDOWN_CONFLICT_STATE', not dead or missing, so neither record can be settled while it may still be working in that slot." >&2
+    return 1
+  done
+  [ "$newest_epoch" -gt "$record_epoch" ] || return 0
+  TEARDOWN_SLOT_SUPERSEDED_BY=$newest_id
+  TEARDOWN_SLOT_SUPERSEDED_HOME=$newest_home
+  return "$TEARDOWN_SLOT_REASSIGNED_RC"
 }
 
 require_exclusive_task_worktree_slot() {
-  local slot
+  local slot rc=0
   # The ownership determination has already run and settled a reassigned slot as
   # record-only, so the record scan must not refuse work that determination owns.
   [ "$TEARDOWN_SLOT_REASSIGNED" != 1 ] || return 0
   slot=$(teardown_live_slot_path) || return 0
-  require_exclusive_worktree_slot_record "$META" "$ID" "$STATE" "$slot" "$TEARDOWN_SLOT_CLAIM"
+  require_exclusive_worktree_slot_record "$META" "$ID" "$STATE" "$slot" "$TEARDOWN_SLOT_CLAIM" || rc=$?
+  case "$rc" in
+    0) return 0 ;;
+    "$TEARDOWN_SLOT_REASSIGNED_RC")
+      echo "warning: task $ID's recorded worktree $slot is also recorded by task $TEARDOWN_SLOT_SUPERSEDED_BY, spawned after $ID with no slot claim on either, so the pool reassigned that slot and it is no longer $ID's; its processes, copy, and claim are left untouched and only $ID's own cleanup runs." >&2
+      TEARDOWN_SLOT_REASSIGNED=1
+      TEARDOWN_SLOT_REASSIGNED_TO=$TEARDOWN_SLOT_SUPERSEDED_BY
+      TEARDOWN_SLOT_REASSIGNED_HOME=$TEARDOWN_SLOT_SUPERSEDED_HOME
+      return 0
+      ;;
+  esac
+  return 1
 }
 
 # Positive slot ownership, read from the claim the task that took the slot wrote
 # into the slot itself (bin/fm-wake-lib.sh owns the claim and its states).
 #
-# The record scan above proves that no OTHER task record names this slot. It
+# The record scan above settles every OTHER task record that names this slot. It
 # cannot prove that THIS record is not the stale one, because the task that took
 # the slot next may leave no record this scan can reach: its own worker may have
 # exited and its record been cleaned up, or it may belong to a home this machine
@@ -3068,6 +3150,7 @@ preflight_descendant_treehouse_slots() {
       continue
     fi
     fm_backend_validate_task_endpoint "$meta" "$task_id" || return 1
+
     owner_rc=0
     require_owned_worktree_slot_record "$task_id" "$worktree" || owner_rc=$?
     claim_state=$FM_TREEHOUSE_SLOT_OWNER
@@ -3079,7 +3162,12 @@ preflight_descendant_treehouse_slots() {
     # cleanup proceeds with every slot step skipped, so the record scan must not
     # refuse it. Only a child still holding its slot runs that scan.
     if [ "$owner_rc" -eq 0 ]; then
-      require_exclusive_worktree_slot_record "$meta" "$task_id" "$state" "$worktree" "$claim_state" || return 1
+      require_exclusive_worktree_slot_record "$meta" "$task_id" "$state" "$worktree" "$claim_state" || owner_rc=$?
+      if [ "$owner_rc" -eq "$TEARDOWN_SLOT_REASSIGNED_RC" ]; then
+        echo "REFUSED: child task $task_id's recorded worktree $worktree is also recorded by task $TEARDOWN_SLOT_SUPERSEDED_BY, spawned after it; tear $task_id down on its own first, then retry. Forced teardown changed nothing." >&2
+        return 1
+      fi
+      [ "$owner_rc" -eq 0 ] || return 1
     fi
   done
 }

@@ -791,6 +791,25 @@ assert_grep "offset=$replay_offset" "$PARENT/state/remote-replies/ios.cursor" \
   "the recapture did not rebuild the lost cursor"
 pass "a cursor-loss whole-log recapture is acknowledged quietly with no duplicate wake"
 
+# Generation 1 was never individually ingested in this scenario, but the later
+# whole-log capture committed every byte it covers with the same prefix identity.
+rm -f "$PARENT/state/remote-replies/ios.1.ingested" "$PARENT/state/procevent-inbox/$SID.1.handled"
+cp "$PARENT/state/remote-replies/ios.cursor" "$TMP_ROOT/subsumed-cursor-before"
+cp "$PARENT/state/ios.status" "$TMP_ROOT/subsumed-status-before"
+out=$(remote_env "$ADAPTER" handle ios 1 "$RESULT" 2>&1) \
+  || fail "a subsumed delta remained unacknowledged: $out"
+assert_present "$PARENT/state/procevent-inbox/$SID.1.handled" "subsumed delta has no acknowledgement"
+cmp -s "$TMP_ROOT/subsumed-cursor-before" "$PARENT/state/remote-replies/ios.cursor" \
+  || fail "acknowledging a subsumed delta rewound the cursor"
+cmp -s "$TMP_ROOT/subsumed-status-before" "$PARENT/state/ios.status" \
+  || fail "acknowledging a subsumed delta appended status bytes"
+awk '/^from_prefix_sha256=/ { $0 = "from_prefix_sha256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" } { print }' \
+  "$RESULT" > "$TMP_ROOT/subsumed-wrong-prefix.result"
+if remote_env "$ADAPTER" ingest ios "$TMP_ROOT/subsumed-wrong-prefix.result" >/dev/null 2>&1; then
+  fail "an old delta with a different source prefix was accepted as subsumed"
+fi
+pass "a subsumed delta is acknowledged only for matching committed source bytes"
+
 # The adapter re-armed at the committed cursor. Truncation is detected from the
 # next blocking source and escalated once; it is never silently treated as a new
 # log or re-armed past the break.

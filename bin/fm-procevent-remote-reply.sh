@@ -203,6 +203,44 @@ result_field() { # <result> <field>
   ' "$1"
 }
 
+# A receipted larger capture with the same start-prefix identity proves that a
+# shorter delta's bytes were already ingested, even without its own receipt.
+# Compare raw payload bytes, not normalized status lines or offsets alone.
+subsumed_delta_matches() { # <id> <from> <to> <from-hash> <to-hash> <payload> <staging-dir>
+  local id=$1 from=$2 to=$3 from_hash=$4 to_hash=$5 payload=$6 staging=$7
+  local receipt seq captured cover_from cover_to cover_hash blank
+  [ "$to" -gt "$from" ] && [ "$to" -le "$CURSOR_OFFSET" ] || return 1
+  for receipt in "$CURSOR_DIR/$id".*.ingested; do
+    [ -f "$receipt" ] && [ ! -L "$receipt" ] || continue
+    seq=${receipt%.ingested}
+    seq=${seq##*.}
+    case "$seq" in ''|*[!0-9]*) continue ;; esac
+    captured="$STATE/procevent-inbox/remote-reply-$id.$seq.result"
+    [ -f "$captured" ] && [ ! -L "$captured" ] || continue
+    cover_from=$(result_field "$captured" from_offset) || continue
+    [ "$cover_from" = "$from" ] || continue
+    cover_hash=$(result_field "$captured" from_prefix_sha256) || continue
+    [ "$cover_hash" = "$from_hash" ] || continue
+    cover_to=$(result_field "$captured" to_offset) || continue
+    case "$cover_to" in ''|*[!0-9]*) continue ;; esac
+    [ "$cover_to" -ge "$to" ] && [ "$cover_to" -le "$CURSOR_OFFSET" ] || continue
+    cover_hash=$(result_field "$captured" to_prefix_sha256) || continue
+    if [ "$cover_to" -eq "$CURSOR_OFFSET" ]; then
+      [ "$cover_hash" = "$CURSOR_HASH" ] || continue
+    fi
+    if [ "$cover_to" -eq "$to" ]; then
+      [ "$cover_hash" = "$to_hash" ] || continue
+    fi
+    ingest_receipt_matches "$id" "$seq" "$captured" || continue
+    blank=$(LC_ALL=C awk '$0 == "" { print NR; exit }' "$captured")
+    case "$blank" in ''|*[!0-9]*) continue ;; esac
+    tail -n "+$((blank + 1))" "$captured" > "$staging/covered-payload" || return 1
+    head -c "$((to - from))" "$staging/covered-payload" > "$staging/covered-prefix" || return 1
+    cmp -s "$payload" "$staging/covered-prefix" && return 0
+  done
+  return 1
+}
+
 classify_result() {
   local file=$1 schema status
   [ -f "$file" ] && [ ! -L "$file" ] || { printf 'malformed\n'; return 0; }
@@ -524,6 +562,17 @@ cmd_ingest() {
   read_cursor "$id"
   if [ "$CURSOR_OFFSET" -eq "$to" ] && [ "$CURSOR_HASH" = "$to_hash" ]; then
     cursor_already=1
+  elif [ "$class" = delta ] && subsumed_delta_matches \
+    "$id" "$from" "$to" "$from_hash" "$to_hash" "$payload" "$tmp"; then
+    if [ -n "$seq" ]; then
+      write_ingest_receipt "$id" "$seq" "$result" \
+        || { fm_lock_release "$lock"; die "cannot commit subsumed remote reply ingestion receipt"; }
+    fi
+    fm_lock_release "$lock"
+    trap - EXIT
+    rm -rf -- "$tmp"
+    printf 'ingested: %s appended=0 offset=%s\n' "$id" "$CURSOR_OFFSET"
+    return 0
   elif [ "$CURSOR_OFFSET" -ne "$from" ] || [ "$CURSOR_HASH" != "$from_hash" ]; then
     die "result does not continue the current cursor for $id"
   fi

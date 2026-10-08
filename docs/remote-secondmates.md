@@ -209,6 +209,7 @@ That note never enters the open-decision fold, because the reader cannot tell a 
 A refused document is not re-attempted automatically; it stays on the remote, and a later structured offer of the same path fetches it.
 An SSH exit status of 255 while fetching a referenced document leaves the delta uncommitted for the process-event runner's normal retry because remote completion is unknown.
 The process-event runner applies each captured delta through this adapter as soon as it is captured, so a mirrored reply reaches the primary status channel without depending on the wake handler running the adapter itself.
+A captured delta already covered by a receipted larger capture is acknowledged without replaying its status bytes or moving the cursor backward; `bin/fm-procevent-remote-reply.sh` owns the prefix-identity and raw-byte proof.
 A mirrored line that carries a correlation token settles its pending-reply record and closes that request's own open escalation decision.
 Because a remote reply reaches the primary only through this asynchronous mirror, the primary treats a missing correlated report as a missed report only once the mirror has been read through the end of the remote log after that turn ended.
 A remote mate that did answer is therefore never asked to repost while its answer is still in flight, and a genuinely missing answer still gets exactly one repost once the mirror is known to be current.

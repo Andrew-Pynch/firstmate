@@ -782,6 +782,55 @@ test_relaunch_only_flags_are_rejected_on_other_verbs() {
 
 # --- 5. lifecycle states ----------------------------------------------------
 
+test_exit_treats_a_shut_down_omp_session_as_agent_free() {
+  local dir out rc
+  dir=$(new_case omp-shutdown)
+  add_task "$dir" t1 omp
+  # The harness's probe still calls the pane alive - that is the wedge: omp's
+  # agent loop died while its TUI kept rendering, so only the composer read
+  # can see that the session is over.
+  alive_as "$dir" omp
+  # The REAL frame from the 2026-09-15 wedged worker: the user-level
+  # resume-command.js extension wrote its hint to stderr on session_shutdown
+  # and it landed behind the live `❯` composer glyph. Bright text, so the
+  # ghost-text luminance ceiling never strips it; before the shared classifier
+  # learned this rule the frame read `pending` and both exit and relaunch
+  # refused forever, which is what forced a hand-killed pid.
+  printf '%s\n' \
+    'transcript box' \
+    '' \
+    '❯ Resume this session: omp --resume /home/andrew/.omp/agent/sessions/-.treehouse-monorepo-e8f15d-7-monorepo/2026-09-15T22-54-19-113Z_01a0a747-9a1e-7000-8a5f-2b0f0e6d1c33.jsonl' \
+    ' π  · ◑ Fable 5.1  · 🗑 fm-banner-repro ·  27.0%/1M  · (sub)' > "$dir/fake/pane"
+  out=$(run_control "$dir" t1 exit); rc=$?
+  expect_code 0 "$rc" "exit must treat a shut-down omp session as agent-free"$'\n'"$out"
+  assert_contains "$out" "stopped t1 harness=omp" \
+    "the shutdown frame must reach the gone-state postcondition"
+  [ "$(literals "$dir")" = /quit ] \
+    || fail "exit should still type omp's verified exit command, got: $(literals "$dir")"
+  pass "fm-control exit: a composer holding only the harness's resume hint is agent-free"
+}
+
+test_exit_still_refuses_a_composer_holding_typed_text() {
+  local dir out rc
+  dir=$(new_case still-pending)
+  add_task "$dir" t1 omp
+  alive_as "$dir" omp
+  # The same omp frame, with REAL unsubmitted text on the composer row instead
+  # of the shutdown hint: the safety direction this rule must not weaken. The
+  # stub parks its cursor on row 1, so the composer row sits there.
+  printf '%s\n' \
+    'transcript box' \
+    '❯ Resume this session: omp' \
+    ' π  · ◑ Fable 5.1  · 🗑 fm-banner-repro ·  27.0%/1M  · (sub)' > "$dir/fake/pane"
+  out=$(run_control "$dir" t1 exit); rc=$?
+  expect_code 1 "$rc" "a composer holding text must still refuse"$'\n'"$out"
+  assert_contains "$out" "visibly holds pending text" \
+    "the refusal should name the pending text"
+  [ -z "$(literals "$dir")" ] \
+    || fail "a pending composer must not receive the exit command, got: $(literals "$dir")"
+  pass "fm-control exit: a composer holding typed text still refuses before the exit command"
+}
+
 test_already_stopped_exit_is_idempotent() {
   local dir out rc
   dir=$(new_case idempotent)
@@ -1074,6 +1123,8 @@ test_verb_allowlist_is_closed
 test_resume_is_refused_with_its_reason
 test_relaunch_only_flags_are_rejected_on_other_verbs
 test_already_stopped_exit_is_idempotent
+test_exit_treats_a_shut_down_omp_session_as_agent_free
+test_exit_still_refuses_a_composer_holding_typed_text
 test_missing_tmux_endpoint_refuses_rather_than_claiming_a_stop
 test_interrupt_refuses_when_no_agent_runs
 test_ambiguous_endpoint_refuses

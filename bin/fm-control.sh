@@ -122,6 +122,14 @@
 #     classified state acts.
 #   - A composer that visibly holds pending text refuses before an exit command
 #     is typed, so existing text is preserved instead of being concatenated.
+#     Two exceptions are accepted instead of that proof, and neither ever
+#     accepts `pending`: the `agent-gone` verdict (the harness's own
+#     session-resume hint on screen with no composer below it, which proves the
+#     session already ended), and the single atomic-submission pair whose
+#     composer cannot be read at all (omp on Herdr, see the composer gate
+#     below) - the first treats the endpoint as agent-free, the second exists
+#     because requiring a proven-empty composer there would make `exit`
+#     impossible rather than safe.
 #
 # Environment knobs (all bounded waits, seconds):
 #   FM_CONTROL_POLL              poll interval for postcondition waits (0.5)
@@ -644,6 +652,15 @@ do_exit() {
     || composer_state=unknown
   case "$composer_state" in
     empty) ;;
+    agent-gone)
+      # The screen carries the harness's own session-resume hint with no
+      # composer below it (bin/fm-composer-lib.sh), so the session that owned
+      # this composer already ended: there is no unsubmitted text to preserve
+      # and no agent work to interrupt, even when the harness's own probe still
+      # calls the pane alive (a wedged omp TUI whose agent loop died). Deliver
+      # the exit command anyway - the process may still be holding the pane,
+      # and the agent-state wait below is the postcondition that decides.
+      ;;
     pending)
       die "task $ID's composer visibly holds pending text; refusing to type the $cmd exit command because it would concatenate onto that text. Clear or submit the pending text, then retry '$VERB'"
       ;;

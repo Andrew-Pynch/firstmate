@@ -52,6 +52,7 @@ The clear is refused before anything is sent when the recorded backend cannot de
 `exit` reads the composer's state before typing the exit command and requires the exact `empty` verdict; a `pending` verdict refuses by naming the pending text, and any other verdict (`unknown`, `pending-unproven`, or an unreadable read) refuses as not proven empty, matching the fail-safe contract every other consumer that can overwrite composer input follows.
 The one exception is the single pair noted below whose composer cannot be read at all: omp on Herdr answers `unknown` even for an empty composer, so requiring a proven-empty composer there would make `exit` impossible rather than safe, and such a pair refuses only on a `pending` verdict.
 That relaxation is scoped to the atomic-submission pair and never widens to a backend-wide or harness-wide rule.
+The `agent-gone` verdict is a separate exception that applies to every harness and backend pair: it is positive proof the session already ended, not a relaxation of the unreadable-read rule, so exit and relaunch treat that endpoint as agent-free instead of refusing on a composer that only looks occupied.
 
 **Teardown and discard are not verbs and will not become verbs.**
 `exit` stops an agent and preserves everything else.

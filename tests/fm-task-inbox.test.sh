@@ -385,6 +385,37 @@ test_ring_submits_its_own_stuck_doorbell() {
   pass "inbox: the ring submits its own stuck doorbell, skips other pending text, and retries a lost Enter once on both paths"
 }
 
+# A composer that proves the session has shut down is the second, different
+# skip: the harness's own resume hint is on screen with no composer below it
+# (bin/fm-composer-lib.sh), so no agent can ever read a doorbell typed there.
+# The record goes to recovery exactly as a dead endpoint's does, and nothing is
+# typed into the pane.
+test_ring_skips_a_shut_down_session() {
+  local dir state rec log rc capture
+  dir="$TMP_ROOT/ring-shutdown"
+  state="$dir/state"
+  mkdir -p "$state"
+  make_watch_stubs "$dir" >/dev/null
+  rec=$(inbox_lib "$state" fm_task_inbox_write "$state" t1 "please continue")
+  capture="$dir/pane.capture"
+  # The real wedged-worker frame captured on 2026-09-15: the extension's resume
+  # hint landed behind the live omp composer glyph.
+  printf '%s\n' \
+    'transcript box' \
+    '' \
+    '❯ Resume this session: omp --resume /home/andrew/.omp/agent/sessions/-.treehouse-monorepo-e8f15d-7-monorepo/2026-09-15T22-54-19-113Z_01a0a747-9a1e-7000-8a5f-2b0f0e6d1c33.jsonl' \
+    ' π  · ◑ Fable 5.1  · 🗑 fm-banner-repro ·  27.0%/1M  · (sub)' > "$capture"
+  log="$dir/send.log"; : > "$log"
+  rc=0
+  PATH="$dir/fakebin:$PATH" FM_SEND_LOG="$log" FM_FAKE_TMUX_AGENT=omp \
+    FM_FAKE_TMUX_CAPTURE="$capture" \
+    inbox_lib "$state" fm_task_inbox_ring tmux sess:fm-t1 "$rec" fm-t1 || rc=$?
+  [ "$rc" = 3 ] || fail "a shut-down session should return 3 from the ring, got $rc"
+  [ ! -s "$log" ] || fail "a shut-down session was typed into:"$'\n'"$(cat "$log")"
+  [ -f "$rec" ] || fail "skipping the ring must leave the durable record in place"
+  pass "inbox: the ring hands a shut-down session's record to recovery without typing"
+}
+
 test_idempotent_write_dedups_exact_body() {
   local state r1 r2 r3 r4 count text
   state="$TMP_ROOT/idem/state"; mkdir -p "$state"
@@ -803,6 +834,7 @@ test_doorbell_is_a_shell_noop
 test_doorbell_rejects_terminal_controls
 test_ring_skips_dead_agent
 test_ring_submits_its_own_stuck_doorbell
+test_ring_skips_a_shut_down_session
 test_idempotent_write_dedups_exact_body
 test_idempotent_write_follows_concurrent_ack
 test_handled_mv_dedups_by_sequence

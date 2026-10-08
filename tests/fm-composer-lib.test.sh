@@ -580,6 +580,96 @@ test_matrix_codex_idle_starfield_furniture() {
   pass "matrix: codex 0.154's starfield rows are furniture; typed, mixed, and unanchored rows keep their verdicts"
 }
 
+test_matrix_session_shutdown_resume_hint() {
+  # A shut-down omp session leaves the harness's OWN resume hint on screen, and
+  # the hint is written to stderr rather than to the composer: while the TUI is
+  # still rendering it lands wherever omp parked its cursor - the bare `❯`
+  # composer row - and once the TUI has stopped it lands on a row of its own
+  # above the shell prompt. Both are real captures, and the shared classifier
+  # must read them as `agent-gone`: the session is over, so there is no
+  # unsubmitted text to preserve and no agent to interrupt, and bin/fm-control.sh
+  # can stop or replace the worker instead of refusing forever.
+  local wedge frame grok_frame typed half quoted residual
+  # Real wedged worker, captured 2026-09-15 from the pane read of
+  # redbox-sta-1401-part57-screens (bertha) and pwr2-workbook-revision (this
+  # host): the user-level resume-command.js extension wrote
+  # `Resume this session: omp --resume <session-file>` on session_shutdown, it
+  # landed behind the live composer glyph, and it is bright text - so nothing
+  # in the ghost-text luminance ceiling removes it, and it read as pending
+  # typed input before this rule. The report truncated the session id; only the
+  # shape matters here, never the path.
+  wedge=$'transcript box\n\n❯ Resume this session: omp --resume /home/andrew/.omp/agent/sessions/-.treehouse-monorepo-e8f15d-7-monorepo/2026-09-15T22-54-19-113Z_01a0a747-9a1e-7000-8a5f-2b0f0e6d1c33.jsonl\n π  · ◑ Fable 5.1  · 🗑 fm-banner-repro ·  27.0%/1M  · (sub)'
+  # Real post-shutdown frame, captured 2026-09-15 from a live omp 18.1.14 pane
+  # (composer shape pinned `borderless` by .omp/fm-worker-overlay.yml, exactly
+  # as fm-spawn launches every omp worker): omp wrote its own hint after its
+  # TUI stopped, and the shell behind the agent printed its prompt below it.
+  frame=$'❯\n π  · ◑ Fable 5.1 🙈 ·  fm-banner-repro ·  3.0%/1M ⟲ · (sub)\n\nResume this session with omp --resume 01a0a81b-1094-7045-9a28-b86693a4259f\n\n/tmp/fm-banner-repro ❯'
+  # Non-vacuousness: both captured rows really do match the declared hint
+  # sentence, and neither is furniture the classifier already knew.
+  _fm_composer_row_is_resume_hint 'Resume this session: omp --resume /home/andrew/.omp/agent/sessions/x.jsonl' \
+    || fail "the extension's resume hint must be recognized"
+  _fm_composer_row_is_resume_hint 'Resume this session with omp --resume 01a0a81b-1094-7045-9a28-b86693a4259f' \
+    || fail "omp 18.1.14's own resume hint must be recognized"
+  _fm_composer_row_is_resume_hint 'To resume this session: gemini --resume 8f2c1a4e' \
+    || fail "gemini's documented resume hint must be recognized"
+  _fm_composer_row_is_resume_hint 'Resume this session with: grok --resume 01a0a81b-1094-7045' \
+    || fail "grok's documented resume hint (colon after 'with') must be recognized"
+  _fm_composer_row_is_resume_hint 'fix the flaky test' \
+    && fail "ordinary typed text must not be mistaken for a resume hint"
+  _fm_composer_row_is_resume_hint 'please resume this session with the patched build' \
+    && fail "ordinary prose must not be mistaken for a resume hint"
+  # The hint sentence alone is not proof, and neither is a stray `--resume`:
+  # both tokens must appear.
+  _fm_composer_row_is_resume_hint 'Resume this session: omp' \
+    && fail "the hint sentence without a --resume argument is not a shutdown proof"
+  _fm_composer_row_is_resume_hint 'run omp --resume 01a0a81b' \
+    && fail "a bare --resume command is not a shutdown proof"
+  # Deliberate bound: a harness whose resume line names no `--resume` argument
+  # is out of scope, because the argument is the second independent token.
+  _fm_composer_row_is_resume_hint 'To continue this session, run muse resume 01a0a81b' \
+    && fail "muse's continue-session line names no --resume argument and must stay out of the rule"
+
+  assert_screen "wedged omp on tmux" agent-gone "$CAPS_TMUX" "$wedge" 2
+  assert_screen "wedged omp on herdr" agent-gone "$CAPS_STYLED" "$wedge"
+  assert_screen "wedged omp on zellij" agent-gone "$CAPS_STYLED_NOID" "$wedge"
+  # A plain capture carries no styling, but the hint needs none: it is a
+  # structural sentence, not a de-emphasised one.
+  assert_screen "wedged omp on cmux/orca" agent-gone "$CAPS_PLAIN" "$wedge"
+  assert_screen "omp shutdown frame on tmux (cursor on the shell prompt)" agent-gone "$CAPS_TMUX" "$frame" 5
+  assert_screen "omp shutdown frame on herdr" agent-gone "$CAPS_STYLED" "$frame"
+  assert_screen "omp shutdown frame on cmux/orca" agent-gone "$CAPS_PLAIN" "$frame"
+  # The rule is not omp-specific: any harness whose resume hint lands below its
+  # last composer shape is equally provable. grok's bordered composer, its
+  # colon-separated hint, and a shell prompt below it:
+  grok_frame=$'╭────────────────────────────╮\n│                            │\n╰────────────────────────────╯\n\nResume this session with: grok --resume 01a0a81b-1094-7045-9a28-b86693a4259f\n\nandrew@host ~ %'
+  assert_screen "grok shutdown frame on herdr" agent-gone "$CAPS_STYLED" "$grok_frame"
+  assert_screen "grok shutdown frame on tmux" agent-gone "$CAPS_TMUX" "$grok_frame" 6
+
+  # DIVERGENCE: the same frame with the hint replaced by ordinary bright
+  # composer text keeps its verdict, so the case above cannot come from
+  # anything but the hint rule.
+  typed=$'transcript box\n\n❯ please rerun the suite\n π  · ◑ Fable 5.1  · 🗑 fm-banner-repro ·  27.0%/1M ⟲ · (sub)'
+  assert_screen "bright composer text beside the status row stays pending" pending "$CAPS_STYLED" "$typed"
+  # DIVERGENCE: a half hint - the sentence with no `--resume` argument - is
+  # unsubmitted composer text, not a shutdown proof.
+  half=$'transcript box\n\n❯ Resume this session: omp\n π  · ◑ Fable 5.1  · 🗑 fm-banner-repro ·  27.0%/1M  · (sub)'
+  assert_screen "a half hint stays pending" pending "$CAPS_STYLED" "$half"
+  # DIVERGENCE: a LIVE pane merely quoting the sentence (a worker discussing
+  # this very banner, or a transcript line) keeps its verdict, because its own
+  # live composer is the bottom-most shape, below the quote.
+  quoted=$'transcript box\nResume this session: omp --resume 01a0a81b-1094-7045-9a28-b86693a4259f\n\n❯\n π  · ◑ Fable 5.1  · 🗑 fm-banner-repro ·  3.0%/1M  · (sub)'
+  assert_screen "a quoted hint above a live composer stays empty" empty "$CAPS_STYLED" "$quoted"
+  assert_screen "a quoted hint above a live composer on tmux" empty "$CAPS_TMUX" "$quoted" 3
+  # The residual case this rule cannot separate, recorded rather than left
+  # implicit: a human typing the exact vendor sentence into a live composer is
+  # byte-identical to the harness writing it there. `agent-gone` only relaxes
+  # the control plane - no consumer injects on it - so the blast radius stays
+  # the lifecycle verb the operator asked for.
+  residual=$'transcript box\n\n❯ Resume this session: omp --resume 01a0a81b-1094-7045-9a28-b86693a4259f\n π  · ◑ Fable 5.1  · 🗑 fm-banner-repro ·  3.0%/1M  · (sub)'
+  assert_screen "a typed hint sentence reads agent-gone (accepted residual)" agent-gone "$CAPS_STYLED" "$residual"
+  pass "matrix: a harness session-shutdown resume hint reads agent-gone; typed, half, and quoted rows keep their verdicts"
+}
+
 test_matrix_pi_separated_needs_identity() {
   # Real idle pi: a blank row between two solid rules. The blank row alone is
   # exactly what the strict rule refuses; only structure PLUS a live
@@ -927,6 +1017,7 @@ test_matrix_cursor_reverse_video_placeholder_remnant
 test_matrix_herdr_halfblock_rule_bounds_bare_wrap
 test_matrix_omp_status_row_bounds_bare_composer
 test_matrix_codex_idle_starfield_furniture
+test_matrix_session_shutdown_resume_hint
 test_matrix_pi_separated_needs_identity
 test_matrix_opencode_leftbar_signals
 test_matrix_grok_titled_bottom_border

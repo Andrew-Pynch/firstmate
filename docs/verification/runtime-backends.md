@@ -776,6 +776,45 @@ tests/fm-composer-codex-idle-live-e2e.test.sh
 The verification machine runs its fleet on Herdr and has no tmux installed, so on 2026-09-15 that guard reported `skip: live: tmux absent` there, and the Herdr capture above is this entry's live evidence.
 The guard also notes whether the starfield and the placeholder were actually drawn during its read, because codex need not animate them under every model or mode; a refresh on a tmux host should record that note beside the verdict rather than assume the starfield was exercised.
 
+### 2026-09-15 omp session-shutdown resume hint
+
+Verified on 2026-09-15 on Linux x86_64 with tmux 3.7c against omp/18.1.14, launched the way `bin/fm-spawn.sh` launches an omp worker, including the tracked `.omp/fm-worker-overlay.yml` posture overlay that pins the borderless `❯` composer shape.
+When an omp agent session ends, omp itself writes `Resume this session with omp --resume <session-id>` to stderr from its shutdown path, and the user-level `~/.omp/agent/extensions/resume-command.js` extension writes `Resume this session: omp --resume <session-file>` on `session_shutdown`; gemini writes the same sentence with a leading `To`.
+Because those writes go to stderr rather than to the composer, a TUI that is still rendering leaves them wherever its own cursor sits, and on omp that is the bare `❯` composer row.
+Two wedged omp workers did exactly that on 2026-09-15 (redbox-sta-1401-part57-screens on bertha, pwr2-workbook-revision on this host): the shared classifier read the sentence as that composer's unsubmitted text, `bin/fm-control.sh exit` and `relaunch` both refused with "composer visibly holds pending text", and the operator killed the omp pid by hand.
+
+The captured row classifies as follows before and after the rule in `bin/fm-composer-lib.sh` (`fm_composer_classify_screen`, terminal width 200):
+
+```text
+pending
+agent-gone
+```
+
+`agent-gone` is a distinct verdict rather than `empty` for a reason this record depends on: consumers that demand exact `empty` (the away-mode injector's pending-input guard, the submit confirmations, fm-spawn's kimi readiness) keep deferring on a shut-down session, while `bin/fm-control.sh`'s exit and relaunch accept it as an agent-free endpoint and deliver the exit command, which is what the wedged workers needed.
+The proof is the harness's own resume hint together with the shape scan: a hint is only accepted when no composer shape lies below it, so a live pane whose transcript merely quotes the sentence keeps its normal verdict.
+The residual case the rule cannot separate is a human typing the exact vendor sentence into a live composer, which is byte-identical to the harness writing it there; the blast radius stays the lifecycle verb the operator asked for, because nothing injects on `agent-gone`.
+A bordered composer whose frozen TUI wrote the hint *inside* its box is outside this rule's proof; the post-shutdown frame is covered either way, because there the hint row lies below every composer shape.
+
+The portable regressions carrying both real capture forms byte-for-byte, their divergences (bright composer text, a half hint with no `--resume` argument, a quoted hint above a live composer, and the accepted typed-sentence residual) live in `tests/fm-composer-lib.test.sh` (`test_matrix_omp_session_shutdown_banner`), and the control-plane half in `tests/fm-control.test.sh`.
+
+The live guard that refreshes this entry launches the installed omp in an isolated tmux server, proves the live idle composer is still `empty` on the cursor-anchored tmux and cursorless styled reads, then submits one minimal prompt, quits the session, and requires the real shutdown frame to classify `agent-gone` on both reads, naming omp and `omp --version` on failure.
+It spends model tokens to materialize the session that produces the hint, so it is opt-in:
+
+```sh
+FM_COMPOSER_OMP_SHUTDOWN_LIVE=1 tests/fm-composer-omp-shutdown-live-e2e.test.sh
+```
+
+Observed output:
+
+```text
+ok - omp (omp/18.1.14): the live idle composer classifies empty on the tmux and cursorless reads
+# omp (omp/18.1.14): shutdown hint row: Resume this session with omp --resume 01a0a83d-5a97-76ce-8a2b-e96236044c3f
+ok - omp (omp/18.1.14): the real shutdown frame classifies agent-gone on the cursorless and tmux reads
+ok - live omp shutdown guard verified 2 live surface(s)
+```
+
+This guard is the refresh command after an omp upgrade; rerun it and update the version above rather than trusting this entry across releases.
+
 ## Steering-inbox doorbell
 
 The steering channel's one behavioral assumption - a real worker agent follows the constant self-describing doorbell line (list the inbox, read and act on its records in numeric order, then `mv` each into `handled/`) - was verified on 2026-08-23 against every installed verified harness, on tmux 3.6a, macOS arm64, on an isolated private socket, driving the REAL `bin/fm-send.sh` end to end (durable record plus doorbell, with one mid-wait re-ring playing the watcher's role).
@@ -798,7 +837,7 @@ ok - muse (Muse Code 0.2.1 (0.2.1-R1215.1)): the doorbell reached a real worker,
 ```
 
 All six installed harnesses honored the doorbell contract with real model turns: each listed the inbox named by the doorbell, read its record, executed the instruction inside it, and acknowledged with the atomic `mv`.
-Two findings from the run shaped the shipped behavior: an OpenCode vendor update modal swallowed the first doorbell and the single re-ring recovered it, which is exactly the watcher ladder's job; and grok 1.0.5's idle composer never classifies `empty` (a classifier drift owned by the [Composer classification matrix](#composer-classification-matrix) guard, whose refresh for grok 1.0.5 is still owed), which motivated the ring's advisory pre-check not to skip on ambiguity - a doorbell into an ambiguous composer is a recoverable constant line, while skipping on ambiguity would starve steering for any harness the classifier cannot positively identify.
+Two findings from the run shaped the shipped behavior: an OpenCode vendor update modal swallowed the first doorbell and the single re-ring recovered it, which is exactly the watcher ladder's job; and grok 1.0.5's idle composer never classifies `empty` (a classifier drift owned by the [Composer classification matrix](#composer-classification-matrix) guard, whose refresh for grok 1.0.5 is still owed), which motivated the ring's advisory pre-check not to skip on ambiguity - a doorbell into an ambiguous composer is a recoverable constant line, while skipping on ambiguity would starve steering for any harness the classifier cannot positively identify. The one other skip is the classifier's `agent-gone` verdict: a composer that proves the session has shut down cannot read a doorbell, so its record is routed to recovery exactly as a dead endpoint's is.
 The current pending-composer ring contract is owned by `bin/fm-task-inbox-lib.sh`.
 Kimi was not installed on the verification machine; its receive path is the same one-line-plus-shell contract, and the portable ladder and enqueue regressions in `tests/fm-task-inbox.test.sh` and `tests/fm-send-inbox.test.sh` cover every harness-independent half.
 This guard is the refresh command after any harness upgrade; it spends a small number of real tokens per installed harness, reports an absent harness explicitly, and refuses a run that verified nothing.

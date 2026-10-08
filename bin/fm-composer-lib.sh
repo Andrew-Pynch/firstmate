@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # bin/fm-composer-lib.sh - the ONE fleet-wide owner of composer classification:
 # every shape a verified harness draws, every glyph, every container proof, and
-# the empty|pending|pending-unproven|unknown verdict, shared by every
+# the empty|pending|pending-unproven|agent-gone|unknown verdict, shared by every
 # session-provider adapter (tmux via bin/fm-tmux-lib.sh, and
 # bin/backends/{herdr,orca,cmux,zellij}.sh) and by fm-spawn.sh's kimi
 # launch-readiness check.
@@ -499,6 +499,36 @@ FM_COMPOSER_MODE_HINT_RE_DEFAULT='^[[:space:]]*(⏵|⏸)'
 # a middle dot. It is consulted only as the boundary BELOW a bare composer,
 # never on the composer row itself.
 FM_COMPOSER_OMP_STATUS_RE_DEFAULT='^[[:space:]]*(π|󰵗)[[:space:]]+·[[:space:]]|^[[:space:]]*'"$FM_OMP_SPINNER_FRAMES_RE"'[[:space:]]+[0-9]+[smh]([[:space:]]|$)|[[:space:]]·[[:space:]].*[0-9]+(\.[0-9]+)?%/[0-9]+K'
+# The session-RESUME HINT a harness prints when its agent session ends. It
+# goes to stderr, so a TUI that is still rendering leaves it wherever its own
+# cursor sits - on omp that is the bare `❯` composer row, which is how a real
+# wedged worker's composer came to hold the sentence instead of typed text
+# (`❯ Resume this session: omp --resume <session-file>`, captured 2026-09-15
+# on the redbox-sta-1401-part57-screens pane) - while a TUI that has already
+# stopped leaves it on a row of its own, above the shell prompt that follows.
+# Its presence is the ONE positive proof that the session behind the composer
+# has shut down, so it is declared here rather than being inferred from the
+# composer's shape. Both vendor spellings of the same fact are accepted, and
+# neither alone is load-bearing: the leading sentence AND the `--resume`
+# argument must both appear.
+#   - omp 18.1.14 itself (process.stderr on shutdown): "Resume this session
+#     with omp --resume 01a0a81b-1094-7045-9a28-b86693a4259f" (captured live).
+#   - the user-level omp `resume-command.js` extension (session_shutdown):
+#     "Resume this session: omp --resume /home/.../2026-09-15T22-54-19-113Z_....jsonl".
+#   - gemini, the same sentence with a leading "To" (docs/verification/
+#     runtime-backends.md, "To resume this session: gemini --resume <session-id>").
+#   - grok, whose separator carries a colon (references/harness/grok.md:
+#     "/exit prints `Resume this session with: grok --resume <session-id>`"),
+#     which is why the `with` separator tolerates that colon.
+# Deliberate bound: a harness whose resume line names no `--resume` argument is
+# NOT covered, because the argument is the second independent token this rule
+# requires. muse is the known one ("To continue this session, run muse resume
+# <uuid>"), and it is out of scope here: no fleet incident has shown that line
+# landing on a composer, and widening the rule to sentences without `--resume`
+# would start matching ordinary prose about resuming.
+# FM_COMPOSER_RESUME_HINT_RE overrides for an unverified harness; matching is
+# case-insensitive, like the idle-placeholder set above.
+FM_COMPOSER_RESUME_HINT_RE_DEFAULT='^(to[[:space:]]+)?resume[[:space:]]+this[[:space:]]+session([[:space:]]*:[[:space:]]*|[[:space:]]+with[[:space:]]*:?[[:space:]]+).*--resume[[:space:]]+[^[:space:]]'
 # Braille-pattern cells (U+2800..U+28FF) are animation furniture: codex-cli
 # 0.154.0 draws an idle "starfield" of them on the row above its `›` prompt
 # row, on the `›` row itself after the dim `Ask Codex to do anything`
@@ -727,13 +757,25 @@ fm_composer_classify_content() {  # <bordered> <content> [idle_re] [idle_case] [
 #   [identity]   "<agent>\t<status>" from the backend's native identity probe,
 #                or `probe-absent` when the probe found no live identity; only
 #                meaningful when caps carry identity=1.
-# Prints exactly one verdict: empty | pending | pending-unproven | unknown,
-# or the internal sentinel `need-identity` when caps declare identity=1, no
-# identity result was supplied, and the verdict depends on it. Adapters answer
-# `need-identity` by running their identity probe once and re-calling with
-# either its result or `probe-absent`; the sentinel never escapes an adapter.
+# Prints exactly one verdict: empty | pending | pending-unproven | agent-gone |
+# unknown, or the internal sentinel `need-identity` when caps declare
+# identity=1, no identity result was supplied, and the verdict depends on it.
+# Adapters answer `need-identity` by running their identity probe once and
+# re-calling with either its result or `probe-absent`; the sentinel never
+# escapes an adapter.
 # Identity stays a lazy second pass so the common non-pi read never pays for
 # the probe.
+# `agent-gone` is the ONE verdict that reports an ABSENT agent rather than a
+# composer state: the screen carries the harness's own session-resume hint with
+# no composer shape below it (see _fm_composer_screen_session_gone), so the
+# session that owned this composer has ended. It is positive proof, not a
+# degraded read, and it is deliberately NOT `empty`: every consumer that
+# demands exact `empty` - the away-mode injector's pending-input guard, the
+# submit confirmations, fm-spawn's launch readiness - keeps deferring on it,
+# and bin/fm-task-inbox-lib.sh routes the steering doorbell to recovery instead
+# of typing it, exactly as it does for a dead endpoint. bin/fm-control.sh's
+# exit and relaunch accept it as an agent-free endpoint instead of refusing
+# forever on a composer that only looks occupied.
 #
 # Consumers that can overwrite input or confirm delivery must accept only the
 # exact positive proof they require (`empty`), so unrecognized future verdicts
@@ -1190,6 +1232,67 @@ _fm_composer_row_is_omp_status() {  # <trimmed-row>
   fm_composer_idle_matches "$1" "${FM_COMPOSER_OMP_STATUS_RE:-$FM_COMPOSER_OMP_STATUS_RE_DEFAULT}" sensitive
 }
 
+# _fm_composer_row_is_resume_hint: 0 when the trimmed row IS the harness's own
+# session-resume hint (FM_COMPOSER_RESUME_HINT_RE_DEFAULT above).
+_fm_composer_row_is_resume_hint() {  # <trimmed-row>
+  fm_composer_idle_matches "$1" "${FM_COMPOSER_RESUME_HINT_RE:-$FM_COMPOSER_RESUME_HINT_RE_DEFAULT}" insensitive
+}
+
+# _fm_composer_screen_session_gone <plain-screen>: 0 when the screen positively
+# proves the agent session behind this pane has SHUT DOWN, so there is no live
+# composer to protect and no agent to interrupt or exit.
+# Reads the FM_COMPOSER_SCAN_* row results, so it is only valid after
+# _fm_composer_scan_screen has run on the same plain screen; that is exactly
+# the call order fm_composer_classify_screen uses.
+#
+# The proof is the harness's own resume hint (above), read together with the
+# shape scan rather than on the text alone: a hint is only proof when no
+# composer shape lies BELOW it. That one condition separates the two real
+# cases from the two harmless ones without any vendor-specific extra rule:
+#   - the hint written onto a still-rendering TUI (the wedged worker): it sits
+#     on the bare glyph row itself, which IS the last shape, so nothing lies
+#     below it - proof;
+#   - the hint left behind by a TUI that already stopped: the composer and
+#     status rows sit ABOVE it and only the shell prompt follows - proof;
+#   - a live pane whose transcript merely quotes the sentence: its own live
+#     composer is always the bottom-most shape, below the quoted line - no
+#     proof, the normal verdict stands;
+#   - omp's post-shutdown frame with the composer row scrolled away: the
+#     omp status furniture and the hint are all that is left - proof.
+# A human who types the exact vendor sentence into a live composer is
+# indistinguishable from the harness writing it there; that residual case is
+# accepted exactly as the idle-placeholder and braille rules accept theirs, and
+# it is why the verdict it produces (agent-gone) stays a control-plane
+# relaxation and never an injection license.
+_fm_composer_screen_session_gone() {  # <plain-screen>
+  local pane=$1 line trimmed body glyph row=0 hint=-1 shape_last=-1
+  while IFS= read -r line; do
+    trimmed=$line
+    fm_composer_normalize_trim_var trimmed
+    if [ -n "$trimmed" ] && _fm_composer_row_is_resume_hint "$trimmed"; then
+      hint=$row
+    elif fm_composer_leading_agent_glyph_var glyph "$trimmed"; then
+      # The wedged-worker shape: the harness's own stderr write landed BEHIND
+      # its live composer glyph. Strip exactly that glyph - never a prefix
+      # search - and the rest must be the hint on its own.
+      body=${trimmed#*"$glyph"}
+      fm_composer_normalize_trim_var body
+      _fm_composer_row_is_resume_hint "$body" && hint=$row
+    fi
+    row=$((row + 1))
+  done <<EOF
+$pane
+EOF
+  [ "$hint" -ge 0 ] || return 1
+  if [ "$FM_COMPOSER_SCAN_BOX_BOTTOM" -gt "$shape_last" ]; then shape_last=$FM_COMPOSER_SCAN_BOX_BOTTOM; fi
+  if [ "$FM_COMPOSER_SCAN_BARE_ROW" -gt "$shape_last" ]; then shape_last=$FM_COMPOSER_SCAN_BARE_ROW; fi
+  if [ "$FM_COMPOSER_SCAN_LEFTBAR_END" -gt "$shape_last" ]; then shape_last=$FM_COMPOSER_SCAN_LEFTBAR_END; fi
+  if [ "$FM_COMPOSER_SCAN_PI_PAIR_FOUND" = 1 ] && [ "$FM_COMPOSER_SCAN_PI_CLOSE" -gt "$shape_last" ]; then
+    shape_last=$FM_COMPOSER_SCAN_PI_CLOSE
+  fi
+  [ "$hint" -ge "$shape_last" ]
+}
+
 # _fm_composer_row_is_braille_furniture: 0 when the row is non-blank and its
 # non-whitespace content is entirely braille cells (fm_composer_strip_braille
 # above) - an animation row that never counts as typed content and bounds a
@@ -1611,6 +1714,16 @@ EOF
   fi
   plain=$(printf '%s\n' "$screen" | fm_composer_strip_ansi)
   _fm_composer_scan_screen "$plain" "$cy"
+  # SESSION-GONE, ahead of every shape verdict: the harness's own resume hint
+  # is on screen with no composer shape below it, so the session it belonged to
+  # has already ended. This is checked first because the shape the hint was
+  # written onto IS a valid bare composer - the wedge this rule retires was the
+  # hint row classifying as that composer's pending text. A structurally unsafe
+  # (mid-redraw) screen keeps its unknown verdict, where an unreadable pane
+  # must not license a lifecycle action.
+  if [ "$FM_COMPOSER_SCAN_UNSAFE" != 1 ] && _fm_composer_screen_session_gone "$plain"; then
+    printf 'agent-gone'; return 0
+  fi
   if [ -n "$cy" ]; then
     # Cursor mode (tmux): the shape CONTAINING the cursor is the composer.
     if [ "$FM_COMPOSER_SCAN_UNSAFE" = 1 ]; then

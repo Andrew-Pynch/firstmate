@@ -275,8 +275,9 @@ fm_task_inbox_doorbell_line() {  # <record-path>
 # budget, verdict discarded.
 # Returns 0 rang, 1 skipped because the composer PROVENLY holds pending text
 # other than our own doorbell (the watcher re-rings later), 2 the backend send
-# failed, 3 skipped because the endpoint is positively dead or missing (nothing
-# typed; recovery owns the record). No return value is delivery proof; the
+# failed, 3 skipped because the endpoint is positively dead or missing, or its
+# composer proves the session has shut down (nothing typed; recovery owns the
+# record). No return value is delivery proof; the
 # acknowledgement move is the only delivery signal.
 # The skip is deliberately narrow: only an exact `pending` verdict can defer,
 # because there our Enter could submit someone's real half-typed content.
@@ -288,6 +289,10 @@ fm_task_inbox_doorbell_line() {  # <record-path>
 # whose Enter never landed, so on an agent not reported busy it is submitted
 # rather than skipped; skipping it would block every later ring. On both paths
 # a lost first Enter gets one confirmed retry.
+# The classifier's `agent-gone` verdict - the harness's own session-resume hint
+# with no composer below it - is a second, different skip: no agent can ever
+# read a doorbell typed into that session, so the record goes to recovery
+# exactly as a dead endpoint's does instead of spending the ladder on it.
 fm_task_inbox_ring() {  # <backend> <target> <record-path> [expected-label]
   local backend=$1 target=$2 rec=$3 label=${4:-} line cstate verdict
   case "$(fm_backend_agent_state "$backend" "$target" 2>/dev/null || true)" in
@@ -308,6 +313,7 @@ fm_task_inbox_ring() {  # <backend> <target> <record-path> [expected-label]
       fm_backend_send_key "$backend" "$target" Enter "$label" >/dev/null 2>&1 || return 2
       return 0
       ;;
+    agent-gone) return 3 ;;
   esac
   # Accepted residual race: terminal input and Enter are separate delivery
   # steps, so an agent exiting after the liveness check could leave a bare

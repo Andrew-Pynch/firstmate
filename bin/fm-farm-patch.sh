@@ -31,7 +31,10 @@
 #
 # Verbs:
 #   list   [--store <dir>]
-#       Print the named patch set in application order.
+#       Print the named patch set in application order, with its `revision`
+#       (the set's own identity: the verified base plus every patch file's
+#       bytes, in order) and its `content` (the digest `check` prints as its
+#       `set` line for a checkout that carries the set exactly).
 #   check  [--store <dir>] <target>
 #       Compare one checkout against the content the set produces, file by file.
 #       Three hosts that print the same `set` line carry the same patch content.
@@ -59,6 +62,30 @@
 #       to the commit the manifest records as verified, and `--base` is how an
 #       advance onto a newer upstream tip is attempted. Nothing moves until the
 #       whole series applies, so a conflict cannot leave the target half-patched.
+#       A conflict leaves the scratch worktree exactly as it stopped. Resolve
+#       and commit there, regenerate the patch with `record <target> --id <id>
+#       --repo <scratch> --commit HEAD` (record builds in its own scratch, so it
+#       never collides with this one), and remove the scratch only once record
+#       has accepted the patch: until then it holds the only copy of that work.
+#   where  [--store <dir>] [--fleet <home>] [<target>|<host>:<root>]...
+#       Name, for each code root, the checkout it is (root, HEAD, branch or
+#       detached, uncommitted path count) and whether it carries this store's
+#       content: one `where` row per root, ending in `carries`,
+#       `differs <k>/<n>`, `unreadable`, `missing`, or `unreachable`. A
+#       `<host>:<root>` target is read over non-interactive ssh with the same
+#       file identity `check` uses, so the remote host needs git but neither
+#       this tool nor the store. `--fleet <home>` expands to the roots that
+#       home's fleet runs from: the home itself as `primary` (a primary runs its
+#       own home's scripts), and for every second mate in
+#       <home>/data/secondmates.md the code root recorded as code_root= in
+#       <home>/state/<id>.meta, falling back to the registry root. A remote mate
+#       has two more roots in play: the registry root, which fm-on.sh hands the
+#       remote job worker for every parent call, and the checkout
+#       fm-remote-entrypoint.sh resolves to on that host's non-interactive
+#       PATH. Each that names another checkout gets its own `<id>@registry` or
+#       `<id>@entrypoint` row and a `disagree` line, so no root is ever selected
+#       silently. Read-only everywhere. Exits 0 only when every row carries the
+#       set and nothing disagrees. FM_FARM_PATCH_SSH replaces the ssh client.
 #
 # Safety contract, enforced by refusal rather than by repair:
 #   - fast-forward is not possible here by construction (a patch lineage is not a
@@ -69,7 +96,8 @@
 #     base is refused before any work starts.
 #   - a conflict stops at the first failing patch, prints it, leaves the scratch
 #     worktree in place for inspection, and exits non-zero. Nothing is forced,
-#     stashed, 3-way merged, or discarded.
+#     stashed, 3-way merged, or discarded, and a later replay or record refuses
+#     while that scratch exists rather than replacing it.
 #   - the target's previous tip is recorded under refs/farm-patches/previous
 #     before the target moves, so a replay never makes an earlier tip
 #     unreachable.
@@ -81,7 +109,7 @@
 #     together, and a set that does not apply through the recorded patch puts
 #     every one of them back. A record never leaves a patch the set cannot use.
 #
-# Usage: fm-farm-patch.sh [--store <dir>] [--base <rev>] <verb> [<target>]
+# Usage: fm-farm-patch.sh [--store <dir>] [--base <rev>] <verb> [<target>...]
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -93,6 +121,8 @@ STORE="${FM_FARM_PATCH_STORE:-$FM_ROOT/farm-patches}"
 BASE_REV=""
 VERB=""
 TARGET=""
+WHERE_TARGETS=()
+WHERE_FLEET=""
 SLUG=""
 RECORD_ID=""
 RECORD_REPO=""
@@ -110,11 +140,14 @@ RECORD_TMP=""
 
 usage() {
   printf '%s\n' \
-    'usage: fm-farm-patch.sh [--store <dir>] [--base <rev>] list|check|record|replay [<target>]' \
-    '  list              print the ordered, named patch set' \
+    'usage: fm-farm-patch.sh [--store <dir>] [--base <rev>] list|check|record|replay|where [<target>...]' \
+    '  list              print the ordered, named patch set and its revision' \
     '  check <target>    compare a checkout against the content the set produces' \
     '  record <target>   write one patch into the set from a commit or a diff' \
     '  replay <target>   rebuild the patched lineage and point <target> at it' \
+    '  where [<target>|<host>:<root>]...' \
+    '                    name each code root and whether it carries this set' \
+    '  --fleet <home>    where: the home as primary plus every second mate root' \
     '  --store <dir>     the patch store (default: <repo-root>/farm-patches)' \
     '  --base <rev>      the base the series is replayed and verified on' \
     '                    (default: the base the manifest records)' \
@@ -130,7 +163,8 @@ usage() {
     '  --subject <text>  its commit subject when the series is replayed' \
     '  --note <text>     the note stored with the new series base' \
     'A conflict on replay stops there: the target is never touched, and the' \
-    'scratch worktree it names is left in place to resolve and re-run.'
+    'scratch worktree it names is kept as it stopped. Commit the resolution' \
+    'there and regenerate the patch with record before removing it.'
 }
 
 die() { printf 'error: %s\n' "$1" >&2; exit 1; }
@@ -150,9 +184,15 @@ parse_args() {
       --purpose) [ $# -ge 2 ] || die '--purpose needs text'; RECORD_PURPOSE=$2; shift 2 ;;
       --subject) [ $# -ge 2 ] || die '--subject needs text'; RECORD_SUBJECT=$2; shift 2 ;;
       --note) [ $# -ge 2 ] || die '--note needs text'; RECORD_NOTE=$2; shift 2 ;;
+      --fleet) [ $# -ge 2 ] || die '--fleet needs a firstmate home'; WHERE_FLEET=$2; shift 2 ;;
       -h|--help) usage; exit 0 ;;
       -*) die "unknown option: $1" ;;
-      *) if [ -z "$VERB" ]; then VERB=$1; elif [ -z "$TARGET" ]; then TARGET=$1; else die "unexpected argument: $1"; fi; shift ;;
+      *)
+        if [ -z "$VERB" ]; then VERB=$1
+        elif [ "$VERB" = where ]; then WHERE_TARGETS+=("$1")
+        elif [ -z "$TARGET" ]; then TARGET=$1
+        else die "unexpected argument: $1"; fi
+        shift ;;
     esac
   done
   [ -n "$VERB" ] || { usage >&2; exit 1; }
@@ -194,6 +234,12 @@ list_verb() {
   printf 'store\t%s\n' "$STORE"
   printf 'base\t%s\n' "${base:-unknown}"
   printf 'patches\t%s\n' "$count"
+  printf 'revision\t%s\n' "$(store_revision "$manifest")"
+  if [ -f "$STORE/expected.tsv" ]; then
+    printf 'content\t%s\n' "$(expected_content)"
+  else
+    printf 'content\tunknown\n'
+  fi
   i=0
   while [ "$i" -lt "$count" ]; do
     i=$((i + 1))
@@ -202,6 +248,32 @@ list_verb() {
     file=$(patch_field "$manifest" "$i" 4)
     printf '%s\t%s\t%s\n' "$id" "$slug" "$file"
   done
+}
+
+# The set's own identity: the verified base, then every patch's id, slug and
+# exact bytes in application order. Two stores that print the same revision
+# replay the same series; a comment edit in the manifest does not change it.
+store_revision() {  # <manifest>
+  local manifest=$1 count i id slug file
+  count=$(patch_count "$manifest")
+  {
+    printf 'series\t%s\n' "$(series_base "$manifest")"
+    i=0
+    while [ "$i" -lt "$count" ]; do
+      i=$((i + 1))
+      id=$(patch_field "$manifest" "$i" 2)
+      slug=$(patch_field "$manifest" "$i" 3)
+      file=$(patch_field "$manifest" "$i" 4)
+      printf 'patch\t%s\t%s\n' "$id" "$slug"
+      cat "$STORE/$file" 2>/dev/null || printf 'missing\t%s\n' "$file"
+    done
+  } | sha256_stream
+}
+
+# The digest `check` prints as its `set` line for a checkout that carries the
+# set exactly, computed from expected.tsv alone.
+expected_content() {
+  awk 'NF' "$STORE/expected.tsv" | LC_ALL=C sort | sha256_stream
 }
 
 # One file's actual identity in a checkout, as git would store it: the mode, and
@@ -271,11 +343,194 @@ check_verb() {
   [ "$differing" -eq 0 ]
 }
 
+# The half of `where` that reads a root. It is also what runs on a remote host:
+# where_remote ships this function and file_identity by source, so the host
+# needs git and nothing from this repository. <mode> is `content` (the root's
+# HEAD, uncommitted path count, and the identity of every path on stdin) or
+# `entry` (the checkout fm-remote-entrypoint.sh resolves to on this host's
+# non-interactive PATH). Always read-only, and it reports a missing root rather
+# than failing, so one bad row never hides the others.
+where_probe() {  # <mode> <root>
+  local mode=$1 root=$2 resolved entry real path ref
+  PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$PATH"
+  GIT_OPTIONAL_LOCKS=0
+  export PATH GIT_OPTIONAL_LOCKS
+  if [ "$mode" = entry ]; then
+    real=
+    entry=$(command -v fm-remote-entrypoint.sh 2>/dev/null) || entry=
+    if [ -n "$entry" ]; then
+      real=$(realpath "$entry" 2>/dev/null) \
+        || real=$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$entry" 2>/dev/null) \
+        || real=
+    fi
+    if [ -n "$real" ] && resolved=$(cd "$(dirname "$real")/.." 2>/dev/null && pwd -P); then
+      printf 'entry\t%s\n' "$resolved"
+    else
+      printf 'entry\t-\n'
+    fi
+    return 0
+  fi
+  if ! resolved=$(cd "$root" 2>/dev/null && pwd -P) \
+    || ! git -C "$resolved" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    printf 'missing\t%s\n' "$root"
+    return 0
+  fi
+  ref=$(git -C "$resolved" symbolic-ref --quiet --short HEAD 2>/dev/null) || ref=detached
+  printf 'root\t%s\n' "$resolved"
+  printf 'head\t%s\t%s\n' "$(git -C "$resolved" rev-parse HEAD)" "$ref"
+  printf 'dirty\t%s\n' "$(git -C "$resolved" status --porcelain | awk 'END { print NR + 0 }')"
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    printf 'id\t%s\n' "$(file_identity "$resolved" "$path")"
+  done
+}
+
+# Run where_probe on <host> over non-interactive ssh. The probe travels as
+# base64 so no login shell (zsh on some hosts) re-parses it, and the paths to
+# identify travel on stdin. bash runs with --norc and no BASH_ENV because bash
+# started under sshd reads ~/.bashrc even for -c, and a .bashrc that starts
+# another shell would then execute those paths as commands.
+where_remote() {  # <host> <mode> <root>
+  local host=$1 mode=$2 root=$3 src b64
+  case "$host$root" in *"'"*) printf 'missing\t%s\n' "$root"; return 0 ;; esac
+  src="$(declare -f file_identity where_probe); where_probe \"\$@\""
+  b64=$(printf '%s' "$src" | base64 | tr -d '\n')
+  # shellcheck disable=SC2029 # the probe is deliberately expanded here and decoded there.
+  "${FM_FARM_PATCH_SSH:-ssh}" -o BatchMode=yes -o ConnectTimeout=10 "$host" \
+    "s=\$(printf %s '$b64' | base64 -d 2>/dev/null) || s=\$(printf %s '$b64' | base64 -D); exec env BASH_ENV= bash --norc --noprofile -c \"\$s\" fm-farm-where '$mode' '$root'"
+}
+
+WHERE_OK=1
+WHERE_LAST_ROOT=""
+WHERE_HOST=""
+
+# One `where` row: label, host, resolved root, HEAD, branch or detached, the
+# uncommitted path count, the content digest (`check`'s `set` line), and the
+# verdict against this store.
+where_row() {  # <label> <host, empty for this host> <root>
+  local label=$1 host=$2 root=$3 expected=$STORE/expected.tsv out rc=0
+  local shown resolved head ref dirty ids content differing total read_count verdict
+  WHERE_LAST_ROOT=$root
+  shown=${host:-$WHERE_HOST}
+  if [ -n "$host" ]; then
+    out=$(cut -f3- "$expected" | where_remote "$host" content "$root" 2>/dev/null) || rc=$?
+  else
+    out=$(cut -f3- "$expected" | (where_probe content "$root")) || rc=$?
+  fi
+  if [ "$rc" -ne 0 ] || [ -z "$out" ]; then
+    printf 'where\t%s\t%s\t%s\tunreachable\n' "$label" "$shown" "$root"
+    WHERE_OK=0
+    return 0
+  fi
+  if printf '%s\n' "$out" | grep -q '^missing	'; then
+    printf 'where\t%s\t%s\t%s\tmissing\n' "$label" "$shown" "$root"
+    WHERE_OK=0
+    return 0
+  fi
+  resolved=$(printf '%s\n' "$out" | sed -n 's/^root	//p')
+  head=$(printf '%s\n' "$out" | sed -n 's/^head	//p' | cut -f1)
+  ref=$(printf '%s\n' "$out" | sed -n 's/^head	//p' | cut -f2)
+  dirty=$(printf '%s\n' "$out" | sed -n 's/^dirty	//p')
+  ids=$(printf '%s\n' "$out" | sed -n 's/^id	//p')
+  WHERE_LAST_ROOT=$resolved
+  content=$(printf '%s\n' "$ids" | LC_ALL=C sort | sha256_stream)
+  total=$(awk 'NF' "$expected" | awk 'END { print NR + 0 }')
+  read_count=$(printf '%s\n' "$ids" | awk 'NF' | awk 'END { print NR + 0 }')
+  differing=$(printf '%s\n' "$ids" | awk -F'\t' 'NR == FNR { if (NF) e[$0] = 1; next } NF && !($0 in e) { n++ } END { print n + 0 }' "$expected" -)
+  if [ "$read_count" -ne "$total" ]; then
+    verdict="unreadable $read_count/$total"
+    WHERE_OK=0
+  elif [ "$differing" -eq 0 ]; then
+    verdict=carries
+  else
+    verdict="differs $differing/$total"
+    WHERE_OK=0
+  fi
+  [ "$dirty" = 0 ] && dirty=clean || dirty="dirty $dirty"
+  printf 'where\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$label" "$shown" "$resolved" "${head:0:12}" "$ref" "$dirty" "$content" "$verdict"
+}
+
+# --fleet: the home itself runs as the primary, and every second mate runs from
+# its recorded code root. A remote mate has two more roots in play: the
+# registry root, which fm-on.sh hands the remote job worker for every parent
+# call, and the checkout fm-remote-entrypoint.sh resolves to on that host's
+# PATH. Each one that is not the recorded root is a second runtime, so it gets
+# its own row and a `disagree` line instead of being chosen silently.
+where_fleet() {  # <home>
+  local home reg line id host recorded registry_root entry
+  home=$(resolved_existing_dir "$1") || die "fleet home is not a directory: $1"
+  # shellcheck source=bin/fm-backend.sh
+  . "$SCRIPT_DIR/fm-backend.sh"
+  # shellcheck source=bin/fm-secondmate-registry-lib.sh
+  . "$SCRIPT_DIR/fm-secondmate-registry-lib.sh"
+  where_row primary "" "$home"
+  reg=$home/data/secondmates.md
+  [ -f "$reg" ] || return 0
+  while IFS= read -r line <&3 || [ -n "$line" ]; do
+    case "$line" in '- '*) ;; *) continue ;; esac
+    if ! secondmate_registry_parse_line "$line"; then
+      printf 'unparsed\t%s\n' "$line"
+      WHERE_OK=0
+      continue
+    fi
+    id=$SECONDMATE_REGISTRY_ID
+    recorded=$(fm_meta_get "$home/state/$id.meta" code_root)
+    if [ "$SECONDMATE_REGISTRY_REMOTE" -eq 1 ]; then
+      host=$SECONDMATE_REGISTRY_HOST
+      registry_root=$SECONDMATE_REGISTRY_ROOT
+      [ -n "$recorded" ] || recorded=$registry_root
+      where_row "$id" "$host" "$recorded"
+      recorded=$WHERE_LAST_ROOT
+      if [ "$registry_root" != "$recorded" ]; then
+        where_row "$id@registry" "$host" "$registry_root"
+        if [ "$WHERE_LAST_ROOT" != "$recorded" ]; then
+          printf 'disagree\t%s\trecorded %s\tregistry %s\n' "$id" "$recorded" "$WHERE_LAST_ROOT"
+          WHERE_OK=0
+        fi
+      fi
+      entry=$(where_remote "$host" entry - </dev/null 2>/dev/null | sed -n 's/^entry	//p') || entry=
+      if [ -n "$entry" ] && [ "$entry" != - ] && [ "$entry" != "$recorded" ]; then
+        printf 'disagree\t%s\trecorded %s\tentrypoint %s\n' "$id" "$recorded" "$entry"
+        WHERE_OK=0
+        where_row "$id@entrypoint" "$host" "$entry"
+      fi
+    else
+      [ -n "$recorded" ] || recorded=$SECONDMATE_REGISTRY_HOME
+      where_row "$id" "" "$recorded"
+    fi
+  done 3< "$reg"
+}
+
+where_verb() {
+  local manifest target
+  manifest=$(manifest_file)
+  [ -f "$STORE/expected.tsv" ] || die "the store has no expected.tsv; run replay to record what the set produces"
+  command -v shasum >/dev/null 2>&1 || command -v sha256sum >/dev/null 2>&1 \
+    || die 'neither shasum nor sha256sum is available to identify the checked content'
+  [ -n "$WHERE_FLEET" ] || [ "${#WHERE_TARGETS[@]}" -gt 0 ] \
+    || die 'where needs --fleet <home> or at least one target'
+  WHERE_HOST=$(hostname -s 2>/dev/null || hostname)
+  printf 'store\t%s\n' "$STORE"
+  printf 'revision\t%s\tbase %s\tpatches %s\n' "$(store_revision "$manifest")" \
+    "$(series_base "$manifest")" "$(patch_count "$manifest")"
+  printf 'content\t%s\n' "$(expected_content)"
+  [ -z "$WHERE_FLEET" ] || where_fleet "$WHERE_FLEET"
+  for target in ${WHERE_TARGETS[@]+"${WHERE_TARGETS[@]}"}; do
+    case "$target" in
+      [A-Za-z0-9]*:/*) where_row "$target" "${target%%:*}" "${target#*:}" ;;
+      *) where_row "$target" "" "$target" ;;
+    esac
+  done
+  [ "$WHERE_OK" = 1 ]
+}
+
 # The scratch worktree is a sibling of the target so a conflicted run is easy to
-# find and inspect. It is never force-removed: a stale one means an earlier run
-# stopped on a conflict, and that state is for a human to read first.
-scratch_path() {  # <target>
-  printf '%s.fm-patch-scratch\n' "${1%/}"
+# find and inspect. A replay's is never force-removed: a stale one means an
+# earlier run stopped on a conflict, and that state is for a human to read
+# first. `record` uses its own name so it never collides with that state.
+scratch_path() {  # <target> [scratch|record]
+  printf '%s.fm-patch-%s\n' "${1%/}" "${2:-scratch}"
 }
 
 # The base is the recorded, verified one by default, so the common operation -
@@ -340,7 +595,10 @@ replay_verb() {
 
   if ! apply_series "$scratch" "$base" "$manifest"; then
     printf 'error: patch %s (%s) did not apply to %s; the target is untouched\n' "$APPLY_CONFLICT_ID" "$APPLY_CONFLICT_SLUG" "$base" >&2
-    printf 'error: inspect and resolve in the scratch worktree, then remove it and run replay again: %s\n' "$scratch" >&2
+    printf 'error: the scratch worktree is kept as it stopped: %s\n' "$scratch" >&2
+    printf 'error: resolve and commit there, then regenerate the patch with: %s --store %s --base %s record %s --id %s --slug %s --repo %s --commit HEAD\n' \
+      "$0" "$STORE" "$base" "$target" "$APPLY_CONFLICT_ID" "$APPLY_CONFLICT_SLUG" "$scratch" >&2
+    printf 'error: remove the scratch only once record has accepted the regenerated patch; until then it holds the only copy of the resolution\n' >&2
     exit 1
   fi
   tip=$APPLY_TIP
@@ -467,12 +725,14 @@ record_verb() {
   [ -z "$RECORD_DIFF" ] && [ -z "$RECORD_COMMIT" ] \
     && die 'record needs --diff <file|-> or --commit <rev>'
 
-  # A previous run that stopped on a conflict left its scratch for inspection,
-  # and this run would build its own in the same place. Refuse before writing
-  # anything rather than clobbering the unresolved state.
-  scratch=$(scratch_path "$target")
+  # record builds in its own scratch, beside the one a conflicted replay keeps,
+  # so a resolution committed in the replay's scratch can be recorded straight
+  # from there (--repo <that scratch> --commit HEAD) without touching it. A
+  # stale record scratch means an earlier record was interrupted: refuse before
+  # writing anything rather than clobbering it.
+  scratch=$(scratch_path "$target" record)
   [ -e "$scratch" ] \
-    && die "scratch worktree already exists (a previous run stopped here for inspection): $scratch"
+    && die "record scratch worktree already exists (an earlier record was interrupted): $scratch"
 
   RECORD_TMP=$(mktemp -d "${TMPDIR:-/tmp}/fm-farm-patch-record.XXXXXX") \
     || die 'could not create a working directory'
@@ -629,6 +889,7 @@ main() {
     check) [ -n "$TARGET" ] || die 'check needs a target checkout'; check_verb "$TARGET" ;;
     record) [ -n "$TARGET" ] || die 'record needs a target checkout'; record_verb "$TARGET" ;;
     replay) [ -n "$TARGET" ] || die 'replay needs a target checkout'; replay_verb "$TARGET" ;;
+    where) where_verb ;;
     *) usage >&2; exit 1 ;;
   esac
 }

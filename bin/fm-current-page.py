@@ -316,7 +316,7 @@ def open_decisions():
 def parse_curated(path):
     """The keeper's curated JSON; bin/fm-current-page.sh's header owns the field list."""
     empty = {"checked": None, "needs": [], "why": {}, "mates": {}, "plain": {}, "hide": set(),
-             "initiatives": [], "completed": [], "links": [], "wins": [], "factory": [], "error": ""}
+             "initiatives": [], "completed": [], "links": [], "wins": [], "factory": [], "batches": [], "error": ""}
     try:
         with open(path, encoding="utf-8") as fh:
             data = json.load(fh)
@@ -344,6 +344,7 @@ def parse_curated(path):
             "wins": [n for n in data.get("wins") or [] if isinstance(n, dict) and str(n.get("t", "")).strip()
                      and re.match(r"https?://", str(n.get("url", "")))][:10],
             "factory": [n for n in data.get("factory") or [] if isinstance(n, dict) and str(n.get("t", "")).strip()][:8],
+            "batches": [n for n in data.get("batches") or [] if isinstance(n, dict) and n.get("id")],
             "error": ""}
 
 
@@ -954,6 +955,11 @@ background:linear-gradient(90deg,var(--alert-dim),rgba(255,51,102,.04));border-r
 .fx-w .answer{margin-top:5px;max-width:560px}
 .fx-u{flex:none;font:11.5px var(--mono);color:var(--data);white-space:nowrap}
 .fx-a{flex:none;display:flex;gap:10px;align-items:center}.fx-a>a{font:12px var(--mono)}
+.overlay.bt .box{width:min(880px,96vw);max-width:none;max-height:88vh}.overlay.bt h3{font:600 12px var(--mono);letter-spacing:.1em;
+text-transform:uppercase;color:var(--data);margin:16px 0 6px;border-bottom:1px solid var(--acc-dim);padding-bottom:3px}
+.bt-intro{color:var(--fg2);font-size:13px;margin:0 0 6px}.bt-row{padding:7px 0;border-top:1px solid rgba(255,255,255,.06)}
+.bt-q{font:600 14px var(--sans)}.bt-why{color:var(--fg2);font-size:13px;margin:2px 0 5px}
+.bt .answer.compact .ans-btn:not(.rec){color:var(--fg2);border-color:var(--dim)}.bt-close{text-align:right;margin:12px 0 0;font:12px var(--mono)}
 .fx-k{flex:none;font:11px var(--mono);color:var(--dim);user-select:all}
 .answer.compact{margin:0;padding:0;border:0;background:none;display:flex;align-items:center;gap:8px}
 .answer.compact .ans-opts{margin:0;gap:6px;flex-wrap:nowrap}.answer.compact .ans-btn{padding:2px 10px;font-size:12px}
@@ -1051,7 +1057,9 @@ document.addEventListener("click",ev=>{const q=ev.target.closest&&ev.target.clos
 function apply(text){const doc=new DOMParser().parseFromString(text,"text/html");
  const typed={},focus=(inputs().find(([,i])=>i===document.activeElement)||[])[0];inputs().forEach(([k,i])=>{if(i.value)typed[k]=i.value;});
  const keys=()=>new Set($$("#needs-now .it").map(x=>x.dataset.key)),before=keys(),done=$$("#done .it").length;
+ const opened=$$(".overlay:not([hidden])").map(o=>[o.id,($(".box",o)||{}).scrollTop||0]);
  $$("[data-swap]").forEach(el=>{const n=doc.getElementById(el.id);if(n)el.replaceWith(document.importNode(n,true));});
+ opened.forEach(([id,top])=>{const o=document.getElementById(id);if(o){o.hidden=false;const b=$(".box",o);if(b)b.scrollTop=top;}});
  document.body.dataset.rendered=doc.body.dataset.rendered;document.title=doc.title;bind();const after=keys();
  const gone=[...before].filter(k=>!after.has(k)).length,fresh=[...after].filter(k=>!before.has(k));
  fresh.forEach(k=>{const x=$$("#needs-now .it").find(y=>y.dataset.key===k);if(x)x.classList.add("flash");});
@@ -1135,6 +1143,8 @@ document.addEventListener("click",ev=>{const b=ev.target.closest("button.copy-co
   copyText(t).then(()=>{b.textContent="Copied";toast("COPIED");},()=>{b.textContent="Copy failed";});return;}
  const ov=ev.target.closest(".overlay");if(ov&&!ev.target.closest(".box")){ov.hidden=true;return;}
  if(ev.target.closest("#logbtn")){$("#log").hidden=false;return;}
+ const bo=ev.target.closest("a.bt-open");if(bo){ev.preventDefault();const o=document.getElementById(bo.getAttribute("href").slice(1));if(o)o.hidden=false;return;}
+ if(ev.target.closest(".bt-close a")){ev.preventDefault();ev.target.closest(".overlay").hidden=true;return;}
  const hd=ev.target.closest(".pane>header");
  if(hd&&MOB.matches){const p=hd.parentElement;if(!S.fold.delete(p.id))S.fold.add(p.id);folds();return;}
  const ab=ev.target.closest(".ans-btn");
@@ -1155,6 +1165,7 @@ document.addEventListener("wheel",ev=>{const s=ev.target.closest&&ev.target.clos
 q.addEventListener("input",()=>filter(q.value));
 MOB.addEventListener("change",folds);
 bind();score();show();clock();setInterval(clock,1000);setInterval(tick,30000);setInterval(refresh,10000);poll();setInterval(poll,10000);
+if(/^#batch-[\w-]+$/.test(location.hash)){const o=document.getElementById(location.hash.slice(1));if(o)o.hidden=false;}
 """
 
 
@@ -1335,6 +1346,14 @@ def render(paths, reason):
                  ("r", "refresh now (it also refreshes itself every 10 s)"), ("?", "this help")]
     keys_help = "".join(f"<kbd>{e(k)}</kbd><span>{e(v)}</span>" for k, v in help_rows)
     # Factory blocked on you: only the calls whose answer releases running work, each with its answer inline.
+    def band_link(lk):
+        """An external link opens a tab; a #batch-<id> link opens that batch overlay on this page."""
+        url = str(lk["url"])
+        label = e(str(lk.get("label") or fm_md.link_label(url)))
+        if url.startswith("#"):
+            return f'<a href="{e(url)}" class="bt-open">{label} &#9662;</a>'
+        return f'<a href="{e(url)}" target="_blank" rel="noopener">{label} &#8599;</a>'
+
     def factory_div(f):
         task = str(f.get("task") or "")
         if task and held is not None and (task not in calls or calls[task]["deferred"]):
@@ -1343,8 +1362,8 @@ def render(paths, reason):
         opts = [o for o in f.get("options") or [] if isinstance(o, str) and o.strip()] if isinstance(f.get("options"), list) else []
         # Buttons sit inline; a row without options takes a typed answer in its opened detail.
         ans = answer_for(task, title, why, opts, f.get("rec") if opts else None, compact=bool(opts), derive=False)
-        links = "".join(f'<a href="{e(str(lk["url"]))}" target="_blank" rel="noopener">{e(str(lk.get("label") or fm_md.link_label(str(lk["url"]))))} &#8599;</a>'
-                        for lk in f.get("links") or [] if isinstance(lk, dict) and re.match(r"https://", str(lk.get("url", ""))))
+        links = "".join(band_link(lk) for lk in f.get("links") or []
+                        if isinstance(lk, dict) and re.match(r"https://|#batch-[\w-]+$", str(lk.get("url", ""))))
         inline, below = (ans, "") if opts else ("", ans)
         detail = f'<div class="fx-w">{fm_md.inline(why)}{below}</div>' if why or below else ""
         key = str(f.get("key") or task or answers.answer_key(task, title))
@@ -1353,6 +1372,31 @@ def render(paths, reason):
                 f'<span class="fx-u">&#8594; {e(str(f.get("unblocks", "")))}</span><span class="fx-a">{inline}{links}</span>'
                 f'<code class="fx-k" title="key">{e(key)}</code>{detail}</div>')
     factory = [d for d in (factory_div(f) for f in cur["factory"]) if d]
+
+    # Batches: many small calls answered in one sitting, in an overlay a band link opens (#batch-<id>).
+    def batch_overlay(b):
+        bid = re.sub(r"[^\w-]", "", str(b.get("id") or ""))
+        if not bid:
+            return ""
+        parts = [f'<h2>{e(str(b.get("title") or bid))}</h2>']
+        if b.get("intro"):
+            parts.append(f'<p class="bt-intro">{fm_md.inline(str(b["intro"]))}</p>')
+        for sec in b.get("sections") or []:
+            if not isinstance(sec, dict):
+                continue
+            parts.append(f'<h3>{e(str(sec.get("title") or ""))}</h3>')
+            for row in sec.get("rows") or []:
+                if not isinstance(row, dict) or not str(row.get("t", "")).strip():
+                    continue
+                key, title = str(row.get("key") or ""), str(row["t"])
+                opts = [o for o in row.get("options") or [] if isinstance(o, str) and o.strip()]
+                ans = answer_for(key, title, str(row.get("why") or ""), opts, row.get("rec"), compact=bool(opts), derive=False)
+                parts.append(f'<div class="bt-row"><div class="bt-q">{e(title)}</div>'
+                             + (f'<div class="bt-why">{fm_md.inline(str(row["why"]))}</div>' if row.get("why") else "")
+                             + f'{ans}</div>')
+        return (f'<div class="overlay bt" id="batch-{bid}" hidden data-swap><div class="box">{"".join(parts)}'
+                f'<p class="bt-close"><a href="#">close (Esc)</a></p></div></div>')
+    batches = "".join(batch_overlay(b) for b in cur["batches"])
     wins = "".join(
         f'<a class="win" href="{e(str(w["url"]))}" target="_blank" rel="noopener"><b>{e(str(w["t"]))}</b>'
         f'<span class="why">{e(str(w.get("why", "")))}</span>'
@@ -1402,6 +1446,7 @@ def render(paths, reason):
         '<span class="sp"></span><span class="lbl">cleared this session <b id="cleared">0</b></span></div>'
         f'<div class="overlay" id="help" hidden><div class="box"><h2>Keys</h2><div class="keys">{keys_help}</div></div></div>'
         f'<div class="overlay" id="log" hidden data-swap><div class="box"><h2>Keeper log</h2>{notes_html}</div></div>'
+        + batches +
         '<div id="toasts"></div>'
         f"<script>{PAGE_JS}</script>{fm_md.LINEAR_CARD}</body></html>")
     if answers_on:   # decisions first, so a tap on the new page never meets the previous render's revisions

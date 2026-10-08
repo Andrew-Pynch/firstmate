@@ -119,9 +119,16 @@
 #          "options": answer buttons inline (same answer path as Needs you);
 #          a row without options takes a typed answer instead; "why": the
 #          detail a click on the question opens (with that typed answer);
-#          "links": [{"label", "url"}] when the answer happens elsewhere. A row
+#          "links": [{"label", "url"}] when the answer happens elsewhere; a
+#          "#batch-<id>" url opens that batch on the page instead. A row
 #          tied to a "task" leaves the band when that row stops being an open
 #          captain hold. Each row prints its "key" (default: "task").
+#   batches [{"id", "title", "intro", "sections": [{"title", "rows": [{"t", "why",
+#            "key", "options", "rec"}]}]}]
+#          many small calls answered in one sitting, in an overlay that a band
+#          link "#batch-<id>" (or current.html#batch-<id>) opens. Each row
+#          answers like a Needs-you item, its "key" as the answer's row; the
+#          recommended button shows green, the others grey; no options = text.
 #   initiatives [{"id", "title", "match"}]
 #          "match": {"project_tokens": [...], "linear_projects": [...],
 #                    "title_keywords": [...]} uses OR within and across lists.

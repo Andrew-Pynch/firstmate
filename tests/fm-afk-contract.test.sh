@@ -22,8 +22,17 @@ make_home() {  # <name> -> prints the home dir
 }
 
 contract() {  # <home> <args...>
-  local home=$1
+  local home=$1 arg has_objective=0
   shift
+  if [ "${1:-}" = enter ] && [ "${FM_TEST_NO_OBJECTIVE:-0}" != 1 ]; then
+    for arg in "$@"; do
+      [ "$arg" != --objective ] || has_objective=1
+    done
+    if [ "$has_objective" -eq 0 ]; then
+      shift
+      set -- enter --objective 'the accepted objective for this window' "$@"
+    fi
+  fi
   FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$CONTRACT" "$@"
 }
 
@@ -204,7 +213,7 @@ test_same_turn_entry_pre_authorizes_nothing_on_the_never_set() {
   out=$(contract "$home" enter --words "$words" 2>&1) || fail "never-set entry failed: $out"
   [ "$(contract "$home" words)" = "$words" ] || fail "the never-set words were not recorded verbatim"
   keys=$(sed -n 's/^\([a-z_]*\):.*/\1/p' "$home/state/.afk-contract" | tr '\n' ' ')
-  [ "$keys" = 'version entered entered_epoch expected_return reach_channels reach_announced spend_max_concurrent_workers confirmed confirmed_epoch words ' ] \
+  [ "$keys" = 'version entered entered_epoch objective expected_return reach_channels reach_announced spend_max_concurrent_workers confirmed confirmed_epoch words ' ] \
     || fail "the record carries fields beyond its fixed schema: $keys"
   assert_contains "$out" 'Destructive, irreversible, and security-sensitive actions are never pre-authorizable, whatever the words say.' \
     'the same-turn announcement must restate the never-set'
@@ -284,6 +293,7 @@ SH
     || fail "failed final publication left a duplicate superseded mandate"
   pass "a failed final replacement publication rolls back its superseded archive"
 }
+
 
 test_validation_rejects_damaged_words_blocks() {
   local mode home record out rc
@@ -560,6 +570,69 @@ test_record_changes_refuse_while_a_reader_holds_the_lock() {
   pass "enter and archive refuse while the record is locked, and proceed once it clears"
 }
 
+
+# Entry requires a concrete objective. A refused entry writes nothing, leaves a
+# standing record untouched, and needs no captain step: restating the objective
+# in the same turn enters at once.
+test_empty_objective_refuses_entry_and_restates_cleanly() {
+  local home out rc before
+  home=$(make_home empty-objective)
+  set +e
+  out=$(FM_TEST_NO_OBJECTIVE=1 contract "$home" enter --words 'merge when green' 2>&1)
+  rc=$?
+  set -e
+  [ "$rc" -eq 4 ] || fail "enter without an objective must return 4 (rc=$rc): $out"
+  assert_contains "$out" 'no concrete accepted objective' 'the refusal did not name the empty mandate'
+  [ ! -e "$home/state/.afk-contract" ] || fail "a refused entry wrote an active posture"
+  [ "$(contract "$home" state)" = absent ] || fail "a refused entry changed the posture state"
+  contract "$home" enter --objective 'ship the windows fix' --words 'merge when green' >/dev/null 2>&1 \
+    || fail "the restated objective was refused"
+  [ "$(contract "$home" objective)" = 'ship the windows fix' ] || fail "the restated objective was not recorded"
+  before=$(cat "$home/state/.afk-contract")
+  set +e
+  out=$(FM_TEST_NO_OBJECTIVE=1 contract "$home" enter --words 'replacement words' 2>&1)
+  rc=$?
+  set -e
+  [ "$rc" -eq 4 ] || fail "a replacement without an objective must return 4 (rc=$rc): $out"
+  [ "$(cat "$home/state/.afk-contract")" = "$before" ] || fail "a refused replacement changed the standing record"
+  FM_TEST_NO_OBJECTIVE=1 contract "$home" enter >/dev/null 2>&1 || fail "a refresh with no words must not need an objective"
+  [ "$(contract "$home" state)" = "confirmed $(contract "$home" field entered)" ] || fail "state did not report the standing record"
+  pass "enter refuses an empty objective without recording anything, then accepts a restatement"
+}
+
+# The durable objective survives its scalar codec and archive unchanged.
+test_objective_round_trips_and_archives() {
+  local home objective out archived
+  home=$(make_home objective-roundtrip)
+  objective=$'Ship the windows fix;\tkeep the scope\\bounded'
+  out=$(contract "$home" enter --objective "$objective" --words 'merge when green') \
+    || fail "the objective entry failed: $out"
+  assert_contains "$out" 'objective: Ship the windows fix; keep the scope\bounded' 'the read-back did not render the objective on one line'
+  assert_contains "$out" 'Objective: Ship the windows fix; keep the scope\bounded.' 'the announcement did not name the objective'
+  [ "$(contract "$home" objective)" = "$objective" ] || fail "the objective did not round-trip"
+  archived=$(contract "$home" archive) || fail "archiving the objective record failed"
+  [ "$(contract "$home" objective --path "$archived")" = "$objective" ] || fail "the archive lost the objective"
+  pass "the objective round-trips verbatim and survives archival"
+}
+
+# A live record from before the field existed stays readable. Only an entry
+# that writes a new record requires the objective.
+test_missing_objective_on_an_existing_record_stays_readable() {
+  local home record out
+  home=$(make_home pre-objective-record)
+  contract "$home" enter --objective 'the original objective' >/dev/null 2>&1 || fail "the fixture entry failed"
+  record="$home/state/.afk-contract"
+  grep -v '^objective: ' "$record" > "$home/pre-objective"
+  mv "$home/pre-objective" "$record"
+  contract "$home" validate >/dev/null || fail "a pre-objective live record must still validate"
+  [ -z "$(contract "$home" objective)" ] || fail "a missing objective did not read as absent"
+  out=$(contract "$home" readback) || fail "the pre-objective read-back failed: $out"
+  assert_contains "$out" 'objective: (none recorded)' 'the read-back did not surface the absent objective'
+  pass "a pre-objective live record remains readable and reports the objective absent"
+}
+test_empty_objective_refuses_entry_and_restates_cleanly
+test_objective_round_trips_and_archives
+test_missing_objective_on_an_existing_record_stays_readable
 test_readback_renders_words_verbatim_with_the_record_scalars
 test_words_preserve_final_newline_shape
 test_enter_writes_a_v2_record_in_one_step_and_announces_hold_for_return

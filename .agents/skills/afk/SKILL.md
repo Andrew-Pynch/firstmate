@@ -20,8 +20,9 @@ Hold-for-return is the default and the only reach profile this release records: 
 ## Entering: `/afk [words]`
 
 1. **Write the record first, in this same turn.**
-   Before any other work, run `bin/fm-afk-launch.sh enter --words-file <path> [--expected-return <UTC ISO 8601>] [--spend <n>]` (or `--words <text>`).
+   Before any other work, run `bin/fm-afk-launch.sh enter --objective <text> --words-file <path> [--expected-return <UTC ISO 8601>] [--spend <n>]` (or `--words <text>`).
    It writes `state/.afk-contract` at once, with no separate confirmation step, then prints the entry announcement and the record's read-back.
+   `--objective` is the concrete accepted objective you take from the captain's words, stated in one line; an entry without one is refused and writes nothing, so restate it and enter again in the same turn rather than asking for a go.
    The words are the whole mandate: `bin/fm-afk-contract.sh` records them exactly as given, with no clause fields, verbs, ids, or merge-grant list, and by the captain's mandate no parser, tokenizer, classifier, or grammar reads them anywhere.
    Read `bin/fm-afk-contract.sh --help` for the flags rather than memorizing them.
    Plain `/afk` with no words is a valid entry with no mandate; the announcement says no instructions were recorded.
@@ -57,6 +58,14 @@ Hold-for-return is the default and the only reach profile this release records: 
 - On Pi, main is parked and the supervision branch handles every safe actionable wake under main's standing authority, through the same guarded scripts main would use: any pull request green at its live head may merge (which one the words meant is the branch's reading), queued work whose blockers cleared - already queued, or filed by the branch because the words explicitly call for it - dispatches within the spend cap, and a decision is answered with the captain's own pre-stated answer or under `ask-user-authority`.
   Anything else holds for the return, a red merge never proceeds while away, local-only landing always waits for the captain, and only a wake the branch declines (including a broken branch or unsafe scan) or a watcher failure wakes main (`docs/pi-supervision-branch.md` "Postures").
 - The session-start digest reports the posture under its AFK subsection, so a restart re-enters the posture from the record, not from memory.
+  It re-prints the accepted objective from that durable record, so neither a compaction nor a fresh session can turn an aim nobody recorded into an away mandate.
+  `bin/fm-afk-contract.sh state` and `objective` are the reads both surfaces use; the objective is never re-derived from conversation memory.
+
+## The objective, and OMP's goal
+
+The objective is state owned here, in the durable record, and it is deliberately not a completion gate: recording it never grants authority and never guarantees anything is done correctly.
+OMP's own goal feature (`/goal set`, `goal.enabled`) is a separate session-scoped steering mechanism that belongs to the harness, and this skill neither reads nor drives it: firstmate never enables a global goal setting, never auto-enters goal mode, and never treats a goal as authority or as proof.
+When the captain wants that steering, they run `/goal set` themselves with the same objective; the recorded objective stays the owner of what the away window was for, because that is what survives compaction and what the return brief re-prints.
 
 ## How to exit: the return
 

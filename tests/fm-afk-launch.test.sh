@@ -46,7 +46,7 @@ GLOBAL_CLEANUP() {
 trap GLOBAL_CLEANUP EXIT
 
 enter_posture() {  # <home>
-  FM_HOME="$1" FM_STATE_OVERRIDE="$1/state" "$CONTRACT" enter >/dev/null 2>&1
+  FM_HOME="$1" FM_STATE_OVERRIDE="$1/state" "$CONTRACT" enter --objective 'the accepted objective for this window' >/dev/null 2>&1
 }
 
 # ---------------------------------------------------------------------------
@@ -59,7 +59,7 @@ unit_enter_records_the_posture_in_one_step_without_a_daemon() {
   local st out rc
   st=$(mktemp -d "${TMPDIR:-/tmp}/fm-afk-enter.XXXXXX")
   mkdir -p "$st/state"
-  out=$(FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" "$LAUNCH" enter \
+  out=$(FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" "$LAUNCH" enter --objective 'the accepted objective for this window' \
     --words 'merge the windows fix when green' --expected-return 2026-09-08T08:00Z --spend 2 2>&1)
   rc=$?
   if [ "$rc" -eq 0 ] && [ -f "$st/state/.afk-contract" ] && [ ! -e "$st/state/.afk-contract.proposed" ] \
@@ -74,7 +74,7 @@ unit_enter_records_the_posture_in_one_step_without_a_daemon() {
   else
     fail "enter: record, read-back, or daemon state wrong (rc=$rc): $out"
   fi
-  out=$(FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" "$LAUNCH" enter --words 'merge it' --grant fix-windows 2>&1)
+  out=$(FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" "$LAUNCH" enter --objective 'the accepted objective for this window' --words 'merge it' --grant fix-windows 2>&1)
   rc=$?
   if [ "$rc" -eq 2 ] && printf '%s' "$out" | grep -F -- '--grant was retired' >/dev/null \
     && [ "$(FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" "$CONTRACT" words)" = 'merge the windows fix when green' ]; then
@@ -83,7 +83,7 @@ unit_enter_records_the_posture_in_one_step_without_a_daemon() {
     fail "enter: --grant was not refused by name (rc=$rc): $out"
   fi
   printf 'schema\tfm-afk-return.v1\nphase\tblocked\n' > "$st/state/.afk-return-catchup"
-  if FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" "$LAUNCH" enter --words 'merge task a PR when green' >/dev/null 2>&1; then
+  if FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" "$LAUNCH" enter --objective 'the accepted objective for this window' --words 'merge task a PR when green' >/dev/null 2>&1; then
     fail "enter: accepted a new mandate while the prior return catch-up was pending"
   elif [ "$(FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" "$CONTRACT" words)" = 'merge the windows fix when green' ]; then
     pass "enter: refuses while the prior return catch-up is pending"
@@ -174,7 +174,7 @@ unit_daemon_entry_requires_the_record() {
   else
     fail "daemon entry: started without a record or the refusal was unclear (rc=$rc): $out"
   fi
-  if FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" "$LAUNCH" enter --words 'merge task a PR when green' >/dev/null 2>&1 \
+  if FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" "$LAUNCH" enter --objective 'the accepted objective for this window' --words 'merge task a PR when green' >/dev/null 2>&1 \
     && FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" "$LAUNCH" start-native >/dev/null 2>&1 \
     && [ -e "$st/state/.afk" ]; then
     pass "daemon entry: enter then start-native run back to back with no confirmation between them"
@@ -1231,6 +1231,7 @@ e2e_tmux() {
   tmux kill-session -t "$cap_session" 2>/dev/null || true
   rm -rf "$home_tmp" 2>/dev/null || true
 }
+
 
 unit_clear_stale
 unit_enter_records_the_posture_in_one_step_without_a_daemon

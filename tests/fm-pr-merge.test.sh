@@ -430,7 +430,7 @@ write_away_record() {
   local case_dir=$1
   shift
   FM_HOME="$case_dir/home" FM_STATE_OVERRIDE="$case_dir/state" \
-    "$ROOT/bin/fm-afk-contract.sh" enter "$@" >/dev/null
+    "$ROOT/bin/fm-afk-contract.sh" enter --objective 'the accepted objective for this window' "$@" >/dev/null
 }
 
 test_verified_merge_records_pr_and_head() {
@@ -3107,7 +3107,7 @@ SH
   add_gh_mocks "$case_dir" 2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c
   write_away_record "$case_dir" --words 'merge task-x1 when green'
   mutate=$(away_change_script "$case_dir" replace-at-merge <<'SH'
-"$CONTRACT" enter --words 'hold everything for my return'
+"$CONTRACT" enter --objective 'the accepted objective for this window' --words 'hold everything for my return'
 SH
   )
   export FM_TEST_AWAY_MUTATE_AT_MERGE="$mutate"

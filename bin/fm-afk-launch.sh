@@ -39,13 +39,17 @@
 # FM_SUPERVISOR_TARGET/FM_SUPERVISOR_BACKEND explicitly.
 #
 # Usage:
-#   fm-afk-launch.sh enter [--words-file <path> | --words <text>]
+#   fm-afk-launch.sh enter --objective <text>
+#                          [--words-file <path> | --words <text>]
 #                          [--expected-return <UTC ISO 8601>] [--spend <n>]
 #                              Write the away-posture record now, with no
 #                              separate confirmation, then print the entry
 #                              announcement and the read-back. With no words
 #                              while away it is a refresh; new words replace
 #                              the mandate. On Pi this is the whole entry.
+#                              Refused, writing nothing, when a new entry
+#                              carries no objective: the mandate is empty, and
+#                              bin/fm-afk-contract.sh owns that gate.
 #   fm-afk-launch.sh start     Capture the captain pane, then (unless the daemon
 #                              is already running) launch the daemon in a fresh
 #                              non-visible terminal for the detected backend and

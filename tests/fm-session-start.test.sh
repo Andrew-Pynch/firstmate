@@ -2471,6 +2471,49 @@ EOF
   pass "a legacy empty .afk flag (written before mode existed) still reads as away mode"
 }
 
+# The objective is durable state the digest re-prints, so a compaction or a
+# restart cannot lose what the away window was for and fall back on memory.
+test_afk_digest_re_prints_the_recorded_objective() {
+  local rec root home fakebin out
+  rec=$(new_world afk-digest-objective)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  make_fake_ps_claude "$fakebin"
+  FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$ROOT/bin/fm-afk-contract.sh" enter \
+    --objective 'ship the windows fix and merge it when green' >/dev/null 2>&1 || fail "could not enter the away posture"
+
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+
+  assert_contains "$out" 'away posture recorded at ' 'the digest did not report the standing posture'
+  assert_contains "$out" 'objective: ship the windows fix and merge it when green' 'the digest did not re-print the recorded objective'
+  pass "the digest re-prints the away objective from the durable record"
+}
+
+# A record that carries no objective - a pre-field v1 record, or a window that
+# entered before the objective was required - is reported with the objective
+# missing, never as a window working to an aim nobody recorded.
+test_afk_digest_reports_a_record_without_an_objective() {
+  local rec root home fakebin out
+  rec=$(new_world afk-digest-no-objective)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  make_fake_ps_claude "$fakebin"
+  FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$ROOT/bin/fm-afk-contract.sh" enter \
+    --objective 'the objective this window had' >/dev/null 2>&1 || fail "could not enter the away posture"
+  grep -v '^objective: ' "$home/state/.afk-contract" > "$home/pre-field-record" || fail "could not strip the objective for the fixture"
+  mv "$home/pre-field-record" "$home/state/.afk-contract"
+
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+
+  assert_contains "$out" 'away posture recorded at ' 'the digest did not report the standing posture'
+  assert_contains "$out" 'objective: not recorded' 'the digest did not surface the missing objective'
+  pass "the digest surfaces a record that carries no objective instead of implying one"
+}
+
 test_supervision_block_exactly_one_and_pi_diagnostic() {
   local rec root home fakebin out block_count wake_line sup_line context_line
   rec=$(new_world pi-supervision-block)
@@ -2735,6 +2778,8 @@ test_next_step_sources_x_mode_cadence
 test_next_step_afk_delegates_to_daemon
 test_next_step_quiet_mode_delegates_to_daemon
 test_next_step_afk_legacy_empty_flag_defaults_away
+test_afk_digest_re_prints_the_recorded_objective
+test_afk_digest_reports_a_record_without_an_objective
 test_supervision_block_exactly_one_and_pi_diagnostic
 test_pi_signed_primary_uses_pi_extensions_without_identity_normalization
 test_pi_diagnostic_rejects_stale_loaded_marker

@@ -2254,7 +2254,7 @@ write_away_record() {  # <dir> [<fm-afk-contract.sh enter args>...]
   local dir=$1
   shift
   FM_HOME="$dir/home" FM_STATE_OVERRIDE="$dir/home/state" \
-    "$ROOT/bin/fm-afk-contract.sh" enter "$@" >/dev/null \
+    "$ROOT/bin/fm-afk-contract.sh" enter --objective 'the accepted objective for this window' "$@" >/dev/null \
     || fail "could not enter an away-posture record"
 }
 

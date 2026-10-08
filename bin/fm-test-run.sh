@@ -362,6 +362,7 @@ family_for_basename() {
     fm-omp-secondmate-live-e2e.test.sh|\
     fm-omp-worker-overlay-live-e2e.test.sh|\
     fm-pr-state-live-e2e.test.sh|\
+    fm-queue-line-live-e2e.test.sh|\
     fm-sessionstart-hook-live-e2e.test.sh|fm-sessionstart-instruction-refresh-live-e2e.test.sh|\
     fm-quota-array-dispatch-live-e2e.test.sh|fm-send-secondmate-marker-herdr-e2e.test.sh|\
     fm-send-inbox-doorbell-live-e2e.test.sh|\
@@ -775,6 +776,8 @@ tests/fm-procevent-when.test.sh 23805
 tests/fm-procevent.test.sh 221745
 tests/fm-project-origin.test.sh 136
 tests/fm-public-followup.test.sh 153508
+tests/fm-queue-line-live-e2e.test.sh 17000
+tests/fm-queue-line.test.sh 2100
 tests/fm-quota-array-dispatch-live-e2e.test.sh 71
 tests/fm-quota-choose.test.sh 1484
 tests/fm-remote-backlog-handoff.test.sh 73123

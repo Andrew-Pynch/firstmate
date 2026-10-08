@@ -2381,3 +2381,27 @@ Changing only the delivery primitive to Herdr's atomic line submission stopped t
 `bin/fm-control-lib.sh` now selects the atomic form only for omp on Herdr; every other harness/backend pair retains the shared submit loop.
 
 Remote placement is covered deterministically by `tests/fm-remote-secondmate-lifecycle-e2e.test.sh`, `tests/fm-remote-doctor.test.sh`, and the remote cases in `tests/fm-omp-harness.test.sh`; real-host proof on a second Linux machine and on macOS remains an operator smoke test and is not claimed here.
+
+### 2026-09-15 always-visible line widget seam
+
+Verified with omp 18.1.14 on Linux (Arch, kernel 7.2.3, x86_64) through rpc stdio mode with no prompt sent, so the run made no model call.
+`PI_CODING_AGENT_DIR` pointed at an empty isolated directory, so omp read nothing of the host's own agent home and no ambient personal extension contributed a frame.
+`bin/fm-test-run.sh tests/fm-queue-line-live-e2e.test.sh` refreshes this evidence; that guard also runs by default wherever omp is installed.
+
+Observed output:
+
+```text
+ok - omp omp/18.1.14: a waiting queue pins one line above the editor
+ok - omp omp/18.1.14: nothing waiting clears the pin instead of leaving a stale line
+```
+
+Facts that run established:
+
+- a home's `.omp/extensions/fm-primary-queue-line.ts` is auto-discovered from the launch directory exactly as the two supervision extensions are, with no `-e` on the launch line;
+- the pinned line reaches the surface as an `extension_ui_request` frame carrying `method: "setWidget"`, `widgetKey: "firstmate-queue-line"`, the one line in `widgetLines`, and `widgetPlacement: "aboveEditor"`;
+- clearing the pin emits the same frame with no `widgetLines` key at all, so "nothing is waiting" is distinguishable from "the pin never reached the surface";
+- the extension runs its line command at session start with no model turn, which is what keeps this guard token-free.
+
+The pinned text in the guard is a stub constant, because the line's own content, ordering and counting are proved against fixtures by `tests/fm-queue-line.test.sh`.
+A live read on the same date printed `⧗ waiting on you (39): if97-hands-on-teaching - Hands-on IF97 and DeepStar water wrapper… (+38 more)` while `bin/fm-queue.sh --json` reported `counts.by_state["waiting on you"] = 39`.
+That read cost 14.5s wall and about 1.5 cores against a 154-row queue, which is why the extension refreshes asynchronously behind a 60s floor and a 120s idle poll.

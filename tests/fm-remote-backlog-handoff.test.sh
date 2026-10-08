@@ -215,6 +215,26 @@ $1
 EOF
 }
 
+# A caller-relative body file must be read before the complete row is handed off.
+write_backlog ''
+# shellcheck disable=SC2016 # Markdown backticks are literal body bytes, not commands.
+printf 'Body text, not its file name.\nSecond line with `literal` markup.\n' > "$TMP_ROOT/body.md"
+(
+  cd "$TMP_ROOT" || exit 1
+  FM_HOME="$PARENT" bash "$ROOT/bin/fm-tasks-axi.sh" add body-file-row "body file handoff" \
+    --repo alpha --body-file body.md >/dev/null
+) || fail "caller-relative body-file add failed"
+handoff_env "$ROOT/bin/fm-backlog-handoff.sh" ios body-file-row >/dev/null \
+  || fail "body-file row handoff failed"
+received_body=$(FM_HOME="$REMOTE" bash "$ROOT/bin/fm-tasks-axi.sh" show body-file-row --full)
+# shellcheck disable=SC2016 # Match the serialized literal Markdown, without command substitution.
+assert_contains "$received_body" 'Body text, not its file name.\nSecond line with `literal` markup.' \
+  "handoff lost the source body text"
+assert_not_contains "$received_body" "$TMP_ROOT/body.md" "handoff stored a body-file path"
+rm -f "$REMOTE/data/backlog.md"
+: > "$WAKE_LOG"
+pass "remote handoff preserves caller-relative body-file content"
+
 # Completion can become unknown after the remote atomic move. The local outbox
 # remains the whole recovery record, the primary dispatch queue is already
 # empty, and a blind retry is not performed inside the transport call.

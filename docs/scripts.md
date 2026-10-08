@@ -39,9 +39,11 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-intake.sh`           | Route an incoming request by what is still undecided, record the route and its reason on the item, and emit the request's one started line |
 | `fm-wave.sh`             | Report each project's next dispatchable wave and the layer every ticket sits in, from the declared blocked-by edges |
 | `fm-fleet-resources.sh`  | Print each host's memory, load, live workers, and worker headroom for this home and every registered secondmate |
-| `fm-current-page.sh`     | Render and keep fresh the captain's one-screen, keyboard-driven current page (needs, running, done today, held calls) |
+| `fm-current-page.sh`     | Render and keep fresh the captain's current page (wins, needs, running, done today, held calls): one keyboard-driven screen on a desktop, stacked panes on a phone, installable as a home-screen app |
+| `fm-current-answers.sh`  | The current page's answer endpoint: a tapped option reaches Main as one inbox note, and the page shows its receipt and Main's reply |
 | `fm-md-page.sh`          | Render a Markdown report, or upgrade an older `<pre>` wrapper page, into one keyboard-driven HTML page |
 | `fm_md.py`               | The one Markdown renderer and shared page theme behind both captain pages             |
+| `fm_current_answers.py`  | The answer key, revision, page token, and decisions file the current page shares with its answer endpoint |
 | `fm-brief.sh`            | Scaffold ship (explicit `--mode`), scout, secondmate-charter, and Herdr-lab briefs, with Captain's intent and Firstmate spec subsections on ship/scout |
 | [`fm-dod-lib.sh`](../bin/fm-dod-lib.sh) | Own ship/scout worker role scope, ship definitions of done, the named-head reachability gate on ship `done:` acceptance, and the no-mistakes `--intent` contract |
 | `fm-herdr-lab.sh`        | Provision and guardedly operate an isolated, never-default Herdr lab session         |

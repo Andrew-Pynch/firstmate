@@ -219,6 +219,7 @@ The optional local, gitignored `config/current-page` names, on its first non-com
 With it absent the command renders nothing unless given `--out`.
 The page reads this home's durable records only and never claims, acknowledges, or advances a wake, so a renderer or its `watch` trigger can run beside supervision without changing it.
 `bin/fm-current-page.sh`'s header owns the sources, the curated-file format, the trigger, and its environment knobs.
+Optional `answers_origin=<https origin>` and `answers_listen=<host>:<port>` lines turn on the page's answer buttons and configure `bin/fm-current-answers.sh`, whose header owns the endpoint, its security checks, and how an answer reaches Main as an inbox note.
 
 ## Turn-end pane-churn absorb (config/turnend-churn-absorb)
 

@@ -1665,6 +1665,107 @@ $snapshot
 EOF
 }
 
+# --- open-decision presentation record --------------------------------------
+#
+# The drain's OPEN DECISIONS section must never lose a decision, but a row the
+# same reader has already been shown in full needs no second reading. On
+# 2026-09-12/13, 237 of 386 drains re-printed the same 13 unchanged captain
+# decisions, for roughly 800k characters of one supervision session's
+# tool-result text. This record is what lets that section present a row once and
+# then report only its count.
+#
+# Reader identity is the pair (actor, session): the actor is main or branch, the
+# two separate conversations that share one home, and the session is the harness
+# pid state/.lock names while a session owns the home (bin/fm-lock.sh). A
+# missing, unreadable, malformed, or symlinked lock yields NO reader identity,
+# and an unidentified reader always gets every row in full - suppression is only
+# ever for a reader this record can name, so it can never hide a decision from
+# the next session, from the other actor, or from a caller with no lock at all.
+# The actor is part of the identity because a shared record would make main and
+# branch alternately re-present the whole section.
+#
+# This is presentation state only. status_open_decisions above remains the ONE
+# thing that decides what is open, and the fold's own cursor is untouched by
+# these helpers; a lost, corrupt, or stale record costs at most one extra full
+# presentation, never a dropped decision.
+
+# Print the session token for <state>, or nothing when no session can be named.
+fm_open_decisions_session_token() {  # <state>
+  local lock="$1/.lock" token
+  [ -f "$lock" ] && [ -r "$lock" ] && [ ! -L "$lock" ] || return 1
+  token=$(LC_ALL=C command cat "$lock" 2>/dev/null) || return 1
+  case "$token" in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+  printf '%s' "$token"
+}
+
+# The per-actor presentation record path. An actor token that is not a plain
+# name never reaches the filesystem as a path separator or a glob.
+_fm_open_decisions_presented_path() {  # <state> <actor>
+  local actor=$2
+  case "$actor" in
+    ''|*[!A-Za-z0-9._-]*) actor=unknown ;;
+  esac
+  printf '%s/.open-decisions-presented.%s' "$1" "$actor"
+}
+
+# Print the rows this reader has already been presented, one per line, or
+# nothing when there is no named reader or the record belongs to another
+# session. Never fails: anything unreadable, malformed, or mismatched reads as
+# "nothing already presented", which fails open toward the full section.
+fm_open_decisions_presented_load() {  # <state> <actor>
+  local state=$1 actor=$2 token file line seen=0
+  token=$(fm_open_decisions_session_token "$state") || return 0
+  file=$(_fm_open_decisions_presented_path "$state" "$actor")
+  [ -f "$file" ] && [ -r "$file" ] && [ ! -L "$file" ] || return 0
+  while IFS= read -r line || [ -n "$line" ]; do
+    if [ "$seen" -eq 0 ]; then
+      seen=1
+      [ "$line" = "$token" ] || return 0
+      continue
+    fi
+    [ -n "$line" ] || continue
+    printf '%s\n' "$line"
+  done < "$file"
+  return 0
+}
+
+# 0 when <row> is one of the already-presented lines in the <presented> blob.
+# The row is matched literally (quoted case pattern), so a note containing `[`,
+# `*`, or `?` can never be mistaken for another row.
+_fm_open_decisions_presented_has() {  # <presented-blob> <row>
+  case $'\n'"$1"$'\n' in
+    *$'\n'"$2"$'\n'*) return 0 ;;
+  esac
+  return 1
+}
+
+# Write the reader's new record to <dest>: the current session token first, then
+# every row still presented as of this call, read from stdin. Returns 1 and
+# writes nothing when no session can be named, so no suppression is ever
+# recorded for a reader this home cannot identify.
+fm_open_decisions_presented_stage() {  # <state> <dest>
+  local state=$1 dest=$2 token line
+  token=$(fm_open_decisions_session_token "$state") || return 1
+  [ -n "$dest" ] || return 1
+  {
+    printf '%s\n' "$token" || exit 1
+    while IFS= read -r line || [ -n "$line" ]; do
+      [ -n "$line" ] || continue
+      # Rows are rendered one-per-line by their caller; a row that is not is
+      # refused here rather than written as two records.
+      case "$line" in *$'\n'*) continue ;; esac
+      printf '%s\n' "$line" || exit 1
+    done
+  } > "$dest" || return 1
+  # Decision notes are captain-facing status text; a record left world-readable
+  # by the caller's umask would widen the exposure of state/ beyond the other
+  # presentation records here, so an unsettable mode refuses the record instead.
+  chmod 0600 "$dest" || return 1
+  return 0
+}
+
 # --- unread status lines since the presentation cursor ----------------------
 #
 # The drain annotation historically printed only the newest status line, so a

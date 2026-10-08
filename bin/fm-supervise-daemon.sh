@@ -1482,7 +1482,11 @@ handle_durable_wakes() {  # <watcher-reason> <state>
   local handled=0 failed=0 ack_through ack_generation
   out=$(mktemp "$state/.subsuper-wake-drain.XXXXXX") || return 1
   err=$(mktemp "$state/.subsuper-wake-drain.XXXXXX") || { rm -f "$out"; return 1; }
-  if ! "$FM_DAEMON_DIR/fm-wake-drain.sh" > "$out" 2> "$err"; then
+  # Only the tab-separated queue rows below are consumed and $out is deleted, so
+  # no reader ever sees this drain's status sections: FM_OPEN_DECISIONS_NO_RECORD
+  # keeps it from retiring open-decision rows for the home's own session reader,
+  # which would otherwise leave that reader shown a count for rows it never saw.
+  if ! FM_OPEN_DECISIONS_NO_RECORD=1 "$FM_DAEMON_DIR/fm-wake-drain.sh" > "$out" 2> "$err"; then
     cat "$err" >&2
     rm -f "$out" "$err"
     return 1

@@ -8,6 +8,12 @@
 #
 # Keep sequence-bound row consumption independent from generation-bound episode
 # retirement; docs/watcher-continuity.md owns the recovery contract.
+# The OPEN DECISIONS section presents each row in full once per reader, then
+# reports a count and the re-present command; fm-classify-lib.sh's
+# "open-decision presentation record" owns that reader identity.
+# FM_OPEN_DECISIONS_REVEAL forces every row to print in full again, and
+# FM_OPEN_DECISIONS_NO_RECORD does the same while recording nothing, for a
+# caller whose stdout no reader sees.
 # FM_STATUS_PRESENTATION_LOCK_TIMEOUT sets the positive whole-second wait for
 # presentation-path locks (default 10); queue mutation locks remain blocking.
 set -u
@@ -26,6 +32,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 DRAIN_TMP=
 DRAIN_VIEW_TMP=
+OPEN_DECISIONS_PRESENTED_TMP=
 DRAIN_LOCK_HELD=false
 RAW_ROWS=
 RECOVERY_MARKER="$STATE/.watcher-down"
@@ -439,18 +446,41 @@ EOF
 # appended to each task's status log since the LAST drain, not that log's whole
 # lifetime, while still never dropping an old buried decision (see
 # fm-classify-lib.sh's "incremental (cursor-backed) open-decisions fold").
-# Bounded and silent: prints nothing when no decision is open, which is the
-# common case.
+#
+# Detection is unchanged; only RE-presentation is bounded. A row this reader was
+# already shown in full is counted instead of printed again, and
+# fm-classify-lib.sh's "open-decision presentation record" owns who counts as
+# the same reader: an unnamed reader, a new session, or FM_OPEN_DECISIONS_REVEAL=1
+# re-presents every row in full, and the count line carries the re-present
+# command and the unchanged tasks, so nothing becomes unreachable. A row whose
+# note changed is not the row that was presented and prints again. Bounded and
+# silent: prints nothing when no decision is open, which is the common case.
 print_open_decisions_section() {
   local snapshot=${1:-} open task key verb note line item_bytes=220 global_bytes=4000
   local output='' used=0 shown=0 omitted=0 bytes
+  local presented='' record='' unchanged=0 unchanged_list='' entry listed=0 list_max=8
+  local count_line presented_tmp counting=1
+
+  OPEN_DECISIONS_PRESENTED_TMP=
 
   if [ -n "$snapshot" ]; then
     open=$(scan_open_decisions_snapshot "$STATE" "$snapshot") || return 1
   else
     open=$(scan_open_decisions_incremental "$STATE") || return 1
   fi
-  [ -n "$open" ] || return 0
+
+  # FM_OPEN_DECISIONS_NO_RECORD marks a caller whose stdout no reader sees - the
+  # away-mode supervisor daemon, which parses queue rows out of a temp file and
+  # deletes it. Such a caller presents the full set and records nothing, so it
+  # can never retire a row on behalf of a reader that never saw it.
+  [ -z "${FM_OPEN_DECISIONS_NO_RECORD:-}" ] || counting=0
+
+  # The reader's own record of what it has been shown in full. Empty means
+  # present everything, which is what this home cannot name the reader, what a
+  # fresh session, and what an explicit reveal all produce.
+  if [ "$counting" -eq 1 ] && [ -z "${FM_OPEN_DECISIONS_REVEAL:-}" ]; then
+    presented=$(fm_open_decisions_presented_load "$STATE" "$ACTOR")
+  fi
 
   while IFS=$(printf '\t') read -r task key verb note; do
     [ -n "$task" ] || continue
@@ -462,12 +492,31 @@ print_open_decisions_section() {
     # allowance passed down is one short of the cap.
     fm_cap_line_var "$line" $((item_bytes - 1))
     line=$FM_LINE_CAP_LINE
+    if [ -n "$presented" ] && _fm_open_decisions_presented_has "$presented" "$line"; then
+      # Already read in full by this same reader: still presented, so it stays in
+      # the record, but it costs this drain one counted entry instead of a line.
+      unchanged=$((unchanged + 1))
+      record="$record$line
+"
+      if [ "$listed" -lt "$list_max" ]; then
+        entry="$task"
+        [ "$key" = default ] || entry="${entry}[$key]"
+        [ -z "$unchanged_list" ] || unchanged_list="$unchanged_list, "
+        unchanged_list="$unchanged_list$entry"
+        listed=$((listed + 1))
+      fi
+      continue
+    fi
     bytes=$(( ${#line} + 1 ))
     if [ $((used + bytes)) -gt "$global_bytes" ]; then
+      # Over the cap this row was NOT presented, so it stays out of the record
+      # and prints in full on the next drain rather than being counted later.
       omitted=$((omitted + 1))
       continue
     fi
     output="$output$line
+"
+    record="$record$line
 "
     used=$((used + bytes))
     shown=$((shown + 1))
@@ -475,17 +524,43 @@ print_open_decisions_section() {
 $open
 EOF
 
-  [ "$shown" -gt 0 ] || [ "$omitted" -gt 0 ] || return 0
-  printf 'OPEN DECISIONS (still open, folded from the durable status logs - not just the latest line):\n' || return 1
-  printf '%s' "$output" || return 1
-  if [ "$omitted" -gt 0 ]; then
-    printf 'OPEN DECISIONS: %d more omitted (byte cap)\n' "$omitted" || return 1
+  # Stage the reader's next record before anything reaches stdout; the caller
+  # commits it only after this section is delivered. No named reader, a
+  # non-reader caller, or an unwritable state dir simply means the next drain
+  # presents in full again.
+  if [ "$counting" -eq 1 ]; then
+    presented_tmp="$(_fm_open_decisions_presented_path "$STATE" "$ACTOR").tmp.$$"
+    if printf '%s' "$record" | fm_open_decisions_presented_stage "$STATE" "$presented_tmp"; then
+      OPEN_DECISIONS_PRESENTED_TMP=$presented_tmp
+    else
+      rm -f -- "$presented_tmp" 2>/dev/null || true
+    fi
+  fi
+
+  if [ "$shown" -gt 0 ] || [ "$omitted" -gt 0 ]; then
+    printf 'OPEN DECISIONS (still open, folded from the durable status logs - not just the latest line):\n' || return 1
+    printf '%s' "$output" || return 1
+    if [ "$omitted" -gt 0 ]; then
+      printf 'OPEN DECISIONS: %d more omitted (byte cap)\n' "$omitted" || return 1
+    fi
+  fi
+  if [ "$unchanged" -gt 0 ]; then
+    count_line="OPEN DECISIONS: $unchanged unchanged since this reader was shown them in full (re-present with FM_OPEN_DECISIONS_REVEAL=1 bin/fm-wake-drain.sh): $unchanged_list"
+    [ "$unchanged" -le "$list_max" ] || count_line="$count_line, +$((unchanged - list_max)) more"
+    fm_cap_line_var "$count_line" 512
+    printf '%s\n' "$FM_LINE_CAP_LINE" || return 1
   fi
   # Answerer-closes hint, printed at exactly the moment an answer gets written:
   # the send that answers a listed decision also closes it, so closure never
   # depends on the busy worker writing a matching resolved line (contract:
-  # bin/fm-send.sh header).
-  printf "OPEN DECISIONS: close one by answering it: bin/fm-send.sh <task> --resolve-key <key> '<answer>'\n" || return 1
+  # bin/fm-send.sh header). A drain that printed no row - only the count of rows
+  # this reader was already shown - does not repeat it: that reader read this
+  # same line when it was shown those rows, and every fm-send refusal names the
+  # close command again.
+  if [ "$shown" -gt 0 ] || [ "$omitted" -gt 0 ]; then
+    printf "OPEN DECISIONS: close one by answering it: bin/fm-send.sh <task> --resolve-key <key> '<answer>'\n" || return 1
+  fi
+  return 0
 }
 
 # Print the RECORD DIVERGENCE section: every captain call whose two records
@@ -548,11 +623,46 @@ EOF
   printf 'RECORD DIVERGENCE: reconcile each one - record the captain'"'"'s own words with bin/fm-captain-hold.sh answer <task> --decision-file <path>, or re-open the status decision when that resolution was not the captain'"'"'s word.\n' || return 1
 }
 
+# The staged open-decision presentation record (see
+# print_open_decisions_section) is committed only once its section actually
+# reaches stdout, so an interrupted or failed presentation never counts as
+# shown. Both are silent no-ops when nothing was staged, which is also what an
+# unnamed reader produces.
+discard_open_decisions_presented_stage() {
+  [ -n "${OPEN_DECISIONS_PRESENTED_TMP:-}" ] || return 0
+  rm -f -- "$OPEN_DECISIONS_PRESENTED_TMP" 2>/dev/null || true
+  OPEN_DECISIONS_PRESENTED_TMP=
+}
+
+commit_open_decisions_presented_stage() {
+  local dest
+  [ -n "${OPEN_DECISIONS_PRESENTED_TMP:-}" ] || return 0
+  dest=$(_fm_open_decisions_presented_path "$STATE" "$ACTOR")
+  # A plain mv would happily move the staged record INSIDE a directory sitting
+  # where the record belongs, leaving no record and a stray file behind, so a
+  # destination that exists and is not a regular file refuses instead.
+  if [ -e "$dest" ] && [ ! -f "$dest" ]; then
+    rm -f -- "$OPEN_DECISIONS_PRESENTED_TMP" 2>/dev/null || true
+    OPEN_DECISIONS_PRESENTED_TMP=
+    return 1
+  fi
+  if _fm_atomic_replace "$OPEN_DECISIONS_PRESENTED_TMP" "$dest"; then
+    OPEN_DECISIONS_PRESENTED_TMP=
+    return 0
+  fi
+  # The record is advisory: a commit that cannot land leaves the reader's
+  # previous record untouched, which costs one extra full presentation.
+  rm -f -- "$OPEN_DECISIONS_PRESENTED_TMP" 2>/dev/null || true
+  OPEN_DECISIONS_PRESENTED_TMP=
+  return 1
+}
+
 print_status_sections() {
   local snapshot=${1:-} fully_presented=${2:-} acknowledged prepared
   if [ -z "$snapshot" ]; then snapshot=$(status_presentation_snapshot "$STATE") || return 1; fi
   [ -n "$snapshot" ] || return 0
   acknowledged=$(status_acknowledge_presented_snapshot "$STATE" "$snapshot" "$fully_presented") || return 1
+  OPEN_DECISIONS_PRESENTED_TMP=
   prepared=$(mktemp "$STATE/.status-presentation.prepared.XXXXXX") || return 1
   if ! {
     print_unread_status_section "$snapshot" \
@@ -561,6 +671,7 @@ print_status_sections() {
       && print_record_divergence_section
   } > "$prepared"; then
     rm -f -- "$prepared"
+    discard_open_decisions_presented_stage
     return 1
   fi
   # Prepare every section before presentation, but do not commit its receipt
@@ -568,8 +679,13 @@ print_status_sections() {
   # leave the receipt behind so the next drain can recover the presentation.
   if ! command cat "$prepared"; then
     rm -f -- "$prepared"
+    discard_open_decisions_presented_stage
     return 1
   fi
+  # The section reached stdout, so this reader has now been shown every row it
+  # carried: commit that record before the presentation receipt, so a crash
+  # between the two re-presents a row rather than hiding one.
+  commit_open_decisions_presented_stage || true
   if ! status_commit_presentation_snapshot "$STATE" "$acknowledged"; then
     rm -f -- "$prepared"
     return 1
@@ -614,6 +730,7 @@ cleanup() {
   local status=$?
   [ -z "$DRAIN_TMP" ] || rm -f -- "$DRAIN_TMP" 2>/dev/null || true
   [ -z "$DRAIN_VIEW_TMP" ] || rm -f -- "$DRAIN_VIEW_TMP" 2>/dev/null || true
+  [ -z "${OPEN_DECISIONS_PRESENTED_TMP:-}" ] || rm -f -- "$OPEN_DECISIONS_PRESENTED_TMP" 2>/dev/null || true
   if [ "$DRAIN_LOCK_HELD" = true ]; then
     fm_lock_release "$FM_WAKE_QUEUE_LOCK"
   fi

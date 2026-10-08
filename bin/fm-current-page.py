@@ -205,7 +205,7 @@ def registry_repos():
 
 
 def merged_prs(repos):
-    """Merged PRs in the last 24 h, cached under state/.current-page for FM_CURRENT_PAGE_FORGE_TTL."""
+    """Merged PRs in the last 7 d, cached under state/.current-page for FM_CURRENT_PAGE_FORGE_TTL."""
     ttl = env_int("FM_CURRENT_PAGE_FORGE_TTL", 300)
     cache = {}
     try:
@@ -215,15 +215,16 @@ def merged_prs(repos):
         cache = {}
     if os.environ.get("FM_CURRENT_PAGE_NO_FORGE") or not repos or not shutil.which("gh"):
         return cache.get("items", []), cache.get("fetched"), cache.get("viewer", ""), "skipped"
-    if cache.get("fetched") and time.time() - cache["fetched"] < ttl and cache.get("repos") == sorted(repos):
+    if (cache.get("fetched") and time.time() - cache["fetched"] < ttl
+            and cache.get("repos") == sorted(repos) and cache.get("window_days") == 7):
         return cache["items"], cache["fetched"], cache.get("viewer", ""), "cached"
-    since = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 86400))
+    since = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 7 * 86400))
     query = "is:pr is:merged merged:>=" + since + "".join(" repo:" + r for r in sorted(repos))
     items, err = [], None
     try:
         viewer = cache.get("viewer") or subprocess.run(
             ["gh", "api", "user", "--jq", ".login"], capture_output=True, text=True, timeout=20).stdout.strip()
-        for page in (1, 2, 3):
+        for page in range(1, 11):
             res = subprocess.run(["gh", "api", "-X", "GET", "search/issues", "-f", "q=" + query, "-f", "per_page=100",
                                   "-f", f"page={page}", "--jq",
                                   '.items[] | {url: .html_url, merged: .pull_request.merged_at, author: .user.login, title: .title}'],
@@ -239,7 +240,7 @@ def merged_prs(repos):
         err = str(exc)
     if err:
         return cache.get("items", []), cache.get("fetched"), cache.get("viewer", ""), "stale: " + err[:120]
-    cache = {"fetched": int(time.time()), "repos": sorted(repos), "viewer": viewer, "items": items}
+    cache = {"fetched": int(time.time()), "repos": sorted(repos), "viewer": viewer, "items": items, "window_days": 7}
     write_atomic(FORGE_CACHE, json.dumps(cache))
     return items, cache["fetched"], viewer, "fresh"
 
@@ -308,7 +309,8 @@ def open_decisions():
 
 def parse_curated(path):
     """The keeper's curated JSON; bin/fm-current-page.sh's header owns the field list."""
-    empty = {"next": None, "needs": [], "why": {}, "mates": {}, "plain": {}, "hide": set(), "error": ""}
+    empty = {"next": None, "needs": [], "why": {}, "mates": {}, "plain": {}, "hide": set(),
+             "initiatives": [], "completed": [], "error": ""}
     try:
         with open(path, encoding="utf-8") as fh:
             data = json.load(fh)
@@ -329,6 +331,8 @@ def parse_curated(path):
             "why": strmap("why"), "plain": strmap("plain"),
             "hide": {str(h) for h in hide} if isinstance(hide, list) else set(),
             "mates": data.get("mates") if isinstance(data.get("mates"), dict) else {},
+            "initiatives": [n for n in data.get("initiatives") or [] if isinstance(n, dict) and n.get("id")],
+            "completed": [n for n in data.get("completed") or [] if isinstance(n, dict)],
             "error": ""}
 
 
@@ -549,6 +553,7 @@ def build_rows(mates, titles, why):
         rows.append({"task": task, "kind": kind, "mate": mate, "host": host, "projects": [p for p in dict.fromkeys(projects) if p],
                      "model": meta.get("model", ""), "worktree": meta.get("worktree", ""), "verb": verb, "note": note,
                      "updated": updated, "pr": pr, "title": title,
+                     "linear_project": meta.get("linear_project_id") or meta.get("linear_project", ""),
                      "subtitle": titles.get(task, "") if titles.get(task, "") != title else ""})
     return rows
 
@@ -597,6 +602,177 @@ def plain_words(text, n=200):
     return clip(re.sub(r"\s+", " ", text).strip(), n)
 
 
+def completion_time(value):
+    try:
+        stamp = dt.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        return stamp.timestamp()
+    except (ValueError, TypeError, OverflowError):
+        return None
+
+
+def archived_done():
+    """Read summary rows only; tasks-axi's markdown archive is outside its list API."""
+    import tomllib
+    archive = os.path.join(DATA, "done-archive.md")
+    try:
+        with open(os.path.join(HOME, ".tasks.toml"), "rb") as fh:
+            config = tomllib.load(fh)
+        if config.get("backend", "markdown") != "markdown":
+            return []
+        archive = os.path.join(HOME, config.get("markdown", {}).get("archive", "data/done-archive.md"))
+    except FileNotFoundError:
+        pass
+    except (OSError, ValueError):
+        return []
+    rows = []
+    try:
+        with open(archive, encoding="utf-8") as fh:
+            for line in fh:
+                match = re.match(r"^- \[x\] (\S+) - (.*)", line)
+                if not match:
+                    continue
+                task, summary = match.groups()
+                closed = re.search(r"\((?:done|merged|reported) (\d{4}-\d{2}-\d{2})\)", summary)
+                repo = re.search(r"\(repo: ([^)]+)\)", summary)
+                if closed:
+                    rows.append({"id": task, "title": summary.split(" (repo:")[0],
+                                 "repo": repo.group(1) if repo else "", "closed": closed.group(1)})
+    except OSError:
+        pass
+    return rows
+
+
+def initiative_for(item, initiatives):
+    """Prefer title evidence, then Linear project, then project token; ties use curated order."""
+    title = str(item.get("match_title") or item.get("title") or "").casefold()
+    projects = item.get("projects") or []
+    linear = str(item.get("linear_project") or "").casefold()
+    winner, best = "other", (0, 0)
+    for initiative in initiatives:
+        rule = initiative.get("match") or {}
+        words = rule.get("title_keywords") or []
+        size = max((len(word) for word in words if isinstance(word, str) and word.casefold() in title), default=0)
+        score = ((3, size) if size else
+                 (2, 0) if linear and linear in [str(p).casefold() for p in rule.get("linear_projects") or []] else
+                 (1, 0) if set(projects) & set(rule.get("project_tokens") or []) else (0, 0))
+        if score > best:
+            winner, best = str(initiative["id"]), score
+    return winner
+
+
+def initiative_cards(cur, merged, done, rows, repos, now):
+    """Build an executive view from plain curated data and observed completions."""
+    initiatives = [i for i in cur["initiatives"] if i["id"] != "other"]
+    initiatives.append({"id": "other", "title": "Other", "goal": "Keep useful work visible.",
+                        "why": "This work does not yet have an initiative.", "next": [], "waiting": []})
+    buckets = {str(i["id"]): {"merged": [], "done": [], "next": [], "waiting": []} for i in initiatives}
+    by_task = {r["task"]: r for r in rows}
+    pr_rows = {r["pr"]: r for r in rows if r["pr"]}
+    for pr in merged:
+        ts = completion_time(pr.get("merged"))
+        if ts is None or not now - 7 * 86400 <= ts <= now:
+            continue
+        url = pr.get("url", "")
+        parts = url.split("/")
+        if not PR_RE.fullmatch(url):
+            continue
+        row = pr_rows.get(url, {})
+        project = repos.get("/".join(parts[3:5]), parts[4])
+        item = {**pr, "projects": row.get("projects") or [project],
+                "linear_project": row.get("linear_project", ""),
+                "match_title": pr.get("title", "") + " " + row.get("title", ""), "ts": ts}
+        buckets[initiative_for(item, initiatives)]["merged"].append(item)
+    seen = set()
+    for ticket in [*(done or []), *cur["completed"], *archived_done()]:
+        task = str(ticket.get("id", ""))
+        closed = str(ticket.get("completed") or ticket.get("closed") or "")
+        ts = completion_time(closed)
+        date_only = bool(re.fullmatch(r"\d{4}-\d{2}-\d{2}", closed))
+        in_week = (dt.datetime.fromtimestamp(now - 7 * 86400).date().isoformat() <= closed
+                   <= dt.datetime.fromtimestamp(now).date().isoformat()) if date_only else ts is not None and now - 7 * 86400 <= ts <= now
+        if not task or task in seen or not in_week:
+            continue
+        seen.add(task)
+        row = by_task.get(task, {})
+        title = str(ticket.get("title") or task)
+        links = PR_RE.findall(str(ticket.get("links", "")) + " " + title)
+        item = {"id": task, "title": cur["why"].get(task) or title,
+                "match_title": title + " " + task, "projects": row.get("projects") or
+                [ticket.get("project_token") or ticket.get("repo") or ""],
+                "linear_project": ticket.get("linear_project") or row.get("linear_project", ""),
+                "url": ticket.get("url") or (links[0] if links else ""), "closed": closed, "ts": ts,
+                "date_only": date_only}
+        buckets[initiative_for(item, initiatives)]["done"].append(item)
+    for need in cur["needs"]:
+        row = by_task.get(str(need.get("who", "")), {})
+        item = {**row, "title": str(need.get("t", "")), "match_title":
+                " ".join(str(need.get(k, "")) for k in ("t", "why", "who"))}
+        buckets[initiative_for(item, initiatives)]["waiting"].append(str(need.get("do") or need.get("t") or ""))
+    for row in rows:
+        if (row["kind"] == "secondmate" or row["verb"] not in ACTIVE_VERBS or row["task"] in cur["hide"]
+                or now - (row["updated"] or 0) >= env_int("FM_CURRENT_PAGE_QUIET_HOURS", 48) * 3600):
+            continue
+        text = cur["plain"].get(row["task"])
+        if text:
+            buckets[initiative_for(row, initiatives)]["next"].append(text)
+    nx = cur["next"]
+    if nx and nx.get("do"):
+        item = {"title": " ".join(str(nx.get(k, "")) for k in ("do", "why", "unblocks"))}
+        buckets[initiative_for(item, initiatives)]["waiting"].append(str(nx["do"]))
+
+    def lines(items, empty):
+        texts = list(dict.fromkeys(str(x) for x in items if x))
+        return "<ul>" + "".join(f"<li>{inline_md(x)}</li>" for x in texts) + "</ul>" if texts else f'<p class="k">{empty}</p>'
+
+    def completed_list(prs, tickets):
+        out = []
+        for pr in prs:
+            number = pr["url"].rsplit("/", 1)[1]
+            title = re.sub(r"^(?:fix|feat|chore|docs|perf|test)(?:\([^)]*\))?:\s*", "", pr["title"])
+            out.append(f'<li>{e(title)} <a href="{e(pr["url"])}">PR #{e(number)}</a></li>')
+        for ticket in tickets:
+            url = str(ticket["url"])
+            title = plain_words(ticket["title"])
+            label = f'Done: {e(title)}'
+            if url.startswith("https://"):
+                label += f' <a href="{e(url)}">{e(ticket["id"])}</a>'
+            out.append(f'<li>{label}</li>')
+        if not out:
+            return '<p class="k">No completed work recorded.</p>'
+        visible = "<ul>" + "".join(out[:4]) + "</ul>"
+        if len(out) > 4:
+            visible += (f'<details><summary>{len(out) - 4} more completed items</summary>'
+                        "<ul>" + "".join(out[4:]) + "</ul></details>")
+        return visible
+
+    cards = []
+    today = dt.datetime.fromtimestamp(now).date().isoformat()
+    for initiative in initiatives:
+        bucket = buckets[str(initiative["id"])]
+        prs = sorted(bucket["merged"], key=lambda p: p["ts"], reverse=True)
+        tickets = sorted(bucket["done"], key=lambda t: t["closed"], reverse=True)
+        recent_prs = [p for p in prs if p["ts"] >= now - 86400]
+        recent_tickets = [t for t in tickets if (t["closed"] == today if t["date_only"] else t["ts"] >= now - 86400)]
+        older_prs = [p for p in prs if p not in recent_prs]
+        older_tickets = [t for t in tickets if t not in recent_tickets]
+        cards.append(
+            f'<article class="card initiative" data-initiative="{e(str(initiative["id"]))}">'
+            f'<h3>{e(str(initiative.get("title", initiative["id"])))}</h3>'
+            f'<p class="initiative-goal">{e(str(initiative.get("goal", "")))}</p>'
+            f'<p class="why"><b>Why it matters:</b> {e(str(initiative.get("why", "")))}</p>'
+            f'<div class="initiative-counts"><b>{len(recent_prs)} merged in 24 h</b> · {len(recent_tickets)} tasks finished'
+            f' <span class="k">/ 7 d: {len(prs)} merged · {len(tickets)} Done</span></div>'
+            f'<h4>What got done</h4>{completed_list(recent_prs, recent_tickets)}'
+            f'<details><summary>Earlier in the last 7 d ({len(older_prs)} merged, {len(older_tickets)} Done)</summary>'
+            f'{completed_list(older_prs, older_tickets)}</details>'
+            f'<h4>Next</h4>{lines([*(initiative.get("next") or []), *bucket["next"]], "No next step recorded.")}'
+            f'<h4 class="initiative-waiting">Waits on Andrew</h4>'
+            f'{lines([*(initiative.get("waiting") or []), *bucket["waiting"]], "Nothing recorded as waiting on Andrew.")}</article>')
+    return ('<section id="initiatives" aria-labelledby="initiatives-title"><h2 id="initiatives-title">Initiatives</h2>'
+            '<p class="k">Goals first. Merged PRs use exact times; Done tickets use their recorded completion date '
+            '(today and the past week), unless a time is supplied. A merge is not proof of a live change.</p>'
+            '<div class="initiative-grid">' + "".join(cards) + "</div></section>")
+
 def render(paths, reason):
     now = time.time()
     notes = parse_notes(paths["notes"])
@@ -609,6 +785,7 @@ def render(paths, reason):
     backlog = tasks_axi("list", "--limit", "2000")
     titles = {r["id"]: r.get("title", "") for r in (backlog or []) if r.get("id")}
     held = tasks_axi("list", "--state", "held", "--limit", "2000", "--fields", "hold_kind,hold_until,hold_reason")
+    done = tasks_axi("list", "--state", "done", "--limit", "2000", "--fields", "closed,links")
     rows = build_rows(mates, titles, cur["why"])
     by_task = {r["task"]: r for r in rows}
     decisions = open_decisions()
@@ -699,8 +876,9 @@ def render(paths, reason):
         return (f'<li class="f" {attrs(r["host"] if r else "", r["mate"] if r else "", [project])}>'
                 f'<a href="{e(url)}">{e(project)} #{e(parts[-1])}</a> {e(x.get("title", ""))}{who}'
                 f' <span class="k">{clock(ts)}</span></li>')
-    fleet = [landed_li(x) for x in landed if x.get("author") == viewer]
-    others = [landed_li(x) for x in landed if x.get("author") != viewer]
+    daily = [x for x in landed if (completion_time(x.get("merged")) or 0) >= now - 86400]
+    fleet = [landed_li(x) for x in daily if x.get("author") == viewer]
+    others = [landed_li(x) for x in daily if x.get("author") != viewer]
     forge_note = {"fresh": "", "cached": "", "skipped": " (GitHub read skipped)"}.get(
         forge_state, f" (GitHub read failed, showing {clock(fetched)}: {forge_state[7:]})")
     landed_html = (f'<p class="k">Last 24 h across {len(repos)} registered repos, as of {clock(fetched)}{e(forge_note)}.</p>'
@@ -735,12 +913,19 @@ def render(paths, reason):
     elif notes["free"] or notes["events"]:
         notes_html = f'<section class="notes" aria-label="Context from Main">{notes_timeline(notes, dt.date.today())}</section>'
 
+    initiatives_html = initiative_cards(cur, landed, done, rows, repos, now)
+    coverage = f'GitHub as of {clock(fetched)}{forge_note}.'
+    if done is None:
+        coverage += " Done backlog unreadable this render."
+    initiatives_html += f'<p class="k">{e(coverage)}</p>'
+
     stamp = dt.datetime.fromtimestamp(now).strftime("%a %H:%M:%S %Z").strip()
     page = f'''<!doctype html><meta charset="utf-8"><title>Current</title><meta name="viewport" content="width=device-width,initial-scale=1">
 <style>body{{font:16px/1.45 system-ui;background:#0d1117;color:#e6edf3;max-width:1100px;margin:1.5em auto;padding:0 1em}}a{{color:#58a6ff}}h1{{margin:.2em 0}}h2{{margin-top:1.6em;border-bottom:1px solid #30363d;padding-bottom:.2em}}h3{{margin:.6em 0 .2em}}.k{{color:#8b949e;font-size:13px}}code{{font-size:13px;color:#c9d1d9}}
 .next{{border:3px solid #f85149;border-radius:12px;padding:1em 1.3em;background:#2d1517;font-size:18px}}.next h2{{margin:.1em 0;border:0;color:#ff7b72}}.next p{{margin:.3em 0}}.notes{{background:#161b22;border:1px solid #30363d;border-radius:12px;padding:.4em 1.1em;margin:.8em 0}}
 .timeline{{list-style:none;margin:.5em 0;padding:0}}.timeline .note-event{{display:grid;grid-template-columns:5ch 5.5em minmax(0,1fr);align-items:baseline;gap:.8em;border-top:1px solid #30363d;padding:.65em 0;margin:0}}.note-event time{{font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}}.note-kind{{font-size:12px;font-weight:700;text-align:center;border:1px solid;border-radius:5px;padding:2px 6px}}.note-kind.merged,.note-kind.fixed,.note-kind.live{{color:#7ee787;background:#12261e;border-color:#238636}}.note-kind.decided{{color:#79c0ff;background:#10233f;border-color:#1f6feb}}.note-kind.needs{{color:#e3b341;background:#2b2110;border-color:#9e6a03}}.note-kind.blocked{{color:#ff7b72;background:#2d1517;border-color:#da3633}}.note-kind.info{{color:#c9d1d9;background:#21262d;border-color:#57606a}}.note-text{{overflow-wrap:anywhere}}.notes details{{margin:.7em 0;color:#c9d1d9}}@media(max-width:480px){{.timeline .note-event{{gap:.5em;grid-template-columns:5ch 5em minmax(0,1fr);font-size:14px}}.notes{{padding:.4em .7em}}}}
 .card{{background:#161b22;border:1px solid #30363d;border-radius:12px;padding:.9em 1.1em;margin:.7em 0}}.need{{border-left:6px solid #d29922}}.top{{display:flex;justify-content:space-between;gap:1em;font-size:17px}}
+.initiative-grid{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1em;align-items:start}}.initiative{{margin:0;border-top:3px solid #388bfd;overflow-wrap:anywhere}}.initiative h3{{font-size:20px;color:#79c0ff;margin:0 0 .3em}}.initiative-goal{{font-size:18px;font-weight:600;margin:.4em 0}}.initiative h4{{margin:1em 0 .3em;font-size:14px}}.initiative ul{{padding-left:1.2em;font-size:14px}}.initiative-counts{{color:#7ee787;font-size:14px;margin:.8em 0}}.initiative-waiting{{color:#e3b341}}@media(max-width:760px){{.initiative-grid{{grid-template-columns:1fr}}}}
 .need-action{{display:flex;align-items:baseline;gap:.8em;background:#2b2110;border:1px solid #9e6a03;border-radius:8px;padding:.7em .9em;margin:.7em 0;color:#e6edf3}}.need-action>div{{min-width:0;overflow-wrap:anywhere}}.need-action>b{{color:#e3b341}}.need-command code{{font-family:ui-monospace,monospace;white-space:pre-wrap;color:#f0f6fc}}.copy-command{{font:12px system-ui;color:#c9d1d9;background:#21262d;border:1px solid #57606a;border-radius:5px;padding:.2em .6em;margin-left:.5em;cursor:pointer}}.copy-command:focus-visible{{outline:2px solid #58a6ff;outline-offset:2px}}.need-options{{display:flex;flex-wrap:wrap;gap:.5em;margin:.6em 0}}.need-option{{background:#21262d;border:1px solid #57606a;border-radius:20px;padding:.3em .8em;font-size:14px;overflow-wrap:anywhere;min-width:0}}.need-option.recommended{{background:#12261e;border-color:#238636;color:#7ee787}}.need-option b{{font-size:11px;margin-left:.4em}}
 .need-message{{background:#10233f;border:1px solid #1f6feb;border-radius:8px;padding:.7em .9em;margin:.7em 0}}.need-message-head{{display:flex;justify-content:space-between;align-items:center;gap:.8em}}.need-message-head>b{{color:#79c0ff}}.need-message blockquote{{margin:.6em 0 0;padding:.5em .9em;border-left:4px solid #388bfd;background:#0d1117;border-radius:4px;white-space:pre-wrap;overflow-wrap:anywhere;color:#f0f6fc}}.need-message blockquote code{{font-family:ui-monospace,monospace;background:#21262d;border-radius:4px;padding:0 .3em}}.copy-message{{font:600 15px system-ui;color:#fff;background:#1f6feb;border:1px solid #388bfd;border-radius:6px;padding:.45em 1.1em;cursor:pointer;white-space:nowrap}}.copy-message:hover{{background:#388bfd}}.copy-message:focus-visible{{outline:2px solid #f0f6fc;outline-offset:2px}}
 .b{{color:#fff;padding:2px 8px;border-radius:5px;font-size:12px;height:fit-content;white-space:nowrap;margin-right:.4em}}.why{{color:#c9d1d9;margin:.3em 0}}.st{{color:#adbac7;font-size:14px;margin:.3em 0;word-break:break-word}}summary{{cursor:pointer}}
@@ -749,6 +934,7 @@ ul.dl{{list-style:none;padding-left:0}}ul.dl li{{margin:.5em 0}}ul.dl .st{{displ
 .chip{{background:#21262d;color:#e6edf3;border:1px solid #30363d;border-radius:20px;padding:.25em .8em;margin:.15em .2em .15em 0;font-size:14px;cursor:pointer}}.chip.on{{background:#1f6feb;border-color:#1f6feb}}li{{margin:.3em 0}}</style>
 <h1>Current</h1>
 <p class="k">Live. Rendered {e(stamp)} after {e(reason)}. <span id="nlive">{len(active)}</span> live · <span id="nneed">{len(need_cards)}</span> need you · {len(fleet)} fleet PRs landed in 24 h. Reloads every minute.</p>
+{initiatives_html}
 <div class="next"><h2>NEXT for Andrew</h2>{next_html}</div>
 {notes_html}
 <div id="filters">{chips("m", "Machine", machines)}{chips("g", "Mate", mate_names)}{chips("p", "Project", project_names)}</div>
@@ -849,7 +1035,7 @@ def locked_render(paths, reason):
 
 def watched_signature(paths):
     sig = []
-    for d, suffixes in ((STATE, (".status", ".meta")), (DATA, ("backlog.md",))):
+    for d, suffixes in ((STATE, (".status", ".meta")), (DATA, ("backlog.md", "done-archive.md"))):
         try:
             names = sorted(os.listdir(d))
         except OSError:

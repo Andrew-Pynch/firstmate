@@ -132,6 +132,88 @@ for f in "$STATE"/.*open-decisions-cursor; do
 done
 pass "rendering leaves the wake drain's decision cursors untouched"
 
+python3 - "$HOME_DIR" <<'PY'
+import datetime as dt, json, os, sys, time
+home = sys.argv[1]
+now = time.time()
+stamp = lambda age: dt.datetime.fromtimestamp(now - age, dt.timezone.utc).isoformat()
+today = dt.date.today().isoformat()
+old_date = (dt.date.today() - dt.timedelta(days=2)).isoformat()
+cur = {
+    "initiatives": [
+        {"id": "pilot", "title": "Pilot", "goal": "Review the design.", "why": "The review needs evidence.",
+         "match": {"project_tokens": ["alpha"], "title_keywords": ["FOAK"]},
+         "next": ["Review component results."], "waiting": []},
+        {"id": "parts", "title": "Parts", "goal": "Trust the counts.", "why": "Reviewers need correct counts.",
+         "match": {"title_keywords": ["applicability"], "linear_projects": ["parts-project"]},
+         "next": [], "waiting": ["Approve the review."]}
+    ],
+    "completed": [
+        {"id": "part-ticket", "title": "Count reviewed", "linear_project": "parts-project", "completed": today},
+        {"id": "old-ticket", "title": "Earlier task", "project_token": "alpha", "completed": old_date},
+        {"id": "future-ticket", "title": "Not done yet", "completed": stamp(-86400 * 2)},
+        {"id": "bad-date", "title": "No proof of date", "completed": "unknown"}
+    ],
+    "needs": [{"t": "FOAK applicability review", "do": "Check the final count."}],
+    "next": {"do": "Review FOAK.", "why": "The summit needs it."}
+}
+json.dump(cur, open(home + "/data/keeper/curated.json", "w"))
+os.makedirs(home + "/state/.current-page", exist_ok=True)
+prs = [
+    {"url": "https://github.com/example/alpha/pull/11", "title": "FOAK applicability fix", "merged": stamp(3600)},
+    {"url": "https://github.com/example/alpha/pull/12", "title": "FOAK earlier fix", "merged": stamp(86400 * 2)},
+    {"url": "https://github.com/example/beta/pull/13", "title": "Unmapped task", "merged": stamp(3600)},
+    {"url": "https://github.com/example/alpha/pull/14", "title": "FOAK outside the week", "merged": stamp(86400 * 8)}
+]
+json.dump({"items": prs, "fetched": now}, open(home + "/state/.current-page/merged.json", "w"))
+open(home + "/data/done-archive.md", "w").write(
+    "- [x] archived-parts - FOAK applicability checked (repo: alpha) (kind: ship) (done " + today + ")\n"
+    "- [x] old-ticket - Duplicate archive record (repo: alpha) (kind: ship) (done " + old_date + ")\n")
+PY
+"$ROOT/bin/fm-current-page.sh" >/dev/null
+python3 - "$PAGE" <<'PY' || fail "initiative completion grouping or time windows differ"
+import html.parser, sys
+class P(html.parser.HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.cards, self.current, self.headings, self.h2 = {}, None, [], False
+    def handle_starttag(self, tag, attrs):
+        a = dict(attrs)
+        if tag == "article":
+            self.current = a["data-initiative"]
+            self.cards[self.current] = {"links": [], "text": ""}
+        if tag == "a" and self.current:
+            self.cards[self.current]["links"].append(a["href"])
+        self.h2 |= tag == "h2"
+    def handle_endtag(self, tag):
+        if tag == "article":
+            self.current = None
+        if tag == "h2":
+            self.h2 = False
+    def handle_data(self, text):
+        if self.current:
+            self.cards[self.current]["text"] += text
+        if self.h2:
+            self.headings.append(text)
+p = P()
+p.feed(open(sys.argv[1]).read())
+assert p.headings[0] == "Initiatives", p.headings
+assert p.cards["parts"]["links"] == ["https://github.com/example/alpha/pull/11"]
+assert p.cards["pilot"]["links"] == ["https://github.com/example/alpha/pull/12"]
+assert p.cards["other"]["links"] == ["https://github.com/example/beta/pull/13"]
+assert "Count reviewed" in p.cards["parts"]["text"]
+assert "applicability checked" in p.cards["parts"]["text"]
+assert p.cards["pilot"]["text"].count("Earlier task") == 1
+assert "Duplicate archive record" not in p.cards["pilot"]["text"]
+assert "Check the final count." in p.cards["parts"]["text"]
+assert "Review component results." in p.cards["pilot"]["text"]
+assert "Review FOAK." in p.cards["pilot"]["text"]
+text = "".join(c["text"] for c in p.cards.values())
+for missing in ("Not done yet", "No proof of date", "outside the week"):
+    assert missing not in text, missing
+PY
+pass "initiatives group merged PRs and retained Done records by specific evidence, with time bounds and Other"
+
 : > "$TMP_ROOT/watch.log"
 FM_CURRENT_PAGE_POLL=1 FM_CURRENT_PAGE_POLL_SECS=1 FM_CURRENT_PAGE_DEBOUNCE_SECS=1 \
   "$ROOT/bin/fm-current-page.sh" watch >"$TMP_ROOT/watch.log" 2>&1 &

@@ -1069,7 +1069,9 @@ function receipt(a,bare){const g=bare?"":glyph(a);
   +" &#183; Main: "+esc(a.reply.split("\n")[0])+'</summary><div class="rc-reply">'+esc(a.reply)+"</div></details>";}
 function tsOf(a){return(Date.parse(a.reply_at||a.at||"")||0)/1000;}
 function paint(){const shown=new Set(),now=Date.now()/1000;
- $$(".answer[data-ans]").forEach(b=>{const k=b.dataset.ans,a=S.sending[k]||S.ans[k],r=$(".receipt",b);if(b.closest(".pane,#factory"))shown.add(k);
+ // A receipt belongs to the question it answered: an earlier answer on the same backlog row with another title goes to Your answers.
+ $$(".answer[data-ans]").forEach(b=>{const k=b.dataset.ans,t=b.dataset.title,a0=S.sending[k]||S.ans[k];
+  const a=a0&&(S.sending[k]||!t||!a0.title||a0.title===t)?a0:null,r=$(".receipt",b);if(a&&b.closest(".pane,#factory"))shown.add(k);
   b.classList.toggle("busy",!!a&&a.state==="sending");$$(".ans-btn",b).forEach(x=>x.classList.toggle("chosen",!!a&&x.dataset.opt===a.answer));
   r.hidden=!a;if(a){r.classList.toggle("err",a.state==="error");r.innerHTML=receipt(a);}});
  const m=$("#mine");if(!m)return;

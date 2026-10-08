@@ -97,8 +97,8 @@ assert_contains "$needs" 'href=https://linear.app/x/issue/STA-1 STA-1' "a full U
 assert_not_contains "$page" 'data/x' "home data paths stay off the page"
 assert_not_contains "$needs" 'choose red or blue' "raw status lines never fill Needs you"
 assert_not_contains "$needs" 'call-old' "a call older than the window stays out of Needs you"
-assert_contains "$(page_part more-older-calls)" 'task=call-old' "an older call is folded under Everything else"
-assert_contains "$(page_part more-deferred-calls)" 'task=call-later' "a deferred call is folded separately"
+assert_contains "$(page_part held-older)" 'task=call-old' "an older call is held in its own pane group"
+assert_contains "$(page_part held-deferred)" 'task=call-later' "a deferred call is held separately"
 pass "without a curated file, Needs you holds only calls Main just opened"
 
 python3 - "$KEEP" "$now" <<'PY'
@@ -125,8 +125,8 @@ assert_not_contains "$needs" 'new, not summarized yet' "a curated need replaces 
 assert_not_contains "$page" 'Answered already' "a need whose backlog row is no longer held leaves the page"
 assert_not_contains "$needs" 'Deferred one' "a need whose call is deferred leaves Needs you now"
 assert_not_contains "$needs" 'Ask TJ to upgrade' "a need not re-checked in 2 h leaves Needs you now"
-assert_contains "$(page_part needs-stale)" 'Ask TJ to upgrade' "a need not re-checked in 2 h folds as stale"
-assert_contains "$(page_part needs-stale)" 'checked 3h ago' "a stale need says when it was last checked"
+assert_contains "$(page_part held-stale)" 'Ask TJ to upgrade' "a need not re-checked in 2 h is held as stale"
+assert_contains "$(page_part held-stale)" 'checked 3h ago' "a stale need says when it was last checked"
 assert_not_contains "$page" 'page keeper last checked' "a fresh keeper check raises no banner"
 pass "Needs you now holds only current, linked, aged needs"
 
@@ -138,7 +138,7 @@ assert_contains "$running" 'href=https://github.com/example/alpha/pull/7 PR #7' 
 assert_contains "$running" 'waiting on a decision from Main' "an open decision is named"
 assert_not_contains "$running" 'beta-scan' "a paused worker is not running"
 assert_not_contains "$page" 'gamma-gone' "a worker whose endpoint is gone is off the page"
-assert_contains "$(page_part more-parked)" 'kept alive for review' "a live paused worker folds with its status, not a stale keeper line"
+assert_contains "$(page_part parked)" 'kept alive for review' "a live paused worker sits under parked with its status, not a stale keeper line"
 assert_contains "$(page_part second-mates)" 'the far box needs a <b>disk</b> decision' "second mates show their routed status"
 assert_not_contains "$page" '<b>disk</b>' "status text is escaped"
 pass "Running shows live workers in plain words with their PR"
@@ -213,36 +213,38 @@ import html.parser, sys
 class P(html.parser.HTMLParser):
     def __init__(self):
         super().__init__()
-        self.section, self.group, self.groups = None, None, {}
+        self.depth, self.group, self.groups, self.links = 0, None, {}, []
     def handle_starttag(self, tag, attrs):
         a = dict(attrs)
-        if tag in ("section", "details") and a.get("id") in ("done", "more-week", "more-others"):
-            self.section = a["id"]
-        if tag == "div" and a.get("data-initiative"):
-            self.group = (self.section, a["data-initiative"])
-        key = self.group if self.section in ("done", "more-week") else (self.section, None)
-        if tag == "a" and self.section and key[0] == self.section:
-            self.groups.setdefault(key, []).append(a["href"])
+        if tag == "a" and a.get("href"):
+            self.links.append(a["href"])
+        if not self.depth and a.get("id") == "done":
+            self.depth = 1
+            return
+        if self.depth:
+            self.depth += 1
+            if a.get("data-initiative"):
+                self.group = a["data-initiative"]
+            if tag == "a":
+                self.groups.setdefault(self.group, []).append(a["href"])
     def handle_endtag(self, tag):
-        if tag == "section" and self.section == "done":
-            self.section, self.group = None, None
+        if self.depth:
+            self.depth -= 1
 p = P()
 p.feed(open(sys.argv[1]).read())
 pull = lambda n: f"https://github.com/example/{'beta' if n == 13 else 'alpha'}/pull/{n}"
-assert p.groups.get(("done", "parts")) == [pull(11)], p.groups
-assert p.groups.get(("done", "other")) == [pull(15)], p.groups
-assert p.groups.get(("more-week", "pilot")) == [pull(12)], p.groups
-assert p.groups.get(("more-others", None)) == [pull(13)], p.groups
-links = [h for hrefs in p.groups.values() for h in hrefs]
-assert pull(14) not in links, links
-assert links.count(pull(15)) == 1, links
+assert p.groups.get("parts") == [pull(11)], p.groups
+assert p.groups.get("other") == [pull(15)], p.groups
+for n in (12, 13, 14):
+    assert pull(n) not in p.links, (n, p.links)
+assert p.links.count(pull(15)) == 1, p.links
 PY
-done_text=$(page_part done)
+done_text=$(page_part "done")
 assert_contains "$done_text" 'Receipts show a diff' "a Done record that links a merged PR names the work once"
 assert_not_contains "$done_text" 'receipt diff' "the absorbed PR's own title is not repeated"
 assert_contains "$done_text" 'FOAK review packet sent' "a finished task archived today is done today"
 assert_contains "$done_text" 'Pilot review' "done work sits under its initiative"
-pass "Done today groups fleet work by initiative, once per piece of work, inside its time window"
+pass "Done today groups fleet work by initiative, once per piece of work; older work and others' merges stay in Linear and GitHub"
 
 for f in "$STATE"/.*open-decisions-cursor; do
   [ ! -e "$f" ] || fail "render wrote a drain cursor: $f"

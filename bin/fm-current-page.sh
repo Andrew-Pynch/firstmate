@@ -33,26 +33,34 @@
 # stay private: the wake drain's own cursors and presentation records are never
 # read or written, and rendering never claims or acknowledges a wake.
 #
-# Page, in order, built to be read in 30 seconds. Every item carries an age that
-# the page's own script keeps current between renders, and a banner appears when
-# the page itself stops updating for 10 minutes.
-#   Needs you now: curated needs re-checked within FM_CURRENT_PAGE_CONFIRM_HOURS
+# Page: one screen at 1440x900, four panes plus an inspector, driven from the
+# keyboard (? lists the keys: j/k move, h/l or Tab change pane, 1-4 jump,
+# Enter opens the selected item's link, y copies its command, / filters every
+# pane, L opens the keeper log). It keeps to what Linear does not hold and
+# links out for the rest through the curated `links`. Every item carries an
+# age the page script keeps current, and the page re-fetches itself every 10 s
+# and swaps its panes in place (no reload; the reader's pane, selection, and
+# filter stay), so a need that disappears scores as a cleared call. The top bar
+# reads STALE once the page has not re-rendered for 10 minutes.
+#   1 Needs you: curated needs re-checked within FM_CURRENT_PAGE_CONFIRM_HOURS
 #     (default 2), plus captain calls Main held within that window that no need
 #     covers yet. A need tied to a backlog row ("task") leaves the page the moment
 #     that row stops being an open captain hold (answered, released, done, or
-#     deferred). A need not re-checked within the window folds below as stale.
-#     Raw status lines never reach this section.
-#   Running: workers whose recorded local endpoint is present now and whose last
+#     deferred). Raw status lines never reach this pane.
+#   2 Running: workers whose recorded local endpoint is present now and whose last
 #     status is not paused, done, or failed, each with its PR link and the
 #     curated plain line (used only while re-checked within the window and newer
 #     than the worker's last status) or else that status reduced to plain words;
-#     then second mates by their routed status.
-#   Done today: merged PRs by the fleet's GitHub identity and finished tasks from
+#     then second mates by their routed status, then live but parked workers.
+#   3 Done today: merged PRs by the fleet's GitHub identity and finished tasks from
 #     the last 24 h, grouped by initiative. A Done record that links a merged PR
-#     absorbs it, so one piece of work shows once.
-#   Everything else, folded: older and deferred captain calls, live but parked
-#     workers, earlier this week by initiative, PRs merged by others today, and
-#     the keeper notes.
+#     absorbs it, so one piece of work shows once. Older work and PRs merged by
+#     others stay in Linear and GitHub.
+#   4 Held calls: needs not re-checked within the window, older captain calls, and
+#     calls deferred to a later date.
+#
+# Keeper contract: exactly one keeper (an Opus worker) edits only the curated file
+# and the notes file, re-checking every need at least every FM_CURRENT_PAGE_CONFIRM_HOURS.
 #
 # Curated file (keeper-maintained JSON object):
 #   checked "<ISO time>" or epoch               the keeper's last full re-check
@@ -74,6 +82,7 @@
 #   plain  {"<task-id>": {"text", "at"}}        worker line and when it was written
 #   hide   ["<task-id>", ...]                   workers left off the page
 #   mates  {"<id>": {"machine", "scope"}}       secondmate host and scope
+#   links  [{"label", "url"}]                   link-outs in the top bar (O opens the first)
 #   initiatives [{"id", "title", "match"}]
 #          "match": {"project_tokens": [...], "linear_projects": [...],
 #                    "title_keywords": [...]} uses OR within and across lists.
@@ -87,7 +96,7 @@
 #          count, never an In Review or cancelled item.
 # A date-only completion counts as today on its own date. A missing or
 # malformed file is named in a banner, and Needs you then shows only new calls.
-# The notes format and legacy Markdown fallback are owned by fm-current-page.py's header.
+# The notes format is owned by fm-current-page.py's header; bin/fm_md.py renders all Markdown.
 #
 # Trigger. `watch` stays in the foreground and renders on every change to a
 # state/*.status or state/*.meta file, data/backlog.md, the notes file, or the

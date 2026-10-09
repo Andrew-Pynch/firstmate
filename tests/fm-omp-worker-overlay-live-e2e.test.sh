@@ -38,7 +38,7 @@ fm_live_gate default-on FM_OMP_WORKER_OVERLAY_LIVE_E2E omp jq
 # updates this constant in the same commit.
 EXPECTED_ADVISOR=openai-codex/gpt-6.1-sol:high
 EXPECTED_PROVIDER=${EXPECTED_ADVISOR%%/*}
-EXPECTED_MODEL=${EXPECTED_ADVISOR%%:*}
+EXPECTED_MODEL=${EXPECTED_ADVISOR%:high}
 # The posture of the host profile the guard stands in for: a different advisor,
 # switched off, plus a `slow` model omp would resolve an unset advisor role to.
 CONFLICT_ADVISOR=xai-oauth/grok-4.6:high

@@ -537,9 +537,10 @@ EOF
 # the proof would also find), `--no-extensions` drops extension tools, which
 # `--tools` does not filter, and `--approval-mode always-ask` denies headless
 # every write- or exec-tier call the host's own `tools.approval` policy does not
-# explicitly allow, which covers configured MCP tools. A host policy that
-# explicitly allows a mutating MCP tool is the remaining gap.
-# The advisor's own tools are read-tier.
+# explicitly allow, which covers configured MCP tools. With omp's default
+# advisor roster the advisor gets only read-tier tools. Host configuration can
+# still reopen the gap: a `tools.approval` allow policy for a mutating tool,
+# especially together with a WATCHDOG.yml advisor `tools` list granting one.
 # Returns 1 when the overlay names no advisor role under modelRoles.
 fm_sol_review_step() {  # <fm-root>
   local overlay="$1/.omp/fm-worker-overlay.yml" pin q_overlay q_pin

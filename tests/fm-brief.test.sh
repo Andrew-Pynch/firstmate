@@ -355,6 +355,46 @@ test_pr_based_dod_requires_non_draft() {
   pass "fm-brief.sh: PR-based done requires a non-draft PR; a deliberate draft declares a wait"
 }
 
+# Every PR-based ship consults Sol, the omp advisor the tracked worker overlay
+# pins, on its full diff at the PR handoff: before the push in direct-PR, before
+# the pipeline-starting done in no-mistakes. local-only opens no PR. The rendered
+# command must parse as shell and name the overlay under this Firstmate root.
+test_pr_based_dod_consults_sol_before_pr() {
+  local home mode id brief cmd sol_line handoff_line handoff
+  home="$TMP_ROOT/sol-dod-home"
+  mkdir -p "$home/data"
+  for mode in no-mistakes direct-PR local-only; do
+    id="brief-sol-$mode"
+    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode "$mode" >/dev/null 2>&1
+    brief="$home/data/$id/brief.md"
+    assert_present "$brief" "$mode: brief was not scaffolded"
+    if [ "$mode" = local-only ]; then
+      assert_no_grep "Have Sol review" "$brief" "$mode: a branch-only delivery opens no PR to review before"
+      continue
+    fi
+    # shellcheck disable=SC2016  # single quotes are deliberate: the backticks must stay literal
+    cmd=$(sed -n 's/^`\(d=.* omp -p --advisor .*\)`, where `<base>` is the branch you started from\.$/\1/p' "$brief")
+    [ -n "$cmd" ] || fail "$mode: brief did not render the headless Sol review command"
+    bash -n -c "$cmd" 2>/dev/null || fail "$mode: the rendered Sol review command does not parse as shell: $cmd"
+    case "$cmd" in
+      *"--config '$ROOT/.omp/fm-worker-overlay.yml'"*) ;;
+      *) fail "$mode: the Sol review command does not name this root's tracked worker overlay: $cmd" ;;
+    esac
+    [ -f "$ROOT/.omp/fm-worker-overlay.yml" ] || fail "the worker overlay the Sol review names is missing"
+    # shellcheck disable=SC2016  # single quotes are deliberate: the backticks must stay literal
+    case "$mode" in
+      direct-PR) handoff='^Then push your branch and open a PR' ;;
+      no-mistakes) handoff='^Then append `done \[at=<epoch>\]: {summary}`' ;;
+    esac
+    sol_line=$(grep -n '^Have Sol review your full diff' "$brief" | cut -d: -f1)
+    handoff_line=$(grep -n "$handoff" "$brief" | cut -d: -f1)
+    [ -n "$sol_line" ] && [ -n "$handoff_line" ] && [ "$sol_line" -lt "$handoff_line" ] \
+      || fail "$mode: the Sol review must come before the PR handoff (sol line '$sol_line', handoff line '$handoff_line')"
+    assert_grep 'Sol reviewed' "$brief" "$mode: the PR description must record that Sol reviewed the diff"
+  done
+  pass "fm-brief.sh: PR-based ships consult Sol on the full diff before the PR; local-only does not"
+}
+
 # Pin the specific line the bug lived on: the no-mistakes DOD's no-mistakes
 # reference must render as plain prose with no dangling apostrophe artifact.
 test_no_mistakes_dod_wording() {
@@ -1101,6 +1141,7 @@ test_ship_mode_is_required_and_closed_set
 test_ship_mode_is_explicit_not_registry
 test_delivery_flags_are_refused_where_they_do_not_apply
 test_faster_paths_use_configured_authority_without_stacked_review
+test_pr_based_dod_consults_sol_before_pr
 test_no_mistakes_dod_wording
 test_no_mistakes_dod_green_detection
 test_pr_based_dod_requires_non_draft

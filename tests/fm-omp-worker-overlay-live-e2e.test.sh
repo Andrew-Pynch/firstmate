@@ -3,12 +3,12 @@
 #
 # What a worker session's advisor resolves to is a fact only the installed omp
 # can answer: `--config` is one config layer among several, and omp resolves an
-# unset `advisor` role through its `slow` priority chain, a premium reasoning
-# model. No fixture can prove which layer wins, so this guard gives the live
-# agent profile a temporary, higher-priority host overlay with a deliberately
-# premium advisor, then asserts the tracked worker overlay beats it twice:
-# through omp's own config dump and through a real session's `/advisor status`
-# report. The live profile supplies only authentication and is never written.
+# unset `advisor` role through its `slow` priority chain. No fixture can prove
+# which layer wins, so this guard gives the live agent profile a temporary,
+# higher-priority host overlay with a different advisor switched off, then
+# asserts the tracked worker overlay beats it twice: through omp's own config
+# dump and through a real session's `/advisor status` report. The live profile
+# supplies only authentication and is never written.
 # It fails naming omp and the reported text instead of degrading quietly.
 #
 # The first half needs no model and no credential, so it always runs. The second
@@ -36,11 +36,11 @@ fm_live_gate default-on FM_OMP_WORKER_OVERLAY_LIVE_E2E omp jq
 
 # The pin this guard exists to defend. A deliberate change to the worker advisor
 # updates this constant in the same commit.
-EXPECTED_ADVISOR=deepseek/deepseek-v4-flash
+EXPECTED_ADVISOR=openai-codex/gpt-6.1-sol:high
 EXPECTED_PROVIDER=${EXPECTED_ADVISOR%%/*}
-# The posture of the host profile the guard stands in for: the premium advisor
-# role the overlay has to beat, and the premium model omp resolves an unset
-# advisor role to through its `slow` chain.
+EXPECTED_MODEL=${EXPECTED_ADVISOR%%:*}
+# The posture of the host profile the guard stands in for: a different advisor,
+# switched off, plus a `slow` model omp would resolve an unset advisor role to.
 CONFLICT_ADVISOR=xai-oauth/grok-4.6:high
 CONFLICT_SLOW=openai-codex/gpt-5.6-sol:high
 
@@ -54,33 +54,40 @@ cleanup() {
 trap cleanup EXIT
 
 HOST_OVERLAY="$TMP_ROOT/host.yml"
-printf 'advisor:\n  enabled: true\nmodelRoles:\n  advisor: %s\n  slow: %s\n' \
+printf 'advisor:\n  enabled: false\nmodelRoles:\n  advisor: %s\n  slow: %s\n' \
   "$CONFLICT_ADVISOR" "$CONFLICT_SLOW" > "$HOST_OVERLAY"
 
 # The advisor role omp resolves from the config layers alone. `config get`
 # reports the merged record without calling a model or consulting a credential,
 # so this half is deterministic on any machine.
-layer_advisor() { # <worker overlay, empty for host layer only>
+layer_setting() { # <setting> <jq filter> <worker overlay, empty for host layer only>
   (
     cd "$TMP_ROOT" &&
-      PI_CONFIG_FILES="$HOST_OVERLAY${1:+:$1}" omp config get modelRoles --json 2>/dev/null
-  ) | jq -r '.value.advisor // ""'
+      PI_CONFIG_FILES="$HOST_OVERLAY${3:+:$3}" omp config get "$1" --json 2>/dev/null
+  ) | jq -r "$2"
 }
+layer_advisor() { layer_setting modelRoles '.value.advisor // ""' "$1"; }
+layer_enabled() { layer_setting advisor.enabled '.value | tostring' "$1"; }
 
 host_layer=$(layer_advisor '')
-[ "$host_layer" = "$CONFLICT_ADVISOR" ] \
-  || fail "omp $OMP_VERSION did not read the guard's isolated host profile, so the pin cannot be shown to beat it: got '$host_layer'"
-pass "omp $OMP_VERSION: the isolated host profile resolves its premium advisor $CONFLICT_ADVISOR"
+host_enabled=$(layer_enabled '')
+[ "$host_layer" = "$CONFLICT_ADVISOR" ] && [ "$host_enabled" = false ] \
+  || fail "omp $OMP_VERSION did not read the guard's isolated host profile, so the pin cannot be shown to beat it: got advisor '$host_layer', enabled '$host_enabled'"
+pass "omp $OMP_VERSION: the isolated host profile resolves advisor $CONFLICT_ADVISOR, switched off"
 
 pinned_layer=$(layer_advisor "$OVERLAY")
 [ "$pinned_layer" = "$EXPECTED_ADVISOR" ] \
   || fail "the tracked overlay does not pin the worker advisor to $EXPECTED_ADVISOR; omp $OMP_VERSION resolved '$pinned_layer' from the config layers"
-pass "omp $OMP_VERSION: the tracked overlay pins the worker advisor role to $EXPECTED_ADVISOR over the premium host profile"
+pinned_enabled=$(layer_enabled "$OVERLAY")
+[ "$pinned_enabled" = true ] \
+  || fail "the tracked overlay does not switch the worker advisor on; omp $OMP_VERSION resolved advisor.enabled '$pinned_enabled' from the config layers"
+pass "omp $OMP_VERSION: the tracked overlay pins the worker advisor role to $EXPECTED_ADVISOR and switches it on over the host profile"
 
 # The same pin as a real session reports it, through omp's rpc builtin dispatch,
-# which starts no turn. omp only builds an advisor for a provider it holds a
-# credential for, so this reports `no_model` on a machine without one and is
-# gated rather than asserted there.
+# which starts no turn. The host profile switches the advisor off, so a running
+# advisor proves the overlay's switch too. omp only builds an advisor for a
+# provider it holds a credential for, so this reports `no_model` on a machine
+# without one and is gated rather than asserted there.
 session_advisor() {
   (
     cd "$TMP_ROOT" &&
@@ -92,20 +99,20 @@ session_advisor() {
 if omp token "$EXPECTED_PROVIDER" >/dev/null 2>&1; then
   reported=$(session_advisor)
   case "$reported" in
-    *"($EXPECTED_PROVIDER/"*) ;;
-    *) fail "a session carrying the tracked overlay did not run an advisor on $EXPECTED_PROVIDER; omp $OMP_VERSION reported: $reported" ;;
+    *"($EXPECTED_MODEL)"*) ;;
+    *) fail "a session carrying the tracked overlay did not run an advisor on $EXPECTED_MODEL; omp $OMP_VERSION reported: $reported" ;;
   esac
   while IFS= read -r line; do
     case "$line" in
       "  • "*"[paused]"*) ;;
       "  • "*)
         case "$line" in
-          *" ($EXPECTED_PROVIDER/"*) ;;
-          *) fail "a session carrying the tracked overlay ran a non-$EXPECTED_PROVIDER advisor; omp $OMP_VERSION reported: $reported" ;;
+          *" ($EXPECTED_MODEL)"*) ;;
+          *) fail "a session carrying the tracked overlay ran an advisor other than $EXPECTED_MODEL; omp $OMP_VERSION reported: $reported" ;;
         esac ;;
     esac
   done <<<"$reported"
-  pass "omp $OMP_VERSION: every running advisor in a session carrying the tracked overlay uses $EXPECTED_PROVIDER"
+  pass "omp $OMP_VERSION: every running advisor in a session carrying the tracked overlay uses $EXPECTED_MODEL"
 else
   printf 'skip: %s is not authenticated here, so the live session advisor report is unavailable\n' "$EXPECTED_PROVIDER"
 fi

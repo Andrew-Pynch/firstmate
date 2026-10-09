@@ -195,12 +195,12 @@
 #   directory with --cwd, and passes the tracked worker posture overlay
 #   .omp/fm-worker-overlay.yml through --config. That overlay pins composer
 #   shape, plan mode off, prewalk off, the non-interactive usage-reserve
-#   policy, and the advisor role a worker session reviews its own turns with,
-#   for the one session only (--auto-approve alone owns approval); the
-#   captain's own ~/.omp/agent/config.yml (model roles, providers, theme) is
-#   never written, and the advisor pin is what keeps every worker's per-turn
-#   review off the premium model a host profile would otherwise assign or that
-#   an unset advisor role falls through to.
+#   policy, and the advisor (enabled, with its role pinned) that reviews a
+#   worker session's own turns, for the one session only (--auto-approve alone
+#   owns approval); the captain's own ~/.omp/agent/config.yml (model roles,
+#   providers, theme) is never written, and the advisor pin is what gives every
+#   worker the same reviewer whatever advisor a host profile assigns or an
+#   unset advisor role falls through to.
 #   A model written as <provider>/<id> is validated against `omp models --json`
 #   only when that provider appears in the listing; a provider absent from the
 #   listing (an extension-registered provider such as claude-bridge, which omp

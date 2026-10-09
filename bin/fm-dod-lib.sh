@@ -18,9 +18,10 @@
 # pr_head= in no-mistakes mode, or a recorded merge
 # (state/<id>.pr-poll-merge-notified). Teardown's landed-work test remains the
 # complete discard gate.
-# fm_dod_block <no-mistakes|direct-PR|local-only> <task-id> prints the block on
-# stdout with no trailing blank line. The caller validates the mode; an unknown
-# mode is refused rather than silently rendered as the pipeline contract.
+# fm_dod_block <no-mistakes|direct-PR|local-only> <task-id> <fm-root> prints the
+# block on stdout with no trailing blank line. The caller validates the mode; an
+# unknown mode is refused rather than silently rendered as the pipeline contract.
+# <fm-root> locates the tracked omp worker overlay the Sol review step names.
 # The block opens with the fixed machine-readable "Delivery contract: mode=<mode>"
 # line that bin/fm-spawn.sh checks a ship brief against.
 # The two PR-based blocks require a non-draft pull request before the done
@@ -522,8 +523,27 @@ fm_ask_user_escalation_block() {  # <data-dir> <task-id>
 EOF
 }
 
-fm_dod_block() {  # <mode> <task-id>
-  local mode=$1 id=$2
+# The Sol review step both PR-based blocks render at their PR handoff: the
+# worker runs the omp advisor headless on its full diff, so a worker on any
+# harness gets the review. The advisor role is pinned by .omp/fm-worker-overlay.yml.
+# In omp's headless print mode the advisor reviews the turn and print mode waits
+# for it to drain; the run still exits 0 when no advisor model resolves, so the
+# step proves the review by the `advisor_yielded` event and the advisor's own
+# transcript in the session directory, never by the exit code.
+fm_sol_review_step() {  # <fm-root>
+  local root=$1
+  cat <<EOF
+Have Sol review your full diff for defects, security slips, and missed tests.
+Sol is the omp advisor that Firstmate's worker overlay pins; run it headless, which works from any worker tool:
+\`d=\$(git rev-parse --git-path fm-sol-review) && mkdir -p "\$d" && git diff <base>...HEAD > "\$d/branch.diff" && OMP_SKIP_SETUP=1 omp -p --advisor --config '$root/.omp/fm-worker-overlay.yml' --session-dir "\$d" --mode json "Review the attached diff for defects, security slips, and missed tests." "@\$d/branch.diff" > "\$d/review.jsonl"\`, where \`<base>\` is the branch you started from.
+Sol reviewed the diff only when \`review.jsonl\` holds an \`advisor_yielded\` event and \`\$d\` holds an advisor transcript (\`find "\$d" -name '__advisor*.jsonl'\`); if not, report \`blocked:\` instead of skipping the review.
+Read the reply and every Sol note (\`jq -r 'select(.type == "message_end" and .message.customType == "advisor") | .message.content' "\$d/review.jsonl"\`), fix each actionable finding within this task, and review again if that changed the diff.
+EOF
+}
+
+fm_dod_block() {  # <mode> <task-id> <fm-root>
+  local mode=$1 id=$2 root=$3 sol
+  sol=$(fm_sol_review_step "$root")
   case "$mode" in
     direct-PR)
       cat <<EOF
@@ -531,7 +551,9 @@ fm_dod_block() {  # <mode> <task-id>
 Delivery contract: mode=direct-PR
 This task ships **direct-PR**: you raise the PR yourself, without the no-mistakes pipeline.
 The task is complete only when committed on your branch.
-When it is implemented and committed, push your branch and open a PR with \`gh-axi\` that is ready for review, not a draft.
+When it is implemented and committed, before you push:
+$sol
+Then push your branch and open a PR with \`gh-axi\` that is ready for review, not a draft, and write \`Sol reviewed\` in its description.
 Before you report done, read the PR back from the forge and confirm it is not a draft (\`gh pr view <url> --json isDraft\` must print false); if it is a draft, mark it ready with \`gh-axi pr ready\`.
 A draft cannot be merged, so a done report on one leaves the merge unasked.
 Then append \`done [at=<epoch>]: PR {url}\` to the status file and stop.
@@ -557,7 +579,9 @@ EOF
 # Definition of done
 Delivery contract: mode=no-mistakes
 The task is complete only when committed on your branch.
-When you believe it is complete, append \`done [at=<epoch>]: {summary}\` to the status file and stop.
+When you believe it is complete, and before your first \`done:\`:
+$sol
+Then append \`done [at=<epoch>]: {summary}\` to the status file and stop.
 Firstmate will then instruct you to run /no-mistakes to validate and ship a PR.
 That first \`done:\` is the handoff that starts the pipeline, which owns the push; it is not a request to push from this copy.
 
@@ -590,6 +614,7 @@ Two firstmate-specific rules layer on top of that guidance:
 
 After /no-mistakes reports CI green (the CI-ready return point - do not wait for it to keep monitoring in the background until merge), read the PR back from the forge and confirm it is not a draft (\`gh pr view <url> --json isDraft\` must print false); if it is a draft, mark it ready with \`gh-axi pr ready\`.
 A draft cannot be merged, so a done report on one leaves the merge unasked.
+Add a \`Sol reviewed\` line to the PR description with \`gh-axi pr edit\`; that edit is not a commit.
 Then append \`done [at=<epoch>]: PR {url} checks green\` and stop. You are finished.
 That CI-ready \`done:\` is accepted only when this copy's HEAD - your latest commit - is one the /no-mistakes run pushed, so commit nothing after the run; the check tests that commit, not merely that a branch moved.
 If you deliberately keep the PR a draft, append \`paused [at=<epoch>]: {why the draft is held}\` instead of done.

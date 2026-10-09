@@ -542,7 +542,9 @@ fm_sol_review_step() {  # <fm-root>
   local overlay="$1/.omp/fm-worker-overlay.yml" pin q_overlay q_pin
   pin=$(awk '/^[^ #]/ { roles = ($0 ~ /^modelRoles:/) }
     roles && /^  advisor:/ { sub(/^  advisor:[ ]*/, ""); sub(/[ ]+#.*$/, ""); gsub(/["\047]/, ""); print; exit }' "$overlay" 2>/dev/null)
-  pin=${pin%%:*}
+  case "${pin##*:}" in
+    inherit|off|minimal|low|medium|high|xhigh|max) pin=${pin%:*} ;;
+  esac
   [ -n "$pin" ] || {
     echo "error: fm_sol_review_step: no modelRoles advisor pin in $overlay" >&2
     return 1

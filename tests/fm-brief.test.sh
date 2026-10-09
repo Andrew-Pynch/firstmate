@@ -402,17 +402,27 @@ test_pr_based_dod_consults_sol_before_pr() {
 # an unfilled base or an empty diff never reaches omp, and the proof line
 # accepts only a completed answer from the pinned model in this run's own
 # transcript, so a failed, fallback, or earlier successful run cannot pass.
+# The fixture overlay carries the YAML forms the pin read must survive: a
+# top-level `advisor:` block, a quoted value, a comment, a colon inside the
+# model id, and a thinking suffix. An overlay with no advisor role refuses.
 test_sol_review_commands_prove_only_a_completed_sol_answer() {
-  local home brief block run proof pin repo fakebin out
+  local home root brief block run proof pin repo fakebin out rc
+  pin=ollama/llama3:8b
   home="$TMP_ROOT/sol-run-home"
-  mkdir -p "$home/data"
-  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-sol-run some-proj --mode direct-PR >/dev/null 2>&1
+  root="$TMP_ROOT/sol-run-root"
+  mkdir -p "$home/data" "$root/.omp"
+  printf '%s\n' 'advisor:' '  enabled: true' 'modelRoles:' '  default: x/y' \
+    "  advisor: \"$pin:high\"  # fixture" > "$root/.omp/fm-worker-overlay.yml"
+  FM_HOME="$home" FM_ROOT_OVERRIDE="$root" "$ROOT/bin/fm-brief.sh" brief-sol-run some-proj --mode direct-PR >/dev/null 2>&1
   brief="$home/data/brief-sol-run/brief.md"
   block=$(sol_review_block "$brief")
   run=$(printf '%s\n' "$block" | sed -n 2p)
   proof=$(printf '%s\n' "$block" | sed -n 3p)
-  pin=$(printf '%s\n' "$proof" | sed -n 's/.*--arg m \([^ ]*\) .*/\1/p')
-  [ -n "$run" ] && [ -n "$proof" ] && [ -n "$pin" ] || fail "could not read the rendered Sol review commands: $block"
+  [ -n "$run" ] && [ -n "$proof" ] || fail "could not read the rendered Sol review commands: $block"
+  printf '%s\n' 'modelRoles:' '  default: x/y' > "$root/.omp/fm-worker-overlay.yml"
+  rc=0
+  FM_HOME="$home" FM_ROOT_OVERRIDE="$root" "$ROOT/bin/fm-brief.sh" brief-sol-nopin some-proj --mode direct-PR >/dev/null 2>&1 || rc=$?
+  [ "$rc" -ne 0 ] || fail "a PR-based brief rendered a Sol review from an overlay with no advisor role"
   repo="$TMP_ROOT/sol-run-repo"
   fakebin="$TMP_ROOT/sol-run-bin"
   mkdir -p "$repo" "$fakebin"
@@ -452,7 +462,7 @@ test_sol_review_commands_prove_only_a_completed_sol_answer() {
   [ -z "$out" ] || fail "a failed advisor answer passed the proof, even after an earlier successful run"
   out=$(sol_run HEAD~1 openai-codex/gpt-6-astra stop)
   [ -z "$out" ] || fail "a fallback advisor model passed the proof"
-  pass "fm-brief.sh: the Sol review refuses an unfilled base or empty diff and proves only a completed answer from $pin"
+  pass "fm-brief.sh: the Sol review refuses an unfilled base, empty diff, or unpinned overlay and proves only a completed answer from the pinned model"
 }
 
 # Pin the specific line the bug lived on: the no-mistakes DOD's no-mistakes

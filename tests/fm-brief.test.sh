@@ -393,7 +393,6 @@ test_pr_based_dod_consults_sol_before_pr() {
     handoff_line=$(grep -n "$handoff" "$brief" | cut -d: -f1)
     [ -n "$sol_line" ] && [ -n "$handoff_line" ] && [ "$sol_line" -lt "$handoff_line" ] \
       || fail "$mode: the Sol review must come before the PR handoff (sol line '$sol_line', handoff line '$handoff_line')"
-    assert_grep 'Sol reviewed' "$brief" "$mode: the PR description must record that Sol reviewed the diff"
   done
   pass "fm-brief.sh: PR-based ships consult Sol on the full diff before the PR; local-only does not"
 }

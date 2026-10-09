@@ -534,9 +534,10 @@ EOF
 # advisor transcript, in a fresh directory per run, never the exit code.
 # The review session must not change the worker's copy: `--tools` keeps its
 # built-in tools to read, grep, and glob (no subagents whose advisor transcripts
-# the proof would also find), and `--approval-mode always-ask` denies every
-# write- or exec-tier call headless, which covers the configured MCP tools that
-# `--tools` does not filter. The advisor's own tools are read-tier.
+# the proof would also find), and `--approval-mode always-ask` denies headless
+# every write- or exec-tier call the host's own `tools.approval` policy does not
+# explicitly allow, which covers the configured MCP tools `--tools` does not
+# filter. The advisor's own tools are read-tier.
 # Returns 1 when the overlay names no advisor role under modelRoles.
 fm_sol_review_step() {  # <fm-root>
   local overlay="$1/.omp/fm-worker-overlay.yml" pin q_overlay q_pin
@@ -561,7 +562,7 @@ find "\$d" -name '__advisor*.jsonl' -exec cat {} + | jq -e --arg m $q_pin 'selec
 jq -r 'select(.type == "message_end") | .message | if .customType == "advisor" then .content elif .role == "assistant" then (.content[]? | select(.type == "text") | .text) else empty end' "\$d/review.jsonl"
 \`\`\`
 The \`find\` line is the proof: it prints \`Sol reviewed\` only when this run's advisor transcript holds a completed answer from \`$pin\`; if it prints nothing, report \`blocked:\` instead of skipping the review.
-The last line prints the review reply and every Sol note; fix each actionable finding within this task, and review the changed diff again, at most twice more; list any finding you leave open in the PR description.
+The last line prints the review reply and every Sol note; fix each actionable finding within this task, commit the fixes, and review the new diff again, at most twice more; list any finding you leave open in the PR description.
 EOF
 }
 

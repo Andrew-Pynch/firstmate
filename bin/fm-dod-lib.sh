@@ -532,14 +532,16 @@ EOF
 # advisor still emits `advisor_yielded` and leaves a transcript. So the proof is
 # a completed (`stopReason` stop) answer from the pinned model in this run's own
 # advisor transcript, in a fresh directory per run, never the exit code.
-# The review session's primary model gets read-only tools (`--tools`) so it
-# cannot edit the worker's copy or spawn subagents whose advisor transcripts the
-# proof would also find; the advisor builds its own read-only tool set.
+# The review session must not change the worker's copy: `--tools` keeps its
+# built-in tools to read, grep, and glob (no subagents whose advisor transcripts
+# the proof would also find), and `--approval-mode always-ask` denies every
+# write- or exec-tier call headless, which covers the configured MCP tools that
+# `--tools` does not filter. The advisor's own tools are read-tier.
 # Returns 1 when the overlay names no advisor role under modelRoles.
 fm_sol_review_step() {  # <fm-root>
   local overlay="$1/.omp/fm-worker-overlay.yml" pin q_overlay q_pin
   pin=$(awk '/^[^ #]/ { roles = ($0 ~ /^modelRoles:/) }
-    roles && /^  advisor:/ { sub(/^  advisor:[ ]*/, ""); sub(/[ ]+#.*$/, ""); print; exit }' "$overlay" 2>/dev/null)
+    roles && /^  advisor:/ { sub(/^  advisor:[ ]*/, ""); sub(/[ ]+#.*$/, ""); gsub(/["\047]/, ""); print; exit }' "$overlay" 2>/dev/null)
   pin=${pin%%:*}
   [ -n "$pin" ] || {
     echo "error: fm_sol_review_step: no modelRoles advisor pin in $overlay" >&2
@@ -552,7 +554,7 @@ Have Sol review your full diff for defects, security slips, and missed tests.
 Sol is the omp advisor that Firstmate's worker overlay pins (\`$pin\`); run omp headless, which works from any worker tool, with \`base\` set to the branch or commit you started from:
 \`\`\`sh
 base='<base>'
-d=\$(mktemp -d "\$(git rev-parse --git-path fm-sol-review).XXXXXX") && git diff "\$base...HEAD" > "\$d/branch.diff" && [ -s "\$d/branch.diff" ] && OMP_SKIP_SETUP=1 omp -p --advisor --tools read,grep,glob --config $q_overlay --session-dir "\$d" --mode json "Review the attached diff for defects, security slips, and missed tests." "@\$d/branch.diff" > "\$d/review.jsonl"
+d=\$(mktemp -d "\$(git rev-parse --git-path fm-sol-review).XXXXXX") && git diff "\$base...HEAD" > "\$d/branch.diff" && [ -s "\$d/branch.diff" ] && OMP_SKIP_SETUP=1 omp -p --advisor --tools read,grep,glob --approval-mode always-ask --config $q_overlay --session-dir "\$d" --mode json "Review the attached diff for defects, security slips, and missed tests." "@\$d/branch.diff" > "\$d/review.jsonl"
 find "\$d" -name '__advisor*.jsonl' -exec cat {} + | jq -e --arg m $q_pin 'select(.message.role? == "assistant" and "\\(.message.provider)/\\(.message.model)" == \$m and .message.stopReason == "stop")' > /dev/null && echo 'Sol reviewed'
 jq -r 'select(.type == "message_end") | .message | if .customType == "advisor" then .content elif .role == "assistant" then (.content[]? | select(.type == "text") | .text) else empty end' "\$d/review.jsonl"
 \`\`\`

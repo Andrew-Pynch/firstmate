@@ -556,7 +556,7 @@ fm_sol_review_step() {  # <fm-root>
   q_pin=$(printf '%q' "$pin")
   cat <<EOF
 Have Sol review your full diff for defects, security slips, and missed tests.
-Sol is the omp advisor that Firstmate's worker overlay pins (\`$pin\`); run this block headless in one shell, which works from any worker tool, with \`base\` set to the branch or commit you started from:
+Sol is the omp advisor that Firstmate's worker overlay pins (\`$pin\`); run this block headless in one shell with a command timeout of at least 15 minutes (omp waits up to 10 minutes for Sol), which works from any worker tool, with \`base\` set to the branch or commit you started from:
 \`\`\`sh
 base='<base>'
 d=\$(mktemp -d "\$(git rev-parse --git-path fm-sol-review).XXXXXX") && git diff "\$base...HEAD" > "\$d/branch.diff" && [ -s "\$d/branch.diff" ] && OMP_SKIP_SETUP=1 omp -p --advisor --tools read,grep,glob --no-extensions --approval-mode always-ask --config $q_overlay --session-dir "\$d" --mode json "Review the attached diff for defects, security slips, and missed tests." "@\$d/branch.diff" > "\$d/review.jsonl"

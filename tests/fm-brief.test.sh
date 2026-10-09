@@ -404,7 +404,8 @@ test_pr_based_dod_consults_sol_before_pr() {
 # transcript, so a failed, fallback, or earlier successful run cannot pass.
 # The fixture overlay carries the YAML forms the pin read must survive: a
 # top-level `advisor:` block, a quoted value, a comment, a colon inside the
-# model id, and a thinking suffix. An overlay with no advisor role refuses.
+# model id, a thinking suffix, and trailing whitespace. An overlay with no
+# advisor role refuses.
 test_sol_review_commands_prove_only_a_completed_sol_answer() {
   local home root brief block run proof pin repo fakebin out rc
   pin=ollama/llama3:8b
@@ -419,6 +420,10 @@ test_sol_review_commands_prove_only_a_completed_sol_answer() {
   run=$(printf '%s\n' "$block" | sed -n 2p)
   proof=$(printf '%s\n' "$block" | sed -n 3p)
   [ -n "$run" ] && [ -n "$proof" ] || fail "could not read the rendered Sol review commands: $block"
+  printf '%s\n' 'modelRoles:' "  advisor: $pin:high " > "$root/.omp/fm-worker-overlay.yml"
+  FM_HOME="$home" FM_ROOT_OVERRIDE="$root" "$ROOT/bin/fm-brief.sh" brief-sol-trail some-proj --mode direct-PR >/dev/null 2>&1
+  [ "$(sol_review_block "$home/data/brief-sol-trail/brief.md" | sed -n 3p)" = "$proof" ] \
+    || fail "trailing whitespace after the advisor pin changed the model the proof names"
   printf '%s\n' 'modelRoles:' '  default: x/y' > "$root/.omp/fm-worker-overlay.yml"
   rc=0
   FM_HOME="$home" FM_ROOT_OVERRIDE="$root" "$ROOT/bin/fm-brief.sh" brief-sol-nopin some-proj --mode direct-PR >/dev/null 2>&1 || rc=$?

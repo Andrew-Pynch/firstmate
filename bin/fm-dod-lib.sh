@@ -544,7 +544,7 @@ EOF
 fm_sol_review_step() {  # <fm-root>
   local overlay="$1/.omp/fm-worker-overlay.yml" pin q_overlay q_pin
   pin=$(awk '/^[^ #]/ { roles = ($0 ~ /^modelRoles:/) }
-    roles && /^  advisor:/ { sub(/^  advisor:[ ]*/, ""); sub(/[ ]+#.*$/, ""); gsub(/["\047]/, ""); print; exit }' "$overlay" 2>/dev/null)
+    roles && /^  advisor:/ { sub(/^  advisor:[ \t]*/, ""); sub(/[ \t]+#.*$/, ""); sub(/[ \t]+$/, ""); gsub(/["\047]/, ""); print; exit }' "$overlay" 2>/dev/null)
   case "${pin##*:}" in
     inherit|off|minimal|low|medium|high|xhigh|max) pin=${pin%:*} ;;
   esac

@@ -525,25 +525,43 @@ EOF
 
 # The Sol review step both PR-based blocks render at their PR handoff: the
 # worker runs the omp advisor headless on its full diff, so a worker on any
-# harness gets the review. The advisor role is pinned by .omp/fm-worker-overlay.yml.
-# In omp's headless print mode the advisor reviews the turn and print mode waits
-# for it to drain; the run still exits 0 when no advisor model resolves, so the
-# step proves the review by the `advisor_yielded` event and the advisor's own
-# transcript in the session directory, never by the exit code.
+# harness gets the review. The advisor role is pinned by .omp/fm-worker-overlay.yml,
+# read here so the proof names the same model. In omp's headless print mode the
+# advisor reviews the turn and print mode waits for it to drain, but the run
+# exits 0 even when no advisor model resolves, and a quota-exhausted or failed
+# advisor still emits `advisor_yielded` and leaves a transcript. So the proof is
+# a completed (`stopReason` stop) answer from the pinned model in this run's own
+# advisor transcript, in a fresh directory per run, never the exit code.
+# Returns 1 when the overlay names no advisor role.
 fm_sol_review_step() {  # <fm-root>
-  local root=$1
+  local overlay="$1/.omp/fm-worker-overlay.yml" pin q_overlay q_pin
+  pin=$(sed -n 's/^  advisor: *//p' "$overlay" 2>/dev/null)
+  pin=${pin%%:*}
+  [ -n "$pin" ] || {
+    echo "error: fm_sol_review_step: no modelRoles advisor pin in $overlay" >&2
+    return 1
+  }
+  q_overlay=$(printf '%q' "$overlay")
+  q_pin=$(printf '%q' "$pin")
   cat <<EOF
 Have Sol review your full diff for defects, security slips, and missed tests.
-Sol is the omp advisor that Firstmate's worker overlay pins; run it headless, which works from any worker tool:
-\`d=\$(git rev-parse --git-path fm-sol-review) && mkdir -p "\$d" && git diff <base>...HEAD > "\$d/branch.diff" && OMP_SKIP_SETUP=1 omp -p --advisor --config '$root/.omp/fm-worker-overlay.yml' --session-dir "\$d" --mode json "Review the attached diff for defects, security slips, and missed tests." "@\$d/branch.diff" > "\$d/review.jsonl"\`, where \`<base>\` is the branch you started from.
-Sol reviewed the diff only when \`review.jsonl\` holds an \`advisor_yielded\` event and \`\$d\` holds an advisor transcript (\`find "\$d" -name '__advisor*.jsonl'\`); if not, report \`blocked:\` instead of skipping the review.
-Read the reply and every Sol note (\`jq -r 'select(.type == "message_end" and .message.customType == "advisor") | .message.content' "\$d/review.jsonl"\`), fix each actionable finding within this task, and review again if that changed the diff.
+Sol is the omp advisor that Firstmate's worker overlay pins (\`$pin\`); run omp headless, which works from any worker tool, with \`base\` set to the branch or commit you started from:
+\`\`\`sh
+base='<base>'
+d=\$(mktemp -d "\$(git rev-parse --git-path fm-sol-review).XXXXXX") && git diff "\$base...HEAD" > "\$d/branch.diff" && [ -s "\$d/branch.diff" ] && OMP_SKIP_SETUP=1 omp -p --advisor --config $q_overlay --session-dir "\$d" --mode json "Review the attached diff for defects, security slips, and missed tests." "@\$d/branch.diff" > "\$d/review.jsonl"
+find "\$d" -name '__advisor*.jsonl' -exec cat {} + | jq -e --arg m $q_pin 'select(.message.role? == "assistant" and "\\(.message.provider)/\\(.message.model)" == \$m and .message.stopReason == "stop")' > /dev/null && echo 'Sol reviewed'
+jq -r 'select(.type == "message_end" and .message.customType == "advisor") | .message.content' "\$d/review.jsonl"
+\`\`\`
+The \`find\` line is the proof: it prints \`Sol reviewed\` only when this run's advisor transcript holds a completed answer from \`$pin\`; if it prints nothing, report \`blocked:\` instead of skipping the review.
+Read the reply and every Sol note (the last line), fix each actionable finding within this task, and review the changed diff again, at most twice more; list any finding you leave open in the PR description.
 EOF
 }
 
 fm_dod_block() {  # <mode> <task-id> <fm-root>
-  local mode=$1 id=$2 root=$3 sol
-  sol=$(fm_sol_review_step "$root")
+  local mode=$1 id=$2 root=$3 sol=
+  case "$mode" in
+    direct-PR|no-mistakes) sol=$(fm_sol_review_step "$root") || return 1 ;;
+  esac
   case "$mode" in
     direct-PR)
       cat <<EOF
@@ -614,7 +632,7 @@ Two firstmate-specific rules layer on top of that guidance:
 
 After /no-mistakes reports CI green (the CI-ready return point - do not wait for it to keep monitoring in the background until merge), read the PR back from the forge and confirm it is not a draft (\`gh pr view <url> --json isDraft\` must print false); if it is a draft, mark it ready with \`gh-axi pr ready\`.
 A draft cannot be merged, so a done report on one leaves the merge unasked.
-Add a \`Sol reviewed\` line to the PR description with \`gh-axi pr edit\`; that edit is not a commit.
+Add a \`Sol reviewed\` line (Sol saw the diff you handed to validation) and any Sol finding you left open to the PR description with \`gh-axi pr edit\`; that edit is not a commit.
 Then append \`done [at=<epoch>]: PR {url} checks green\` and stop. You are finished.
 That CI-ready \`done:\` is accepted only when this copy's HEAD - your latest commit - is one the /no-mistakes run pushed, so commit nothing after the run; the check tests that commit, not merely that a branch moved.
 If you deliberately keep the PR a draft, append \`paused [at=<epoch>]: {why the draft is held}\` instead of done.

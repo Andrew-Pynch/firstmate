@@ -25,7 +25,9 @@ modelRoles:
   advisor: openai-codex/gpt-6.1-sol:high
 advisor:
   # On, so an omp worker's own turns are reviewed while it works, not only its
-  # final diff.
+  # final diff. A per-turn advisor is real spend (the 2026-10-04
+  # swarm-efficiency report put all advisors plus subagents at 23.9% of fleet
+  # spend); 2026-10-09 (Andrew): switched on with Sol as the advisor.
   enabled: true
 composer:
   # Renders a bare `❯` (U+276F) row, a glyph the shared composer classifier

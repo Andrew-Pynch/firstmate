@@ -163,9 +163,12 @@ unit_extension_primaries_never_launch_the_daemon() {
 unit_omp_extension_stays_the_one_away_owner() {
   local st config out rc mode cmd
   st=$(mktemp -d "${TMPDIR:-/tmp}/fm-afk-omp.XXXXXX")
-  mkdir -p "$st/state" "$st/config"
+  # The host case's attended readiness must stop at omp's missing dialog-mirror
+  # writer, not at an absent claude binary, so pin the quiet units' stub engine.
+  quiet_home "$st"
   in_omp() {
     FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" FM_CONFIG_OVERRIDE="$st/config" FM_TEST_HARNESS=omp \
+      FM_SUPERVISION_ENGINE_CLAUDE_BIN="$st/claude-engine" \
       FM_SUPERVISOR_TARGET=unused FM_SUPERVISOR_BACKEND=tmux FM_AFK_LAUNCH_ENTRY="$SLEEPER" "$@" 2>&1
   }
   for config in none host off; do

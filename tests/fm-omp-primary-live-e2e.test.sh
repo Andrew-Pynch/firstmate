@@ -286,10 +286,11 @@ wait_for_agent_ends 5 360 || fail "omp did not finish the live-daemon refusal tu
 tail -n +"$launcher_log_line" "$RPC_LOG" | grep -F 'a daemon is still running beside the omp watcher extension; run bin/fm-afk-return.sh to retire it' >/dev/null \
   || fail "live omp entry beside the placeholder daemon did not name bin/fm-afk-return.sh"
 kill -0 "$legacy_pid" 2>/dev/null || fail "live omp entry stopped the placeholder daemon"
-cmp -s "$LAB/legacy.afk.before" "$PROJECT/state/.afk" \
-  && cmp -s "$LAB/legacy-terminal.before" "$PROJECT/state/.afk-daemon-terminal" \
-  && cmp -s "$LAB/legacy-contract.before" "$PROJECT/state/.afk-contract" \
-  || fail "live omp entry changed the placeholder daemon records"
+if ! cmp -s "$LAB/legacy.afk.before" "$PROJECT/state/.afk" \
+  || ! cmp -s "$LAB/legacy-terminal.before" "$PROJECT/state/.afk-daemon-terminal" \
+  || ! cmp -s "$LAB/legacy-contract.before" "$PROJECT/state/.afk-contract"; then
+  fail "live omp entry changed the placeholder daemon records"
+fi
 pass "omp $OMP_VERSION: live legacy daemon refusal named bin/fm-afk-return.sh and preserved daemon records"
 kill -TERM "$legacy_pid" 2>/dev/null || true
 wait "$legacy_pid" 2>/dev/null || true

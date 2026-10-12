@@ -221,7 +221,7 @@ fm_watcher_healthy() {
 #               watcher process is healthy, and a stale beacon is still healthy
 #               while a Claude auto-arm generation explains the gap
 #               (fm_autoarm_midturn_healthy).
-#   extension   Pi (and pi-signed): .pi/extensions/fm-primary-pi-watch.ts owns
+#   extension   Pi, pi-signed, and omp: the primary watcher extension owns
 #               continuity. It tears the watcher down on every actionable wake and
 #               spawns the replacement itself, so a genuinely unheld singleton lock
 #               is healthy during that hand-off only with extension ownership and a

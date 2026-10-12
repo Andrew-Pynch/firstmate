@@ -11,6 +11,8 @@
 #      and the session lock names the omp process (ancestry detection);
 #   3. fm_watch_arm_omp starts a real watcher, an actionable close spawns a
 #      ledger-linked successor, and the wake arrives as one follow-up turn;
+#      with an away record present the same cycle delivers the next wake to
+#      the idle main as one new turn, since no daemon runs on omp;
 #   4. with the successor watcher frozen until its beacon passes the lab grace,
 #      the next turn end is genuinely unsupervised, so session_stop must compel
 #      the turn-end guard continuation and the model reaches for the tool.
@@ -282,7 +284,8 @@ kill -STOP "$successor_pid" 2>/dev/null || fail "could not freeze the successor 
 thaw() { kill -CONT "$successor_pid" 2>/dev/null || true; }
 i=0
 while [ "$i" -lt 60 ]; do
-  age=$(( $(date +%s) - $(stat -f %m "$PROJECT/state/.last-watcher-beat" 2>/dev/null || stat -c %Y "$PROJECT/state/.last-watcher-beat" 2>/dev/null || date +%s) ))
+  # GNU stat first: GNU `stat -f %m` succeeds with filesystem text, not an mtime.
+  age=$(( $(date +%s) - $(stat -c %Y "$PROJECT/state/.last-watcher-beat" 2>/dev/null || stat -f %m "$PROJECT/state/.last-watcher-beat" 2>/dev/null || date +%s) ))
   [ "$age" -gt "$GUARD_GRACE" ] && break
   sleep 1
   i=$((i + 1))

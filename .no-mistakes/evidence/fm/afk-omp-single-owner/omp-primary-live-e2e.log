@@ -1,0 +1,10 @@
+ok - omp omp/18.9.1: both tracked .omp/extensions loaded by auto-discovery with no -e and no trust dialog
+ok - omp omp/18.9.1: before_agent_start delivered the digest into model context and the lock names the omp process
+ok - omp omp/18.9.1: fm_watch_arm_omp started a live watcher through the extension
+ok - omp omp/18.9.1: an actionable close spawned a ledger-linked successor and woke main exactly once
+ok - omp omp/18.9.1: live entry refused a second daemon and left no daemon state
+ok - omp omp/18.9.1: live legacy daemon refusal named bin/fm-afk-return.sh and preserved daemon records
+ok - omp omp/18.9.1: with the away record present, the extension delivered the next wake to the idle main as one new turn
+ok - omp omp/18.9.1: session_stop compelled the guard continuation (guard rc=2, then a stop_hook_active stop) and the model reached for fm_watch_arm_omp
+# omp omp/18.9.1 exited on its own after its rpc stdin closed
+# omp omp/18.9.1 model=openai-codex/gpt-6-astra: every live omp primary assertion passed

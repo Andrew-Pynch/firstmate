@@ -314,7 +314,7 @@ A home that does not run the host behaves exactly as it does without it, and a P
 While the home runs the host, the primary's arm owner runs it in place of the watcher arm.
 The host handles wakes on the engine under the [posture rules](supervision-host.md#postures), including an away record and attended operation on a Claude or Cursor primary with a verified dialog mirror.
 On that home, `/afk` launches no away daemon; see [Quiet mode](supervision-host.md#quiet-mode) for `/quiet`'s attended statement and fallback.
-An omp primary launches neither the away nor the quiet daemon, with or without the host, because its watcher extension (`.omp/extensions/fm-primary-omp-watch.ts`) stays the one supervision owner; without the host every away wake reaches main, and `bin/fm-afk-launch.sh` owns the rationale.
+An omp primary launches neither the away nor the quiet daemon, with or without the host, because its watcher extension (`.omp/extensions/fm-primary-omp-watch.ts`) stays the one supervision owner; away entry requires current live extension ownership and healthy watcher supervision, refuses beside a live legacy daemon, and without the host every away wake reaches main, while `bin/fm-afk-launch.sh` owns the checks and rationale.
 The same gate governs the primary's dialog-mirror hooks (`bin/fm-host-mirror.sh`), which record on a Claude or Cursor primary ([supervision-host.md](supervision-host.md#the-dialog-mirror)).
 Grok's arm command is rendered at session start, so a change to its host mode takes effect at its next session start; the other arm owners check the gate at every arm.
 

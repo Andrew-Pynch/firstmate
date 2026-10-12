@@ -15,9 +15,10 @@
 # (bin/fm-afk-contract.sh owns the record schema; the words are the whole
 # mandate and no script parses them). The record is the posture in every
 # harness.
-# On Pi, pi-signed, and omp the entry ENDS there: the away daemon is not launched
-# there, the ordinary supervision session keeps running in both postures, and
-# `start` and `start-native` refuse on those harnesses. Their primary watcher
+# On Pi and pi-signed the entry ENDS there; on omp it first proves that the live
+# session loaded both current extensions and that its watcher supervision is
+# healthy, then ends there. The away daemon is not launched on those harnesses,
+# and `start` and `start-native` refuse there. Their primary watcher
 # extension already owns watcher continuity and delivers wakes in-process (a
 # queued follow-up, never terminal injection), so a daemon beside it would be a
 # second supervision owner: on omp it took the watcher's place, wedged its own
@@ -82,7 +83,8 @@
 #                              separate confirmation, then print the entry
 #                              announcement and the read-back. With no words
 #                              while away it is a refresh; new words replace
-#                              the mandate. On Pi and omp this is the whole entry.
+#                              the mandate. On Pi, and on omp after its live-owner
+#                              proof passes, this is the whole entry.
 #   fm-afk-launch.sh start     Capture the captain pane, then (unless the daemon
 #                              is already running) launch the daemon in a fresh
 #                              non-visible terminal for the detected backend and
@@ -246,15 +248,29 @@ fm_afk_launch_host_primary() {  # <harness>
   return 1
 }
 
-fm_afk_launch_warn_live_omp_daemon() {
+fm_afk_launch_live_omp_daemon() {
   local read_result
-  if ! daemon_lock_held_by_live_daemon; then
-    fm_afk_launch_record_read
-    read_result=$?
-    [ "$read_result" -eq 0 ] || return 0
-    fm_afk_launch_terminal_alive "$FM_AFK_REC_BACKEND" "$FM_AFK_REC_TARGET" || return 0
+  daemon_lock_held_by_live_daemon && return 0
+  fm_afk_launch_record_read
+  read_result=$?
+  [ "$read_result" -eq 0 ] || return 1
+  fm_afk_launch_terminal_alive "$FM_AFK_REC_BACKEND" "$FM_AFK_REC_TARGET"
+}
+
+fm_afk_launch_omp_supervision_ready() {
+  if fm_afk_launch_live_omp_daemon; then
+    fm_afk_launch_log "a daemon is still running beside the omp watcher extension; run bin/fm-afk-return.sh to retire it"
+    return 1
   fi
-  fm_afk_launch_log "a daemon is still running beside the omp watcher extension; run bin/fm-afk-return.sh to retire it"
+  if ! fm_omp_extension_owns_supervision "$FM_AFK_LAUNCH_STATE" "$FM_ROOT" \
+    || ! ( FM_SUPERVISION_MODEL=extension
+      fm_watcher_supervision_verdict "$FM_AFK_LAUNCH_STATE" "$FM_ROOT/bin/fm-watch.sh" \
+        "${FM_GUARD_GRACE:-300}" "$FM_HOME" "$FM_ROOT"
+      [ "$FM_WATCHER_VERDICT_OK" = true ] ); then
+    fm_afk_launch_log "no omp watcher extension owns supervision; restart omp inside this home or call fm_watch_arm_omp to repair it"
+    return 1
+  fi
+  return 0
 }
 
 # True when the posture record is a quiet entry's (bin/fm-afk-contract.sh mode).
@@ -356,7 +372,7 @@ fm_afk_launch_daemon_allowed() {
       return 1 ;;
     omp)
       fm_afk_launch_log "the away daemon is no longer launched on $harness, whose watcher extension stays the one supervision owner; the away-posture record is the posture there (run bin/fm-afk-launch.sh enter and stop)"
-      fm_afk_launch_warn_live_omp_daemon
+      fm_afk_launch_omp_supervision_ready
       return 1 ;;
   esac
   fm_afk_launch_host_primary "$harness" || return 0
@@ -412,6 +428,7 @@ fm_afk_launch_record_require() {
 }
 
 fm_afk_launch_enter() {
+  local harness
   fm_afk_launch_catchup_pending && return 1
   if [ "${FM_AFK_MODE:-}" = quiet ]; then
     fm_afk_launch_quiet_needs_nothing
@@ -427,6 +444,10 @@ fm_afk_launch_enter() {
         fm_afk_launch_log "quiet mode refuses while this home's away record (state/.afk-contract) is live; run the /afk return (bin/fm-afk-return.sh) and pass its catch-up gate, then run bin/fm-afk-launch.sh quiet-check"
         return 3 ;;
     esac
+  fi
+  harness=$(fm_afk_launch_primary_harness)
+  if [ "$harness" = omp ]; then
+    fm_afk_launch_omp_supervision_ready || return 1
   fi
   "$FM_AFK_CONTRACT_CMD" enter "$@" || return
   fm_afk_launch_host_engine_note

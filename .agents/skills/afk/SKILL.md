@@ -22,6 +22,7 @@ Hold-for-return is the default and the only reach profile this release records: 
 
 1. **Write the record first, in this same turn.**
    Before any other work, run `bin/fm-afk-launch.sh enter --words-file <path> [--expected-return <UTC ISO 8601>] [--spend <n>]` (or `--words <text>`).
+   On omp, `enter` first requires the live session's current extension markers and healthy watcher supervision; if it refuses, relay its repair line and do not treat the away posture as entered.
    It writes `state/.afk-contract` at once, with no separate confirmation step, then prints the entry announcement and the record's read-back.
    The words are the whole mandate: `bin/fm-afk-contract.sh` records them exactly as given, with no clause fields, verbs, ids, or merge-grant list, and by the captain's mandate no parser, tokenizer, classifier, or grammar reads them anywhere.
    Read `bin/fm-afk-contract.sh --help` for the flags rather than memorizing them.
@@ -33,7 +34,8 @@ Hold-for-return is the default and the only reach profile this release records: 
      With the record present main is parked: the supervision branch takes every safe actionable wake, captain outcomes accumulate for the return brief, and main's standing authority relocates to the branch through the guarded scripts (`docs/pi-supervision-branch.md` "Postures"); only a wake the branch declines (including a broken branch or unsafe scan) or a watcher failure wakes main.
      `/quiet` needs nothing extra on Pi: the attended branch already keeps routine wakes out of this conversation, so quiet-while-present is the attended posture's own shape there.
    - **omp**: nothing to launch; go on to the announcement, relaying any `Away supervision:` or `Supervision host:` line `enter` printed.
-     The omp watcher extension (`.omp/extensions/fm-primary-omp-watch.ts`) stays the one supervision owner with the record present, and `bin/fm-afk-launch.sh start` and `start-native` refuse the away and quiet daemon on omp whether or not the home runs the supervision host; that script's header owns why.
+     A successful `enter` proved the omp watcher extension (`.omp/extensions/fm-primary-omp-watch.ts`) is the one live supervision owner; `bin/fm-afk-launch.sh start` and `start-native` recheck that proof and refuse the away and quiet daemon on omp whether or not the home runs the supervision host, and that script's header owns why.
+     If a legacy daemon is still live, every entry or refresh refuses without changing it or the posture records and names `bin/fm-afk-return.sh` as the exact retirement command.
      Without the host, the extension delivers every away wake to this conversation as an operational follow-up, so main handles it under the away posture; on a home that runs the host, the host is the away session as below.
    - **A home that runs the supervision host** (a Claude home unless `config/supervision-host-off` opts it out, or a Cursor, OpenCode, Grok, or Codex home with `config/supervision-host` and no opt-out, plus an omp home under the omp rule above; `docs/configuration.md` "Supervision host"): nothing to launch for `/afk`; go on to the announcement.
      The supervision host (`docs/supervision-host.md`) is the away session there: it runs the branch's contract on a headless engine under the record while main is parked, and `bin/fm-afk-launch.sh start` and `start-native` refuse the away daemon on that home.

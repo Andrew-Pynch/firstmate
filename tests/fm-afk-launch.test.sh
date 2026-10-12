@@ -61,6 +61,27 @@ enter_posture() {  # <home>
   FM_HOME="$1" FM_STATE_OVERRIDE="$1/state" "$CONTRACT" enter >/dev/null 2>&1
 }
 
+record_omp_supervision() {  # <home> <session-pid> <watcher-pid>
+  local home=$1 session_pid=$2 watcher_pid=$3 source marker version
+  mkdir -p "$home/state/.watch.lock"
+  for source in fm-primary-omp-watch.ts fm-primary-turnend-guard.ts; do
+    case "$source" in
+      fm-primary-omp-watch.ts) marker=.omp-watch-extension-loaded ;;
+      *) marker=.omp-turnend-extension-loaded ;;
+    esac
+    version=$(bash -c '. "$1"; fm_pi_extension_version "$2"' _ \
+      "$ROOT/bin/fm-wake-lib.sh" "$ROOT/.omp/extensions/$source") || return 1
+    printf '%s\n%s\n' "$version" "$session_pid" > "$home/state/$marker"
+  done
+  printf '%s\n' "$session_pid" > "$home/state/.lock"
+  printf '%s\n' "$watcher_pid" > "$home/state/.watch.lock/pid"
+  printf '%s\n' "$home" > "$home/state/.watch.lock/fm-home"
+  printf '%s\n' "$ROOT/bin/fm-watch.sh" > "$home/state/.watch.lock/watcher-path"
+  bash -c '. "$1"; fm_pid_identity "$2"' _ "$ROOT/bin/fm-wake-lib.sh" "$watcher_pid" \
+    > "$home/state/.watch.lock/pid-identity" || return 1
+  touch "$home/state/.last-watcher-beat"
+}
+
 # ---------------------------------------------------------------------------
 # UNIT 0: /afk is itself the go. `enter` writes the away-posture record in the
 # same call, with no separate confirmation, and prints the announcement and the
@@ -158,10 +179,11 @@ unit_extension_primaries_never_launch_the_daemon() {
 }
 
 unit_omp_refusal_names_live_daemon_return() {
-  local st sleep_pid lock out rc cmd
+  local st sleep_pid lock out rc cmd before_words
   st=$(mktemp -d "${TMPDIR:-/tmp}/fm-afk-omp-live.XXXXXX")
   mkdir -p "$st/state"
   enter_posture "$st"
+  before_words=$(FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" "$CONTRACT" words)
   printf 'away\n' > "$st/state/.afk"
   printf 'none\t-\tnative\n' > "$st/state/.afk-daemon-terminal"
   sleep 600 &
@@ -171,13 +193,19 @@ unit_omp_refusal_names_live_daemon_return() {
   printf '%s' "$sleep_pid" > "$lock/pid"
   ( . "$ROOT/bin/fm-wake-lib.sh"; fm_pid_identity "$sleep_pid" > "$lock/pid-identity" 2>/dev/null ) || true
   cp -a "$st/state" "$st/state.before"
-  for cmd in start start-native; do
-    out=$(FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" FM_TEST_HARNESS=omp "$LAUNCH" "$cmd" 2>&1)
+  for cmd in enter start start-native; do
+    if [ "$cmd" = enter ]; then
+      out=$(FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" FM_TEST_HARNESS=omp \
+        "$LAUNCH" enter --words 'must not replace the live posture' 2>&1)
+    else
+      out=$(FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" FM_TEST_HARNESS=omp "$LAUNCH" "$cmd" 2>&1)
+    fi
     rc=$?
     if [ "$rc" -ne 0 ] \
       && printf '%s' "$out" | grep -F 'a daemon is still running beside the omp watcher extension; run bin/fm-afk-return.sh to retire it' >/dev/null \
       && kill -0 "$sleep_pid" 2>/dev/null \
-      && diff -r "$st/state.before" "$st/state" >/dev/null; then
+      && diff -r "$st/state.before" "$st/state" >/dev/null \
+      && [ "$(FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" "$CONTRACT" words)" = "$before_words" ]; then
       pass "omp: $cmd refuses beside a live legacy daemon, names the return command, and preserves the daemon and records"
     else
       fail "omp: $cmd did not preserve and report the live legacy daemon (rc=$rc): $out"
@@ -188,17 +216,61 @@ unit_omp_refusal_names_live_daemon_return() {
   rm -rf "$st"
 }
 
+unit_omp_enter_requires_live_extension_supervision() {
+  local st out rc session_pid watcher_pid
+  st=$(mktemp -d "${TMPDIR:-/tmp}/fm-afk-omp-owner.XXXXXX")
+  mkdir -p "$st/state"
+  out=$(FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" FM_TEST_HARNESS=omp \
+    "$LAUNCH" enter --words 'watch the fleet' 2>&1)
+  rc=$?
+  if [ "$rc" -ne 0 ] \
+    && printf '%s' "$out" | grep -F 'no omp watcher extension owns supervision' >/dev/null \
+    && printf '%s' "$out" | grep -F 'restart omp inside this home or call fm_watch_arm_omp' >/dev/null \
+    && [ ! -e "$st/state/.afk-contract" ] && [ ! -e "$st/state/.afk" ] \
+    && [ ! -e "$st/state/.afk-daemon-terminal" ]; then
+    pass "omp: enter without live extension supervision refuses and writes no posture"
+  else
+    fail "omp: enter without live extension supervision did not fail closed (rc=$rc): $out"
+  fi
+
+  sleep 600 &
+  session_pid=$!
+  sleep 600 &
+  watcher_pid=$!
+  record_omp_supervision "$st" "$session_pid" "$watcher_pid" \
+    || fail "omp: could not record live extension supervision"
+  out=$(FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" FM_TEST_HARNESS=omp \
+    "$LAUNCH" enter --words 'watch the fleet' 2>&1)
+  rc=$?
+  if [ "$rc" -eq 0 ] \
+    && [ "$(FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" "$CONTRACT" words)" = 'watch the fleet' ] \
+    && [ ! -e "$st/state/.afk" ] && [ ! -e "$st/state/.afk-daemon-terminal" ]; then
+    pass "omp: enter with live extension supervision records the posture"
+  else
+    fail "omp: enter with live extension supervision did not record the posture (rc=$rc): $out"
+  fi
+  kill "$watcher_pid" "$session_pid" 2>/dev/null || true
+  wait "$watcher_pid" "$session_pid" 2>/dev/null || true
+  rm -rf "$st"
+}
+
 # The omp ownership decision with a live posture record, on every host
 # configuration: the watcher extension stays the one owner, so both daemon
 # start paths refuse in away and quiet mode and leave no away flag, daemon
 # terminal, or changed record behind; the return still archives the record;
 # and /quiet starts nothing, saying why every wake still reaches main.
 unit_omp_extension_stays_the_one_away_owner() {
-  local st config out rc mode cmd
+  local st config out rc mode cmd session_pid watcher_pid
   st=$(mktemp -d "${TMPDIR:-/tmp}/fm-afk-omp.XXXXXX")
   # The host case's attended readiness must stop at omp's missing dialog-mirror
   # writer, not at an absent claude binary, so pin the quiet units' stub engine.
   quiet_home "$st"
+  sleep 600 &
+  session_pid=$!
+  sleep 600 &
+  watcher_pid=$!
+  record_omp_supervision "$st" "$session_pid" "$watcher_pid" \
+    || fail "omp: could not record live extension supervision"
   in_omp() {
     FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" FM_CONFIG_OVERRIDE="$st/config" FM_TEST_HARNESS=omp \
       FM_SUPERVISION_ENGINE_CLAUDE_BIN="$st/claude-engine" \
@@ -251,6 +323,8 @@ unit_omp_extension_stays_the_one_away_owner() {
     fi
   done
   pass "omp: the watcher extension stays the one away and quiet owner on every host configuration; the daemon stands down"
+  kill "$watcher_pid" "$session_pid" 2>/dev/null || true
+  wait "$watcher_pid" "$session_pid" 2>/dev/null || true
   rm -rf "$st"
 }
 
@@ -1829,6 +1903,7 @@ unit_enter_records_the_posture_in_one_step_without_a_daemon
 unit_retired_two_step_entry_is_refused
 unit_extension_primaries_never_launch_the_daemon
 unit_omp_refusal_names_live_daemon_return
+unit_omp_enter_requires_live_extension_supervision
 unit_omp_extension_stays_the_one_away_owner
 unit_test_harness_seam_requires_the_marker
 unit_pi_enter_stop_does_not_claim_a_daemon_terminal

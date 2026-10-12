@@ -246,7 +246,58 @@ arm_calls=$(tool_call_count fm_watch_arm_omp)
 [ "$arm_calls" -eq 1 ] || fail "the model re-armed from memory instead of the extension (fm_watch_arm_omp call count $arm_calls)"
 pass "omp $OMP_VERSION: an actionable close spawned a ledger-linked successor and woke main exactly once"
 
-# --- 2b. away posture: the extension stays the one owner -----------------------
+# --- 2b. launcher ownership gate under the live omp session --------------------
+# Drive the executable launcher from an omp tool process so normal ancestry
+# detection, the live extension markers, and the live watcher lock all carry
+# the verdict; no harness seam stands in for the installed product here.
+launcher_log_line=$(( $(wc -l < "$RPC_LOG") + 1 ))
+rpc_send '{"id":"p3","type":"prompt","message":"Run bin/fm-afk-launch.sh start exactly once through the bash tool, then reply with its combined output verbatim and nothing else."}'
+wait_for_agent_ends 4 360 || fail "omp did not finish the daemon-refusal turn"
+tail -n +"$launcher_log_line" "$RPC_LOG" | grep -F 'the away daemon is no longer launched on omp' >/dev/null \
+  || fail "live omp start did not refuse the second daemon"
+[ ! -e "$PROJECT/state/.afk" ] && [ ! -e "$PROJECT/state/.afk-daemon-terminal" ] \
+  && [ ! -e "$PROJECT/state/.afk-contract" ] \
+  || fail "live omp start left daemon or posture state behind"
+pass "omp $OMP_VERSION: live entry refused a second daemon and left no daemon state"
+
+FM_HOME="$PROJECT" "$PROJECT/bin/fm-afk-contract.sh" enter --words 'live legacy daemon posture' >/dev/null 2>&1 \
+  || fail "could not record the live legacy-daemon posture"
+printf 'away\n' > "$PROJECT/state/.afk"
+printf 'none\t-\tnative\n' > "$PROJECT/state/.afk-daemon-terminal"
+LEGACY_DAEMON="$LAB/legacy-daemon.sh"
+cat > "$LEGACY_DAEMON" <<'SH'
+#!/usr/bin/env bash
+while :; do sleep 60; done
+SH
+chmod +x "$LEGACY_DAEMON"
+"$LEGACY_DAEMON" &
+legacy_pid=$!
+mkdir -p "$PROJECT/state/.supervise-daemon.lock"
+printf '%s\n' "$legacy_pid" > "$PROJECT/state/.supervise-daemon.lock/pid"
+FM_HOME="$PROJECT" bash -c '. "$1"; fm_pid_identity "$2"' _ \
+  "$PROJECT/bin/fm-wake-lib.sh" "$legacy_pid" > "$PROJECT/state/.supervise-daemon.lock/pid-identity" \
+  || fail "could not record the live placeholder daemon identity"
+cp "$PROJECT/state/.afk" "$LAB/legacy.afk.before"
+cp "$PROJECT/state/.afk-daemon-terminal" "$LAB/legacy-terminal.before"
+cp "$PROJECT/state/.afk-contract" "$LAB/legacy-contract.before"
+launcher_log_line=$(( $(wc -l < "$RPC_LOG") + 1 ))
+rpc_send '{"id":"p4","type":"prompt","message":"Run bin/fm-afk-launch.sh enter --words must-not-replace-live-posture exactly once through the bash tool, then reply with its combined output verbatim and nothing else."}'
+wait_for_agent_ends 5 360 || fail "omp did not finish the live-daemon refusal turn"
+tail -n +"$launcher_log_line" "$RPC_LOG" | grep -F 'a daemon is still running beside the omp watcher extension; run bin/fm-afk-return.sh to retire it' >/dev/null \
+  || fail "live omp entry beside the placeholder daemon did not name bin/fm-afk-return.sh"
+kill -0 "$legacy_pid" 2>/dev/null || fail "live omp entry stopped the placeholder daemon"
+cmp -s "$LAB/legacy.afk.before" "$PROJECT/state/.afk" \
+  && cmp -s "$LAB/legacy-terminal.before" "$PROJECT/state/.afk-daemon-terminal" \
+  && cmp -s "$LAB/legacy-contract.before" "$PROJECT/state/.afk-contract" \
+  || fail "live omp entry changed the placeholder daemon records"
+pass "omp $OMP_VERSION: live legacy daemon refusal named bin/fm-afk-return.sh and preserved daemon records"
+kill -TERM "$legacy_pid" 2>/dev/null || true
+wait "$legacy_pid" 2>/dev/null || true
+rm -rf "$PROJECT/state/.supervise-daemon.lock"
+FM_HOME="$PROJECT" "$PROJECT/bin/fm-afk-launch.sh" stop >/dev/null 2>&1 \
+  || fail "the live legacy-daemon fixture could not be returned"
+
+# --- 2c. away posture: the extension stays the one owner -----------------------
 # With an away record present no daemon runs on omp (bin/fm-afk-launch.sh), so
 # this same extension cycle must still deliver the next wake to the now-idle
 # main as one follow-up that opens a new turn, with no re-arm and no away flag.
@@ -263,7 +314,7 @@ while [ "$i" -lt 240 ]; do
 done
 [ "$(grep -o 'FIRSTMATE WATCHER WAKE: signal:' "$RPC_LOG" 2>/dev/null | grep -c .)" -ge 2 ] \
   || fail "with the away record present, the next actionable close was not delivered to the idle main"
-wait_for_agent_ends 4 360 || fail "omp did not open and finish a turn for the away wake"
+wait_for_agent_ends 6 360 || fail "omp did not open and finish a turn for the away wake"
 [ ! -e "$PROJECT/state/.afk" ] || fail "the away wake left a daemon flag behind"
 arm_calls=$(tool_call_count fm_watch_arm_omp)
 [ "$arm_calls" -eq 1 ] || fail "the model re-armed during the away wake (fm_watch_arm_omp call count $arm_calls)"
@@ -291,7 +342,7 @@ while [ "$i" -lt 60 ]; do
   i=$((i + 1))
 done
 [ "$age" -gt "$GUARD_GRACE" ] || { thaw; fail "the frozen watcher's beacon never went stale (age ${age}s)"; }
-rpc_send '{"id":"p3","type":"prompt","message":"Reply with exactly GUARD_PROBE and nothing else. Do not call any tool unless a later instruction in this turn tells you supervision is off."}'
+rpc_send '{"id":"p5","type":"prompt","message":"Reply with exactly GUARD_PROBE and nothing else. Do not call any tool unless a later instruction in this turn tells you supervision is off."}'
 # The guard must have refused a stop (rc=2) and omp must then have raised the
 # continuation's own stop with stop_hook_active true.
 i=0
@@ -310,7 +361,7 @@ while [ "$i" -lt 360 ]; do
 done
 [ "$(tool_call_count fm_watch_arm_omp)" -ge 2 ] \
   || { thaw; fail "the model did not reach for fm_watch_arm_omp after the compelled continuation"; }
-wait_for_agent_ends 5 360 || { thaw; fail "omp did not settle after the compelled continuation"; }
+wait_for_agent_ends 7 360 || { thaw; fail "omp did not settle after the compelled continuation"; }
 thaw
 sleep 3
 repaired_pid=$(cat "$PROJECT/state/.watch.lock/pid" 2>/dev/null || true)

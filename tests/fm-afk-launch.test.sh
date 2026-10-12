@@ -193,6 +193,8 @@ unit_omp_refusal_names_live_daemon_return() {
   printf '%s' "$sleep_pid" > "$lock/pid"
   ( . "$ROOT/bin/fm-wake-lib.sh"; fm_pid_identity "$sleep_pid" > "$lock/pid-identity" 2>/dev/null ) || true
   cp -a "$st/state" "$st/state.before"
+  : > "$st/state/.afk-return-catchup"
+  cp -a "$st/state/.afk-return-catchup" "$st/state.before/.afk-return-catchup"
   for cmd in enter start start-native; do
     if [ "$cmd" = enter ]; then
       out=$(FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" FM_TEST_HARNESS=omp \
@@ -206,7 +208,7 @@ unit_omp_refusal_names_live_daemon_return() {
       && kill -0 "$sleep_pid" 2>/dev/null \
       && diff -r "$st/state.before" "$st/state" >/dev/null \
       && [ "$(FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" "$CONTRACT" words)" = "$before_words" ]; then
-      pass "omp: $cmd refuses beside a live legacy daemon, names the return command, and preserves the daemon and records"
+      pass "omp: $cmd refuses beside a live legacy daemon before catch-up, names the return command, and preserves the daemon and records"
     else
       fail "omp: $cmd did not preserve and report the live legacy daemon (rc=$rc): $out"
     fi

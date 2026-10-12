@@ -257,11 +257,17 @@ fm_afk_launch_live_omp_daemon() {
   fm_afk_launch_terminal_alive "$FM_AFK_REC_BACKEND" "$FM_AFK_REC_TARGET"
 }
 
-fm_afk_launch_omp_supervision_ready() {
+fm_afk_launch_refuse_live_omp_daemon() {
+  [ "$(fm_afk_launch_primary_harness)" = omp ] || return 1
   if fm_afk_launch_live_omp_daemon; then
     fm_afk_launch_log "a daemon is still running beside the omp watcher extension; run bin/fm-afk-return.sh to retire it"
-    return 1
+    return 0
   fi
+  return 1
+}
+
+fm_afk_launch_omp_supervision_ready() {
+  fm_afk_launch_refuse_live_omp_daemon && return 1
   if ! fm_omp_extension_owns_supervision "$FM_AFK_LAUNCH_STATE" "$FM_ROOT" \
     || ! ( FM_SUPERVISION_MODEL=extension
       fm_watcher_supervision_verdict "$FM_AFK_LAUNCH_STATE" "$FM_ROOT/bin/fm-watch.sh" \
@@ -429,6 +435,7 @@ fm_afk_launch_record_require() {
 
 fm_afk_launch_enter() {
   local harness
+  fm_afk_launch_refuse_live_omp_daemon && return 1
   fm_afk_launch_catchup_pending && return 1
   if [ "${FM_AFK_MODE:-}" = quiet ]; then
     fm_afk_launch_quiet_needs_nothing
@@ -772,6 +779,7 @@ fm_afk_launch_create_tmux() {  # <captain-target> <captain-backend>
 
 fm_afk_launch_start() {
   local captain_target captain_backend backup artifact had_afk=0 result
+  fm_afk_launch_refuse_live_omp_daemon && return 1
   fm_afk_launch_catchup_pending && return 1
   fm_afk_launch_daemon_allowed || return 1
   fm_afk_launch_record_require || return 1
@@ -843,6 +851,7 @@ fm_afk_launch_start() {
 fm_afk_launch_start_native() {
   local backup artifact had_afk=0 result=0
   mkdir -p "$FM_AFK_LAUNCH_STATE" || return 1
+  fm_afk_launch_refuse_live_omp_daemon && return 1
   fm_afk_launch_catchup_pending && return 1
   fm_afk_launch_daemon_allowed || return 1
   fm_afk_launch_record_require || return 1

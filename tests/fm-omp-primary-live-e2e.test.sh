@@ -260,31 +260,41 @@ tail -n +"$launcher_log_line" "$RPC_LOG" | grep -F 'the away daemon is no longer
   || fail "live omp start left daemon or posture state behind"
 pass "omp $OMP_VERSION: live entry refused a second daemon and left no daemon state"
 
-FM_HOME="$PROJECT" "$PROJECT/bin/fm-afk-contract.sh" enter --words 'live legacy daemon posture' >/dev/null 2>&1 \
-  || fail "could not record the live legacy-daemon posture"
-printf 'away\n' > "$PROJECT/state/.afk"
-printf 'none\t-\tnative\n' > "$PROJECT/state/.afk-daemon-terminal"
 LEGACY_DAEMON="$LAB/legacy-daemon.sh"
 cat > "$LEGACY_DAEMON" <<'SH'
 #!/usr/bin/env bash
 while :; do sleep 60; done
 SH
 chmod +x "$LEGACY_DAEMON"
-"$LEGACY_DAEMON" &
+LEGACY_CASE="$PROJECT/live-legacy-daemon-case.sh"
+cat > "$LEGACY_CASE" <<'SH'
+#!/usr/bin/env bash
+set -u
+project=$(cd "$(dirname "$0")" && pwd)
+lab=$(dirname "$project")
+FM_HOME="$project" "$project/bin/fm-afk-contract.sh" enter --words 'live legacy daemon posture' >/dev/null 2>&1 || exit 10
+printf 'away\n' > "$project/state/.afk"
+printf 'none\t-\tnative\n' > "$project/state/.afk-daemon-terminal"
+nohup "$lab/legacy-daemon.sh" </dev/null >/dev/null 2>&1 &
 legacy_pid=$!
-mkdir -p "$PROJECT/state/.supervise-daemon.lock"
-printf '%s\n' "$legacy_pid" > "$PROJECT/state/.supervise-daemon.lock/pid"
-FM_HOME="$PROJECT" bash -c '. "$1"; fm_pid_identity "$2"' _ \
-  "$PROJECT/bin/fm-wake-lib.sh" "$legacy_pid" > "$PROJECT/state/.supervise-daemon.lock/pid-identity" \
-  || fail "could not record the live placeholder daemon identity"
-cp "$PROJECT/state/.afk" "$LAB/legacy.afk.before"
-cp "$PROJECT/state/.afk-daemon-terminal" "$LAB/legacy-terminal.before"
-cp "$PROJECT/state/.afk-contract" "$LAB/legacy-contract.before"
+printf '%s\n' "$legacy_pid" > "$lab/legacy.pid"
+mkdir -p "$project/state/.supervise-daemon.lock"
+printf '%s\n' "$legacy_pid" > "$project/state/.supervise-daemon.lock/pid"
+FM_HOME="$project" bash -c '. "$1"; fm_pid_identity "$2"' _ \
+  "$project/bin/fm-wake-lib.sh" "$legacy_pid" > "$project/state/.supervise-daemon.lock/pid-identity" || exit 11
+cp "$project/state/.afk" "$lab/legacy.afk.before"
+cp "$project/state/.afk-daemon-terminal" "$lab/legacy-terminal.before"
+cp "$project/state/.afk-contract" "$lab/legacy-contract.before"
+FM_HOME="$project" "$project/bin/fm-afk-launch.sh" enter --words must-not-replace-live-posture
+SH
+chmod +x "$LEGACY_CASE"
 launcher_log_line=$(( $(wc -l < "$RPC_LOG") + 1 ))
-rpc_send '{"id":"p4","type":"prompt","message":"Run bin/fm-afk-launch.sh enter --words must-not-replace-live-posture exactly once through the bash tool, then reply with its combined output verbatim and nothing else."}'
+rpc_send '{"id":"p4","type":"prompt","message":"Run ./live-legacy-daemon-case.sh exactly once through the bash tool, then reply with its combined output verbatim and nothing else."}'
 wait_for_agent_ends 5 360 || fail "omp did not finish the live-daemon refusal turn"
 tail -n +"$launcher_log_line" "$RPC_LOG" | grep -F 'a daemon is still running beside the omp watcher extension; run bin/fm-afk-return.sh to retire it' >/dev/null \
   || fail "live omp entry beside the placeholder daemon did not name bin/fm-afk-return.sh"
+legacy_pid=$(cat "$LAB/legacy.pid" 2>/dev/null || true)
+[ -n "$legacy_pid" ] || fail "live omp entry did not record the placeholder daemon pid"
 kill -0 "$legacy_pid" 2>/dev/null || fail "live omp entry stopped the placeholder daemon"
 if ! cmp -s "$LAB/legacy.afk.before" "$PROJECT/state/.afk" \
   || ! cmp -s "$LAB/legacy-terminal.before" "$PROJECT/state/.afk-daemon-terminal" \

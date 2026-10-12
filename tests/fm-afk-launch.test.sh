@@ -23,8 +23,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LAUNCH="$ROOT/bin/fm-afk-launch.sh"
 START="$ROOT/bin/fm-afk-start.sh"
 CONTRACT="$ROOT/bin/fm-afk-contract.sh"
-# The daemon paths refuse on a Pi primary, so pin a daemon-running harness for
-# every unit below; the Pi refusal has its own units (unit_pi_never_launches_the_daemon).
+# The daemon paths refuse on a Pi or omp primary, so pin a daemon-running harness for
+# every unit below; that refusal has its own units (unit_extension_primaries_never_launch_the_daemon).
 # FM_TEST_HARNESS is the launch path's test-only seam (bin/fm-afk-launch.sh
 # fm_afk_launch_primary_harness): the suite calls the entrypoints directly, so a
 # real harness ancestor - a no-mistakes gate agent run under Pi - would outrank
@@ -126,9 +126,11 @@ unit_retired_two_step_entry_is_refused() {
   rm -rf "$st"
 }
 
-unit_pi_never_launches_the_daemon() {
+# Pi, pi-signed, and omp keep their primary watcher extension as the one
+# supervision owner, so neither daemon start path may launch a second one there.
+unit_extension_primaries_never_launch_the_daemon() {
   local st harness out rc
-  for harness in pi pi-signed; do
+  for harness in pi pi-signed omp; do
     st=$(mktemp -d "${TMPDIR:-/tmp}/fm-afk-pi.XXXXXX")
     mkdir -p "$st/state"
     out=$(FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" FM_TEST_HARNESS="$harness" \
@@ -151,6 +153,69 @@ unit_pi_never_launches_the_daemon() {
     fi
     rm -rf "$st"
   done
+}
+
+# The omp ownership decision with a live posture record, on every host
+# configuration: the watcher extension stays the one owner, so both daemon
+# start paths refuse in away and quiet mode and leave no away flag, daemon
+# terminal, or changed record behind; the return still archives the record;
+# and /quiet starts nothing, saying why every wake still reaches main.
+unit_omp_extension_stays_the_one_away_owner() {
+  local st config out rc mode cmd
+  st=$(mktemp -d "${TMPDIR:-/tmp}/fm-afk-omp.XXXXXX")
+  mkdir -p "$st/state" "$st/config"
+  in_omp() {
+    FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" FM_CONFIG_OVERRIDE="$st/config" FM_TEST_HARNESS=omp \
+      FM_SUPERVISOR_TARGET=unused FM_SUPERVISOR_BACKEND=tmux FM_AFK_LAUNCH_ENTRY="$SLEEPER" "$@" 2>&1
+  }
+  for config in none host off; do
+    rm -f "$st/config/supervision-host" "$st/config/supervision-host-off"
+    case "$config" in
+      host) printf 'claude\n' > "$st/config/supervision-host" ;;
+      off) : > "$st/config/supervision-host-off" ;;
+    esac
+    out=$(in_omp "$LAUNCH" enter --words "watch the fleet"); rc=$?
+    [ "$rc" -eq 0 ] && [ -f "$st/state/.afk-contract" ] || fail "omp ($config): enter did not record the posture (rc=$rc): $out"
+    if [ "$config" = host ]; then
+      printf '%s' "$out" | grep -F 'no daemon runs on omp' >/dev/null \
+        && fail "omp ($config): a home whose host has an engine must not say every away wake reaches main: $out"
+    else
+      printf '%s' "$out" | grep -F 'Away supervision: no daemon runs on omp, so its watcher extension delivers every away wake to this conversation' >/dev/null \
+        || fail "omp ($config): enter must say every away wake reaches main without the host: $out"
+    fi
+    for mode in away quiet; do
+      for cmd in start start-native; do
+        out=$(in_omp env FM_AFK_MODE="$mode" "$LAUNCH" "$cmd"); rc=$?
+        if [ "$rc" -eq 0 ] || [ -e "$st/state/.afk" ] || [ -e "$st/state/.afk-daemon-terminal" ] \
+          || [ "$(in_omp "$CONTRACT" mode)" != away ] \
+          || ! printf '%s' "$out" | grep -F 'the away daemon is no longer launched on omp, whose watcher extension stays the one supervision owner' >/dev/null; then
+          fail "omp ($config): $mode $cmd did not stand the daemon down cleanly (rc=$rc): $out"
+        fi
+      done
+    done
+    out=$(in_omp "$LAUNCH" quiet-check); rc=$?
+    quiet_expect 2 'while its away record (state/.afk-contract) is live' "omp ($config): quiet-check while away must send the captain through the return"
+    out=$(in_omp env FM_AFK_MODE=quiet "$LAUNCH" enter --words "stay quiet"); rc=$?
+    [ "$rc" -eq 3 ] && [ "$(in_omp "$CONTRACT" mode)" = away ] \
+      || fail "omp ($config): a quiet enter while away must refuse and keep the away record (rc=$rc): $out"
+    out=$(in_omp "$LAUNCH" stop); rc=$?
+    if [ "$rc" -ne 0 ] || [ -e "$st/state/.afk-contract" ] \
+      || ! printf '%s' "$out" | grep -F 'no daemon terminal was running' >/dev/null; then
+      fail "omp ($config): the return did not archive the record without a daemon (rc=$rc): $out"
+    fi
+    out=$(in_omp "$LAUNCH" quiet-check); rc=$?
+    case "$config" in
+      host) quiet_expect 0 'because no verified dialog mirror for omp, every wake still reaches this conversation' "omp ($config): quiet-check must start nothing and name the unready attended host" ;;
+      *) quiet_expect 0 'Quiet mode starts nothing on this omp home: its watcher extension stays the one supervision owner and no quiet daemon runs on omp, and because the home does not run the supervision host' "omp ($config): quiet-check must start nothing and name the missing host" ;;
+    esac
+    out=$(in_omp env FM_AFK_MODE=quiet "$LAUNCH" enter --words "stay quiet"); rc=$?
+    if [ "$rc" -ne 3 ] || [ -e "$st/state/.afk-contract" ] || [ -e "$st/state/.afk" ] \
+      || ! printf '%s' "$out" | grep -F 'quiet mode writes no away-posture record on this omp home' >/dev/null; then
+      fail "omp ($config): a quiet enter must write nothing where no quiet daemon can run (rc=$rc): $out"
+    fi
+  done
+  pass "omp: the watcher extension stays the one away and quiet owner on every host configuration; the daemon stands down"
+  rm -rf "$st"
 }
 
 # A leaked FM_TEST_HARNESS in a real primary's environment must stay inert: the
@@ -981,8 +1046,9 @@ unit_supervision_host_claude_home_runs_no_away_daemon() {
 
 # Every non-Pi primary with an arm owner runs the host under the same file, so
 # away mode launches no daemon there, quiet mode still does, and a harness with
-# no arm owner (kimi) keeps the daemon. `enter` says so when the file selects
-# no engine for that primary.
+# no arm owner (kimi) keeps the daemon. omp never runs the daemon
+# (unit_omp_extension_stays_the_one_away_owner). `enter` says so when the file
+# selects no engine for that primary.
 unit_supervision_host_other_harnesses_run_no_away_daemon() {
   local st harness out rc
   st=$(mktemp -d "${TMPDIR:-/tmp}/fm-afk-host-harness.XXXXXX")
@@ -991,17 +1057,17 @@ unit_supervision_host_other_harnesses_run_no_away_daemon() {
     FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" FM_CONFIG_OVERRIDE="$st/config" FM_TEST_HARNESS="$1" FM_AFK_MODE="${2:-}" \
       bash -c '. "$1"; fm_afk_launch_primary_harness() { printf "%s" "$FM_TEST_HARNESS"; }; fm_afk_launch_daemon_allowed' _ "$LAUNCH" 2>&1
   }
-  for harness in cursor opencode omp grok codex; do
+  for harness in cursor opencode grok codex; do
     daemon_allowed "$harness" >/dev/null || fail "$harness: a home without config/supervision-host must keep the away daemon"
   done
   daemon_allowed claude >/dev/null && fail "claude: a home without config/supervision-host runs the host, so it must refuse the away daemon"
   : > "$st/config/supervision-host-off"
-  for harness in claude cursor opencode omp grok codex; do
+  for harness in claude cursor opencode grok codex; do
     daemon_allowed "$harness" >/dev/null || fail "$harness: a home opted out by config/supervision-host-off must keep the away daemon"
   done
   rm -f "$st/config/supervision-host-off"
   : > "$st/config/supervision-host"
-  for harness in cursor opencode omp grok codex; do
+  for harness in cursor opencode grok codex; do
     out=$(daemon_allowed "$harness"); rc=$?
     [ "$rc" -ne 0 ] || fail "$harness: an opted-in home must refuse the away daemon"
     printf '%s' "$out" | grep -F "not launched on this $harness home, which runs the supervision host" >/dev/null \
@@ -1009,7 +1075,7 @@ unit_supervision_host_other_harnesses_run_no_away_daemon() {
     daemon_allowed "$harness" quiet >/dev/null || fail "$harness: quiet mode must still launch the daemon on an opted-in home"
   done
   daemon_allowed kimi >/dev/null || fail "kimi has no arm owner to run the host, so it must keep the away daemon"
-  pass "supervision host: away mode on an opted-in cursor, opencode, omp, grok, or codex home launches no daemon"
+  pass "supervision host: away mode on an opted-in cursor, opencode, grok, or codex home launches no daemon"
 
   enter_with() {  # <harness> <config line, off for the opt-out, or ->
     rm -f "$st/state/.afk-contract" "$st/config/supervision-host" "$st/config/supervision-host-off"
@@ -1099,7 +1165,8 @@ unit_daemon_quiet_entry_holds_nothing_for_a_return() {
 # /quiet where the attended supervision host runs is a statement: quiet-check
 # says quiet mode needs nothing, or that the session is paused while its
 # broken-session latch holds, and a quiet enter writes nothing. Without the
-# opt-in, or on Pi, quiet-check says nothing and quiet mode is the daemon's.
+# opt-in, or on Pi, quiet-check says nothing and quiet mode is the daemon's
+# (omp has its own unit: unit_omp_extension_stays_the_one_away_owner).
 unit_supervision_host_quiet_statement() {
   local st out rc key harness
   st=$(mktemp -d "${TMPDIR:-/tmp}/fm-afk-quiet.XXXXXX")
@@ -1168,7 +1235,7 @@ unit_supervision_host_quiet_fallback() {
   : > "$st/config/supervision-host"
   unready "no supervision engine: the primary harness 'cursor' has no verified supervision engine" cursor
   printf 'claude\n' > "$st/config/supervision-host"
-  for bad in opencode omp grok codex; do
+  for bad in opencode grok codex; do
     unready "no verified dialog mirror for $bad" "$bad"
   done
   printf '999999999\n' > "$st/state/.lock"
@@ -1724,7 +1791,8 @@ e2e_tmux() {
 unit_clear_stale
 unit_enter_records_the_posture_in_one_step_without_a_daemon
 unit_retired_two_step_entry_is_refused
-unit_pi_never_launches_the_daemon
+unit_extension_primaries_never_launch_the_daemon
+unit_omp_extension_stays_the_one_away_owner
 unit_test_harness_seam_requires_the_marker
 unit_pi_enter_stop_does_not_claim_a_daemon_terminal
 unit_daemon_entry_requires_the_record

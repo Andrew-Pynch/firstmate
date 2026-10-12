@@ -314,6 +314,7 @@ A home that does not run the host behaves exactly as it does without it, and a P
 While the home runs the host, the primary's arm owner runs it in place of the watcher arm.
 The host handles wakes on the engine under the [posture rules](supervision-host.md#postures), including an away record and attended operation on a Claude or Cursor primary with a verified dialog mirror.
 On that home, `/afk` launches no away daemon; see [Quiet mode](supervision-host.md#quiet-mode) for `/quiet`'s attended statement and fallback.
+An omp primary launches neither the away nor the quiet daemon, with or without the host, because its watcher extension (`.omp/extensions/fm-primary-omp-watch.ts`) stays the one supervision owner; without the host every away wake reaches main, and `bin/fm-afk-launch.sh` owns the rationale.
 The same gate governs the primary's dialog-mirror hooks (`bin/fm-host-mirror.sh`), which record on a Claude or Cursor primary ([supervision-host.md](supervision-host.md#the-dialog-mirror)).
 Grok's arm command is rendered at session start, so a change to its host mode takes effect at its next session start; the other arm owners check the gate at every arm.
 
@@ -1603,7 +1604,7 @@ The active primary-harness supervision protocol owns how that sourced cadence re
 **Apply cadence changes**
 
 Because `bin/fm-watch.sh` reads `FM_CHECK_INTERVAL` only at process start, a cadence transition - opt-in while a watcher is already running, or opt-out - is applied by restarting the home-scoped watcher through the emitted harness protocol; bootstrap deliberately never restarts the watcher itself.
-While a legacy daemon flag is active the daemon owns the watcher and its default cadence applies; on Pi the away-posture record alone leaves the ordinary Relay watcher cadence active, and daemon-backed Relay cadence remains a deferred follow-up.
+While a legacy daemon flag is active the daemon owns the watcher and its default cadence applies; on Pi and omp the away-posture record alone leaves the ordinary Relay watcher cadence active, and daemon-backed Relay cadence remains a deferred follow-up.
 
 When the token is removed or empty, the next locked session-start bootstrap step removes those artifacts.
 Steady-state off is silent and writes nothing.

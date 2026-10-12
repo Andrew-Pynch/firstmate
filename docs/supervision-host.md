@@ -32,7 +32,7 @@ Today it runs beside a Claude, Cursor, OpenCode, omp, Grok, or Codex primary: aw
 - Away (an away record exists), the host hands each close to the engine.
   Main stays parked unless the host hands the wake back.
 - `/afk` launches no away daemon on a home of those harnesses that runs the host, because the host is the away session there.
-- `/quiet` enters nothing where the attended host runs, and elsewhere launches the daemon; see [Quiet mode](#quiet-mode).
+- `/quiet` enters nothing where the attended host runs, and elsewhere launches the daemon except on omp, which never runs it; see [Quiet mode](#quiet-mode).
   While the daemon's flag `state/.afk` exists, the host stands aside exactly as the plain arm does.
 - Pi keeps its in-process branch whatever the file says, and no Pi engine is built.
 - Kimi has no primary supervision protocol, so it has no arm owner to run the host.
@@ -138,7 +138,7 @@ A captain who leaves while an attended turn runs turns its captain outcomes into
 
 `/quiet` asks for what the attended host already does: routine wakes stay off a present captain's main.
 So where the attended host runs, `/quiet` is a statement that enters nothing, because the host already gives what a quiet entry would; while [the broken-session latch](#the-broken-session-latch) holds, it says the session is paused instead.
-Where the home runs the host but the attended host lacks one of its parts, `/quiet` names the missing part and enters the quiet daemon, and while an away record is live the captain's return comes first.
+Where the home runs the host but the attended host lacks one of its parts, `/quiet` names the missing part and enters the quiet daemon, except on omp, where it enters nothing because no daemon runs beside the omp watcher extension, and while an away record is live the captain's return comes first.
 `bin/fm-afk-launch.sh` owns the readiness test and refusals in its `quiet-check` contract, and the [quiet skill](../.agents/skills/quiet/SKILL.md) owns the procedure.
 
 ## The dialog mirror

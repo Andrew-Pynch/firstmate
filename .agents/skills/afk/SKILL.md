@@ -32,15 +32,18 @@ Hold-for-return is the default and the only reach profile this release records: 
      The away daemon is no longer launched on Pi; the ordinary supervision session (`docs/pi-supervision-branch.md`) keeps running with the record present, and `bin/fm-afk-launch.sh start` refuses on these harnesses.
      With the record present main is parked: the supervision branch takes every safe actionable wake, captain outcomes accumulate for the return brief, and main's standing authority relocates to the branch through the guarded scripts (`docs/pi-supervision-branch.md` "Postures"); only a wake the branch declines (including a broken branch or unsafe scan) or a watcher failure wakes main.
      `/quiet` needs nothing extra on Pi: the attended branch already keeps routine wakes out of this conversation, so quiet-while-present is the attended posture's own shape there.
-   - **A home that runs the supervision host** (a Claude home unless `config/supervision-host-off` opts it out, or a Cursor, OpenCode, omp, Grok, or Codex home with `config/supervision-host` and no opt-out; `docs/configuration.md` "Supervision host"): nothing to launch for `/afk`; go on to the announcement.
+   - **omp**: nothing to launch; go on to the announcement, relaying any `Away supervision:` or `Supervision host:` line `enter` printed.
+     The omp watcher extension (`.omp/extensions/fm-primary-omp-watch.ts`) stays the one supervision owner with the record present, and `bin/fm-afk-launch.sh start` and `start-native` refuse the away and quiet daemon on omp whether or not the home runs the supervision host; that script's header owns why.
+     Without the host, the extension delivers every away wake to this conversation as an operational follow-up, so main handles it under the away posture; on a home that runs the host, the host is the away session as below.
+   - **A home that runs the supervision host** (a Claude home unless `config/supervision-host-off` opts it out, or a Cursor, OpenCode, Grok, or Codex home with `config/supervision-host` and no opt-out, plus an omp home under the omp rule above; `docs/configuration.md` "Supervision host"): nothing to launch for `/afk`; go on to the announcement.
      The supervision host (`docs/supervision-host.md`) is the away session there: it runs the branch's contract on a headless engine under the record while main is parked, and `bin/fm-afk-launch.sh start` and `start-native` refuse the away daemon on that home.
      If `enter` printed a `Supervision host: no engine ...` line, every away wake reaches this conversation instead; say so in the announcement.
-     `/quiet` enters nothing there where the attended host runs, and otherwise still launches the daemon below (the quiet skill's `quiet-check` decides).
+     `/quiet` enters nothing there where the attended host runs, and otherwise still launches the daemon below except on omp (the quiet skill's `quiet-check` decides).
    - **Harness WITH a native in-pane tracked-background tool** (claude's and grok's, on a home that does not run the supervision host): run `bin/fm-afk-launch.sh start-native`, then run `FM_AFK_STATE_PREPARED=1 bin/fm-afk-start.sh` through that native tool.
      This is a deliberate no-separate-terminal exception because the harness-hosted job creates no terminal or layout mutation, and a shell launcher cannot invoke a harness-native background tool.
      If the native launch fails, run `bin/fm-afk-launch.sh stop` to roll back the prepared lifecycle.
      Do not wrap it in `nohup ... &` (Codex/herdr can reap fire-and-forget shell children after a tool call returns).
-   - **Every other harness** (codex, opencode, omp, and cursor on a home that does not run the supervision host, and kimi): run `bin/fm-afk-launch.sh start`.
+   - **Every other harness** (codex, opencode, and cursor on a home that does not run the supervision host, and kimi): run `bin/fm-afk-launch.sh start`.
      It is the single owner of the daemon terminal: it creates a NON-VISIBLE tracked terminal for the current backend and passes the captain pane in as `FM_SUPERVISOR_TARGET` so the daemon injects into the captain, not its own new pane (docs/herdr-backend.md "Away-mode supervisor support").
    Both daemon paths require the record `enter` wrote and share `bin/fm-afk-start.sh` as the daemon entry.
    The daemon is **presence-gated**: it injects escalations only while `state/.afk` exists, and stays quiet otherwise.
@@ -50,7 +53,7 @@ Hold-for-return is the default and the only reach profile this release records: 
    Say plainly which sentence, if any, you could not act on while away (a red merge, a discard, anything on the never-set, local-only landing); it waits for their return.
    This read-back is informational: the record already stands, so never ask for a go or wait for a reply; a captain who wants a different reading sends `/afk` again with new words.
 4. **Do not separately arm `fm-watch.sh` where the daemon runs.** The daemon manages the watcher as its child; the singleton lock no-ops a stray arm harmlessly.
-   On Pi nothing changes about arming: the supervision session's own cycle continues.
+   On Pi and omp nothing changes about arming: the supervision session's own extension-owned cycle continues.
 
 ## While away
 
@@ -103,7 +106,7 @@ Destructive, irreversible, and security-sensitive actions are never pre-authoriz
 
 ## The daemon, where it still runs
 
-On the harnesses that still launch the daemon (every verified harness except Pi and pi-signed, and except away mode on a home that runs the supervision host), the mechanics below are unchanged.
+On the harnesses that still launch the daemon (every verified harness except Pi, pi-signed, and omp, and except away mode on a home that runs the supervision host), the mechanics below are unchanged.
 
 ### Operational prefix contract
 

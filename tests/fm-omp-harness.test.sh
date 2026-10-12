@@ -519,11 +519,19 @@ EOF
   pass ".omp turn-end guard: digest delivery, seatbelt block, one compelled continuation, flagged stop stands down"
 }
 
-test_watch_extension_arms_and_delivers() {
-  local repo home out status
-  repo="$TMP_ROOT/watch/repo"; home="$TMP_ROOT/watch/home"
+# With an away record present and no supervision host, omp launches no daemon
+# (tests/fm-afk-launch.test.sh), so the extension must keep arming and
+# delivering exactly as attended: it is the one away owner on that home.
+test_watch_extension_arms_and_delivers() {  # [attended|away]
+  local kind=${1:-attended} repo home out status
+  repo="$TMP_ROOT/watch-$kind/repo"; home="$TMP_ROOT/watch-$kind/home"
   install_omp_extension_fixture "$repo"
   mkdir -p "$home/state"
+  if [ "$kind" = away ]; then
+    FM_HOME="$home" "$ROOT/bin/fm-afk-contract.sh" enter --words 'watch the fleet' >/dev/null 2>&1 \
+      && [ "$(FM_HOME="$home" "$ROOT/bin/fm-afk-contract.sh" mode)" = away ] \
+      || fail "fixture: could not record the away posture"
+  fi
   # The first arm child closes with one actionable reason; every successor
   # stays up, so exactly one wake exists to consume.
   cat > "$repo/bin/fm-watch-arm.sh" <<'SH'
@@ -576,7 +584,7 @@ EOF
   status=$?
   expect_code 0 "$status" "omp watch extension contract: $out"
   [ -z "$out" ] || fail "omp watch extension test printed output: $out"
-  pass ".omp watch extension: fm_watch_arm_omp arms once, repeats as a no-op, and delivers an actionable close as one follow-up"
+  pass ".omp watch extension ($kind): fm_watch_arm_omp arms once, repeats as a no-op, and delivers an actionable close as one follow-up"
 }
 
 # An opted-in home spawns the supervision host in the arm's place; its streamed
@@ -872,6 +880,7 @@ test_control_composer_and_model_tables
 test_ownership_proof_is_omp_keyed
 test_turnend_guard_extension_compels_one_continuation
 test_watch_extension_arms_and_delivers
+test_watch_extension_arms_and_delivers away
 test_watch_extension_runs_the_supervision_host
 test_watch_extension_runs_the_supervision_host quiet
 test_watch_extension_keeps_the_arm_without_the_file_or_with_off

@@ -2,7 +2,7 @@
 name: quiet
 description: >-
   Enter quiet supervision mode when the captain invokes /quiet or asks for quiet mode, quiet-while-present, or fewer routine wake turns while they stay in the session.
-  Where Pi's supervision branch or an attended supervision host already keeps routine wakes off the conversation, it enters nothing and says so.
+  Where Pi's supervision branch or an attended supervision host already keeps routine wakes off the conversation, it enters nothing and says so; on omp, where no daemon runs beside the watcher extension, it enters nothing and says routine wakes still arrive.
   Elsewhere it sets the same durable away/quiet-mode flag as /afk, in `quiet` mode, so the sub-supervisor daemon self-handles routine wakes and escalates captain-relevant events exactly as away mode does, but ordinary captain chat does NOT exit it - only an explicit `/quiet off` does.
 user-invocable: true
 metadata:
@@ -27,6 +27,7 @@ For captain-held rechecks under quiet, see [architecture](../../../docs/architec
    - Exit 0: enter nothing - no record, no flag, no daemon, and `/quiet off` then needs nothing either.
      Tell the captain in `AGENTS.md` section 9 language that supervision here already works that way: routine fleet events stay off this conversation, while decisions, failures, credentials, and review-ready work still reach them.
      When its line says the supervision session is paused, say instead that routine updates reach them until it recovers, and when it next retries.
+     When its line names an omp home, say instead that quiet mode is unavailable there: omp's watcher extension stays the one supervision owner and no quiet daemon runs beside it, so routine updates still reach them, for the reason the line names.
    - Exit 2: an away record is live, so the captain has returned: run the `afk` skill's return and clear its catch-up gate, then run `quiet-check` again and follow its new result.
    - Exit 1: go on to step 1; if it printed a line, first tell the captain plainly what keeps supervision from already being quiet here.
 

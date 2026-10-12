@@ -24,6 +24,7 @@ The turn-end guard on omp is structural, not advisory: `__FM_OMP_TURNEND_EXT__` 
 An interrupted turn never raises `session_stop`, so a supervisor-initiated interrupt is not guarded; `bin/fm-control.sh` owns that postcondition.
 
 The Pi supervision branch (`docs/pi-supervision-branch.md`) is Pi's in-process conversation and does not run on omp: without the supervision host every actionable wake is delivered to this conversation and the lease, outcome-store, and `fm_branch_processed` contracts do not apply here, while a home with `config/supervision-host` and no `config/supervision-host-off` runs the host's away session ([`supervision-host.md`](../supervision-host.md)).
+`/afk` and `/quiet` launch no daemon on omp (`bin/fm-afk-launch.sh start` refuses it), so this extension-owned cycle stays the one supervision owner with the away record present; each wake it delivers is operational input, never the captain's return.
 
 The turn-end guard extension lives at `__FM_OMP_TURNEND_EXT__`.
 The watcher extension lives at `__FM_OMP_EXT__`.

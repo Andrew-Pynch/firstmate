@@ -244,6 +244,30 @@ arm_calls=$(tool_call_count fm_watch_arm_omp)
 [ "$arm_calls" -eq 1 ] || fail "the model re-armed from memory instead of the extension (fm_watch_arm_omp call count $arm_calls)"
 pass "omp $OMP_VERSION: an actionable close spawned a ledger-linked successor and woke main exactly once"
 
+# --- 2b. away posture: the extension stays the one owner -----------------------
+# With an away record present no daemon runs on omp (bin/fm-afk-launch.sh), so
+# this same extension cycle must still deliver the next wake to the now-idle
+# main as one follow-up that opens a new turn, with no re-arm and no away flag.
+FM_HOME="$PROJECT" "$PROJECT/bin/fm-afk-contract.sh" enter --words 'live e2e away posture' >/dev/null 2>&1 \
+  || fail "could not record the away posture in the lab"
+[ ! -e "$PROJECT/state/.afk" ] || fail "recording the away posture wrote the daemon flag"
+: > "$PROJECT/state/omp-e2e-away.meta"
+printf 'done: omp live e2e away wake\n' > "$PROJECT/state/omp-e2e-away.status"
+i=0
+while [ "$i" -lt 240 ]; do
+  [ "$(grep -o 'FIRSTMATE WATCHER WAKE: signal:' "$RPC_LOG" 2>/dev/null | grep -c .)" -ge 2 ] && break
+  sleep 0.5
+  i=$((i + 1))
+done
+[ "$(grep -o 'FIRSTMATE WATCHER WAKE: signal:' "$RPC_LOG" 2>/dev/null | grep -c .)" -ge 2 ] \
+  || fail "with the away record present, the next actionable close was not delivered to the idle main"
+wait_for_agent_ends 4 360 || fail "omp did not open and finish a turn for the away wake"
+[ ! -e "$PROJECT/state/.afk" ] || fail "the away wake left a daemon flag behind"
+arm_calls=$(tool_call_count fm_watch_arm_omp)
+[ "$arm_calls" -eq 1 ] || fail "the model re-armed during the away wake (fm_watch_arm_omp call count $arm_calls)"
+FM_HOME="$PROJECT" "$PROJECT/bin/fm-afk-launch.sh" stop >/dev/null 2>&1 || fail "the lab return could not archive the away record"
+pass "omp $OMP_VERSION: with the away record present, the extension delivered the next wake to the idle main as one new turn"
+
 # --- 3. the compelled turn-end guard continuation -------------------------------
 # Freeze the successor watcher (SIGSTOP) so its beacon goes stale past the lab
 # grace while its arm child stays attached: the extension sees no close and
@@ -283,7 +307,7 @@ while [ "$i" -lt 360 ]; do
 done
 [ "$(tool_call_count fm_watch_arm_omp)" -ge 2 ] \
   || { thaw; fail "the model did not reach for fm_watch_arm_omp after the compelled continuation"; }
-wait_for_agent_ends 4 360 || { thaw; fail "omp did not settle after the compelled continuation"; }
+wait_for_agent_ends 5 360 || { thaw; fail "omp did not settle after the compelled continuation"; }
 thaw
 sleep 3
 repaired_pid=$(cat "$PROJECT/state/.watch.lock/pid" 2>/dev/null || true)

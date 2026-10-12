@@ -246,6 +246,17 @@ fm_afk_launch_host_primary() {  # <harness>
   return 1
 }
 
+fm_afk_launch_warn_live_omp_daemon() {
+  local read_result
+  if ! daemon_lock_held_by_live_daemon; then
+    fm_afk_launch_record_read
+    read_result=$?
+    [ "$read_result" -eq 0 ] || return 0
+    fm_afk_launch_terminal_alive "$FM_AFK_REC_BACKEND" "$FM_AFK_REC_TARGET" || return 0
+  fi
+  fm_afk_launch_log "a daemon is still running beside the omp watcher extension; run bin/fm-afk-return.sh to retire it"
+}
+
 # True when the posture record is a quiet entry's (bin/fm-afk-contract.sh mode).
 fm_afk_launch_record_quiet() {
   [ "$(fm_afk_contract_mode "$FM_AFK_LAUNCH_STATE")" = quiet ]
@@ -340,8 +351,12 @@ fm_afk_launch_daemon_allowed() {
   local harness mode
   harness=$(fm_afk_launch_primary_harness)
   case "$harness" in
-    pi|pi-signed|omp)
+    pi|pi-signed)
       fm_afk_launch_log "the away daemon is no longer launched on $harness, whose watcher extension stays the one supervision owner; the away-posture record is the posture there (run bin/fm-afk-launch.sh enter and stop)"
+      return 1 ;;
+    omp)
+      fm_afk_launch_log "the away daemon is no longer launched on $harness, whose watcher extension stays the one supervision owner; the away-posture record is the posture there (run bin/fm-afk-launch.sh enter and stop)"
+      fm_afk_launch_warn_live_omp_daemon
       return 1 ;;
   esac
   fm_afk_launch_host_primary "$harness" || return 0

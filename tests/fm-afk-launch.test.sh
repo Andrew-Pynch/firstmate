@@ -138,7 +138,8 @@ unit_extension_primaries_never_launch_the_daemon() {
       bash -c '. "$1"; fm_afk_launch_primary_harness() { printf "%s" "$FM_TEST_HARNESS"; }; fm_afk_launch_main start' _ "$LAUNCH" 2>&1)
     rc=$?
     if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -F "the away daemon is no longer launched on $harness" >/dev/null \
-      && [ ! -e "$st/state/.afk" ] && [ ! -e "$st/state/.afk-daemon-terminal" ] && [ ! -e "$st/state/.afk-contract" ]; then
+      && [ ! -e "$st/state/.afk" ] && [ ! -e "$st/state/.afk-daemon-terminal" ] && [ ! -e "$st/state/.afk-contract" ] \
+      && { [ "$harness" != omp ] || ! printf '%s' "$out" | grep -F 'a daemon is still running beside the omp watcher extension' >/dev/null; }; then
       pass "$harness: start refuses to launch the daemon and writes no state"
     else
       fail "$harness: start did not refuse cleanly (rc=$rc): $out"
@@ -146,13 +147,45 @@ unit_extension_primaries_never_launch_the_daemon() {
     out=$(FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" FM_TEST_HARNESS="$harness" \
       bash -c '. "$1"; fm_afk_launch_primary_harness() { printf "%s" "$FM_TEST_HARNESS"; }; fm_afk_launch_main start-native' _ "$LAUNCH" 2>&1)
     rc=$?
-    if [ "$rc" -ne 0 ] && [ ! -e "$st/state/.afk" ] && [ ! -e "$st/state/.afk-daemon-terminal" ]; then
+    if [ "$rc" -ne 0 ] && [ ! -e "$st/state/.afk" ] && [ ! -e "$st/state/.afk-daemon-terminal" ] \
+      && { [ "$harness" != omp ] || ! printf '%s' "$out" | grep -F 'a daemon is still running beside the omp watcher extension' >/dev/null; }; then
       pass "$harness: start-native refuses to prepare a daemon"
     else
       fail "$harness: start-native did not refuse (rc=$rc): $out"
     fi
     rm -rf "$st"
   done
+}
+
+unit_omp_refusal_names_live_daemon_return() {
+  local st sleep_pid lock out rc cmd
+  st=$(mktemp -d "${TMPDIR:-/tmp}/fm-afk-omp-live.XXXXXX")
+  mkdir -p "$st/state"
+  enter_posture "$st"
+  printf 'away\n' > "$st/state/.afk"
+  printf 'none\t-\tnative\n' > "$st/state/.afk-daemon-terminal"
+  sleep 600 &
+  sleep_pid=$!
+  lock="$st/state/.supervise-daemon.lock"
+  mkdir -p "$lock"
+  printf '%s' "$sleep_pid" > "$lock/pid"
+  ( . "$ROOT/bin/fm-wake-lib.sh"; fm_pid_identity "$sleep_pid" > "$lock/pid-identity" 2>/dev/null ) || true
+  cp -a "$st/state" "$st/state.before"
+  for cmd in start start-native; do
+    out=$(FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" FM_TEST_HARNESS=omp "$LAUNCH" "$cmd" 2>&1)
+    rc=$?
+    if [ "$rc" -ne 0 ] \
+      && printf '%s' "$out" | grep -F 'a daemon is still running beside the omp watcher extension; run bin/fm-afk-return.sh to retire it' >/dev/null \
+      && kill -0 "$sleep_pid" 2>/dev/null \
+      && diff -r "$st/state.before" "$st/state" >/dev/null; then
+      pass "omp: $cmd refuses beside a live legacy daemon, names the return command, and preserves the daemon and records"
+    else
+      fail "omp: $cmd did not preserve and report the live legacy daemon (rc=$rc): $out"
+    fi
+  done
+  kill "$sleep_pid" 2>/dev/null || true
+  wait "$sleep_pid" 2>/dev/null || true
+  rm -rf "$st"
 }
 
 # The omp ownership decision with a live posture record, on every host
@@ -1795,6 +1828,7 @@ unit_clear_stale
 unit_enter_records_the_posture_in_one_step_without_a_daemon
 unit_retired_two_step_entry_is_refused
 unit_extension_primaries_never_launch_the_daemon
+unit_omp_refusal_names_live_daemon_return
 unit_omp_extension_stays_the_one_away_owner
 unit_test_harness_seam_requires_the_marker
 unit_pi_enter_stop_does_not_claim_a_daemon_terminal

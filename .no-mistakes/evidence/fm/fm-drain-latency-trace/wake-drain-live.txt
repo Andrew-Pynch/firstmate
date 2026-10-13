@@ -1,0 +1,23 @@
+ok - a note: answer buried under a later routine note: is surfaced with both lines
+ok - already-presented note: lines are not re-surfaced on the next drain
+ok - a brand-new note: after presentation is surfaced without replaying handled lines
+ok - a queued status signal annotates every unread note, not only the newest
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 1 --recovery-generation 3294535.1791858777.b08bI2
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 1 --recovery-generation 3294535.1791858777.b08bI2
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 1 --recovery-generation 3294535.1791858777.b08bI2
+ok - a pending-reply resolution buried under a later note surfaces once and closes OPEN DECISIONS
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 1 --recovery-generation 3299360.1791858778.mF7izs
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 2 --recovery-generation 3299360.1791858778.mF7izs
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 2 --recovery-generation 3299360.1791858778.mF7izs
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 2 --recovery-generation 3299360.1791858778.mF7izs
+ok - a self-announced pending-reply close does not wake yet still surfaces once in UNREAD STATUS
+ok - unread status over the former byte cap preserves every line
+ok - presentation cursor advances only through its captured endpoint
+ok - a reused task id starts its replacement status log unread at byte zero
+ok - fallback identity still presents and advances status state
+ok - snapshot failures are reported visibly
+ok - OPEN DECISIONS still folds needs-decision/blocked independently of unread notes
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 1 --recovery-generation 3321785.1791858785.U0C2tF
+ok - an empty-queue backstop presentation still preserves the status for its later signal annotation
+ok - routine working and branch-covered done lines print nothing on an empty-queue drain
+ok - status presentation forks grow linearly with the status-file count (8=1400 16=2544 32=4832)

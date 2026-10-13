@@ -449,6 +449,55 @@ test_routine_working_and_covered_done_stay_silent_on_the_empty_queue() {
   pass "routine working and branch-covered done lines print nothing on an empty-queue drain"
 }
 
+# Count the processes one drain creates over <n> status files that each already
+# hold a presentation cursor row. The drain runs inside a private PID namespace,
+# so the namespace's last allocated pid counts exactly this drain's forks and no
+# other process on the host can disturb it.
+drain_fork_count() {  # <n>
+  local n=$1 dir state i count
+  dir=$(make_case "fork-scaling-$n")
+  state="$dir/state"
+  i=1
+  while [ "$i" -le "$n" ]; do
+    printf 'working [at=1]: task %s\n' "$i" > "$state/task$i.status"
+    i=$((i + 1))
+  done
+  FM_STATE_OVERRIDE="$state" "$DRAIN" >/dev/null 2>&1 \
+    || fail "bootstrap drain failed while priming $n presentation cursor rows"
+  # shellcheck disable=SC2016 # Expanded by the namespace shell.
+  count=$(unshare -rpf --mount-proc bash -c '
+    FM_STATE_OVERRIDE="$1" "$2" >/dev/null 2>&1 || exit 1
+    read -r last < /proc/sys/kernel/ns_last_pid || exit 1
+    printf "%s\n" "$last"
+  ' _ "$state" "$DRAIN") || fail "the drain over $n status files failed inside the PID namespace"
+  case "$count" in ''|*[!0-9]*) fail "unreadable namespace pid count for $n status files: $count" ;; esac
+  printf '%s\n' "$count"
+}
+
+# Status presentation looks up one cursor row per status file. A fork inside
+# that per-row lookup makes every drain grow with the square of the status-file
+# count; at 316 files each drain took about four minutes. Linear cost doubles
+# the fork increment when the file count doubles, quadratic cost nears four
+# times, so the bound sits between them without pinning a per-file budget.
+test_status_presentation_forks_grow_linearly_with_status_files() {
+  local small mid large first second
+  if ! command -v unshare >/dev/null 2>&1 \
+    || ! unshare -rpf --mount-proc true >/dev/null 2>&1; then
+    printf '# skip: unprivileged PID namespaces are unavailable here, so drain fork growth is unverified\n'
+    return 0
+  fi
+  small=$(drain_fork_count 8) || exit 1
+  mid=$(drain_fork_count 16) || exit 1
+  large=$(drain_fork_count 32) || exit 1
+  first=$((mid - small))
+  second=$((large - mid))
+  [ "$first" -gt 0 ] \
+    || fail "doubling the status files from 8 to 16 added no forks ($small then $mid), so the count measures nothing"
+  [ $((second * 2)) -le $((first * 5)) ] \
+    || fail "drain forks grew faster than linearly with status files: 8=$small 16=$mid 32=$large (increments $first then $second)"
+  pass "status presentation forks grow linearly with the status-file count (8=$small 16=$mid 32=$large)"
+}
+
 test_incident_note_answer_buried_under_routine_note_surfaces_both
 test_already_presented_notes_are_not_replayed
 test_brand_new_note_after_presentation_is_surfaced
@@ -463,3 +512,4 @@ test_snapshot_failure_is_visible
 test_open_decisions_fold_is_unchanged
 test_empty_queue_does_not_swallow_later_signal_annotation
 test_routine_working_and_covered_done_stay_silent_on_the_empty_queue
+test_status_presentation_forks_grow_linearly_with_status_files

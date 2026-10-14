@@ -2229,7 +2229,7 @@ launch_template() {
     fi
     ;;
   # omp (Oh My Pi), a Pi fork. Same one-positional-brief, --model, --thinking,
-  # and -e shape as Pi, verified on omp 18.1.11. The differences are all at
+  # and -e shape as Pi, verified on omp 18.9.1. The differences are all at
   # the launch boundary and documented in the header above: foreign markers
   # cleared (omp has none of its own, so an inherited CLAUDECODE would win),
   # FM_OMP_HARNESS=omp established for bin/fm-harness.sh, OMP_SKIP_SETUP=1
@@ -2443,7 +2443,7 @@ esac
 # person may be writing a draft (bin/fm-task-inbox-lib.sh, "Native doorbell").
 if [ "$RAW_LAUNCH" -ne 0 ]; then
   for word in $LAUNCH; do
-    raw_program=$(basename "$word")
+    raw_program=$(basename -- "$word")
     raw_program=${raw_program#\"}
     raw_program=${raw_program#\'}
     raw_program=${raw_program%\"}

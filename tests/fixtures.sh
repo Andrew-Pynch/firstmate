@@ -295,11 +295,22 @@ EOF
 # Creates <dir>/fakebin with the spawn tmux stub, a no-op treehouse, and any
 # extra exit-0 tools. Echoes the fakebin path.
 fm_test_make_spawn_fakebin() {
-  local dir=$1 fakebin
+  local dir=$1 fakebin tool
   shift
   fakebin=$(fm_fakebin "$dir")
   fm_test_fake_tmux_spawn "$fakebin"
   fm_fake_exit0 "$fakebin" treehouse "$@"
+  for tool in "$@"; do
+    [ "$tool" = omp ] || continue
+    cat > "$fakebin/omp" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = --version ]; then
+  printf 'omp/18.9.1\n'
+fi
+exit 0
+SH
+    chmod +x "$fakebin/omp"
+  done
   printf '%s\n' "$fakebin"
 }
 

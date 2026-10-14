@@ -431,6 +431,11 @@ test_ring_native_endpoint_and_unproven_composer() {
   [ "$rc" = 0 ] || fail "a harness with no native endpoint should ring a proven-empty composer, got rc $rc"
   grep -qF 'Firstmate instruction waiting' "$log" || fail "a proven-empty composer on a typed lane did not receive the doorbell"
 
+  printf 'harness=env\n' > "$state/t1.meta"
+  : > "$log"; rc=0; ring '' || rc=$?
+  [ "$rc" = 1 ] || fail "an unverified recorded harness must skip a proven-empty composer, got rc $rc"
+  [ ! -s "$log" ] || fail "an unverified recorded harness received keystrokes:"$'\n'"$(cat "$log")"
+
   printf 'harness=omp\n' > "$state/t1.meta"
   : > "$log"; rc=0; ring || rc=$?
   [ "$rc" = 1 ] || fail "an omp lane without a live endpoint must skip an unproven composer, got rc $rc"

@@ -99,11 +99,14 @@
 # restore a queued copy into the composer next to the person's draft. A lane
 # whose recorded harness is in FM_TASK_INBOX_NATIVE_HARNESSES is native-capable
 # and never receives a keystroke from the ring, because a composer check
-# followed by typing still races a person who starts typing in between;
-# bin/fm-spawn.sh refuses a raw launch command for such a harness, since it
-# could not load the extension. While a native-capable lane's endpoint names a
-# live process the ring writes its own request and waits up to
-# FM_TASK_INBOX_NATIVE_ACK_SECS for the extension to remove it; a request
+# followed by typing still races a person who starts typing in between. A lane
+# whose record contains a `harness=` value that is not a verified adapter also
+# receives no keystrokes: a raw launch command may hide its actual harness
+# behind arbitrary shell syntax, so the ring cannot prove that typed delivery
+# is safe. A legacy record with no `harness=` field keeps typed delivery. While
+# a native-capable lane's endpoint names a live process the ring writes its own
+# request and waits up to FM_TASK_INBOX_NATIVE_ACK_SECS for the extension to
+# remove it; a request
 # still present then is a failed ring the ladder retries, and it stays for the
 # extension to deliver once it recovers. Concurrent rings each wait on their
 # own request, so none can steal another's acknowledgement. While the endpoint
@@ -135,6 +138,8 @@ _FM_TASK_INBOX_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$_FM_TASK_INBOX_LIB_DIR/fm-wake-lib.sh"
 # shellcheck source=/dev/null
 . "$_FM_TASK_INBOX_LIB_DIR/fm-backend.sh"
+# shellcheck source=/dev/null
+. "$_FM_TASK_INBOX_LIB_DIR/fm-control-lib.sh"
 
 FM_TASK_INBOX_SCHEMA='fm-task-inbox.v1'
 FM_TASK_INBOX_GRACE_DEFAULT=90
@@ -399,15 +404,20 @@ fm_task_inbox_doorbell_line() {  # <record-path>
 # rather than skipped; skipping it would block every later ring. On both paths
 # a lost first Enter gets one confirmed retry.
 fm_task_inbox_ring() {  # <backend> <target> <record-path> [expected-label]
-  local backend=$1 target=$2 rec=$3 label=${4:-} line cstate verdict dir
+  local backend=$1 target=$2 rec=$3 label=${4:-} line cstate verdict dir meta harness
+  dir=${rec%/*}
+  dir=${dir%/handled}
+  meta="${dir%.inbox}.meta"
+  if grep -q '^harness=' "$meta" 2>/dev/null; then
+    harness=$(fm_meta_get "$meta" harness)
+    fm_control_harness_supported "$harness" || return 1
+  fi
   case "$(fm_backend_agent_state "$backend" "$target" 2>/dev/null || true)" in
     dead|missing) return 3 ;;
   esac
   if ! line=$(fm_task_inbox_doorbell_line "$rec"); then
     return 2
   fi
-  dir=${rec%/*}
-  dir=${dir%/handled}
   # The recorded harness decides first: an endpoint file on any other lane (a
   # stale one whose pid was reused) is never consulted.
   if fm_task_inbox_native_capable "$dir"; then

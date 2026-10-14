@@ -27,6 +27,7 @@ type HomeBindingGlobal = typeof globalThis & {
   __firstmateLaunchFmHome?: string;
   __firstmateHomeBindings?: Map<string, FirstmateHomeBinding>;
   __firstmateLaunchOverrideConsumed?: boolean;
+  __firstmateHomeConflict?: string;
 };
 const homeBindingGlobal = globalThis as HomeBindingGlobal;
 
@@ -44,6 +45,14 @@ export function consumeFirstmateLaunchOverride(): boolean {
   if (homeBindingGlobal.__firstmateLaunchOverrideConsumed) return false;
   homeBindingGlobal.__firstmateLaunchOverrideConsumed = true;
   return true;
+}
+
+export function setFirstmateHomeConflict(message: string): void {
+  homeBindingGlobal.__firstmateHomeConflict = message;
+}
+
+export function firstmateHomeConflict(): string {
+  return homeBindingGlobal.__firstmateHomeConflict ?? "";
 }
 
 export function recordedFirstmateHome(sessionManager: HomeEntrySessionManager | undefined): string {

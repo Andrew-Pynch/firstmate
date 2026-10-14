@@ -1549,6 +1549,85 @@ EOF
   pass ".omp watch extension: canonical homes stay supervised and later activations or factory binds preserve cross-home records"
 }
 
+test_cross_home_conflict_stands_down_bound_home_guards() {
+  local base="$TMP_ROOT/cross-home-guards" repo home_a home_b out status
+  repo="$base/repo"; home_a="$base/home-a"; home_b="$base/home-b"
+  install_shared_code_root_fixture "$repo" "$home_a" "$home_b"
+  cat > "$repo/bin/fm-turnend-guard.sh" <<'SH'
+#!/usr/bin/env bash
+cat >> "${FM_GUARD_LOG:?}"
+printf '\n' >> "$FM_GUARD_LOG"
+printf 'guard says repair supervision\n' >&2
+exit 2
+SH
+  cat > "$repo/bin/fm-cd-pretool-check.sh" <<'SH'
+#!/usr/bin/env bash
+printf 'cd\n' >> "${FM_CHECK_LOG:?}"
+exit 0
+SH
+  cat > "$repo/bin/fm-arm-pretool-check.sh" <<'SH'
+#!/usr/bin/env bash
+printf 'arm\n' >> "${FM_CHECK_LOG:?}"
+exit 0
+SH
+  chmod +x "$repo/bin/fm-turnend-guard.sh" "$repo/bin/fm-cd-pretool-check.sh" "$repo/bin/fm-arm-pretool-check.sh"
+  out=$(FM_HOME="$home_a" FM_HOME_BINDING_RUNTIME_DIR="$base/runtime" FM_ARM_LOG="$base/arm.log" \
+    FM_GUARD_LOG="$base/guard.log" FM_CHECK_LOG="$base/check.log" HOME_A="$home_a" HOME_B="$home_b" \
+    WATCH_EXT="$repo/.omp/extensions/fm-primary-omp-watch.ts" GUARD_EXT="$repo/.omp/extensions/fm-primary-turnend-guard.ts" \
+    node --input-type=module 2>&1 <<'EOF'
+import { pathToFileURL } from "node:url";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+writeFileSync(`${process.env.HOME_A}/state/.lock`, `${process.pid}\n`);
+const watchHandlers = new Map(); let watchTool = null;
+const watchPi = {
+  on(e, h) { watchHandlers.set(e, h); }, registerCommand() {}, registerTool(t) { watchTool = t; }, sendMessage() {}, appendEntry() {},
+};
+const guardHandlers = new Map();
+const guardPi = { on(e, h) { guardHandlers.set(e, h); }, sendMessage() {} };
+const watchMod = await import(pathToFileURL(process.env.WATCH_EXT).href);
+const guardMod = await import(pathToFileURL(process.env.GUARD_EXT).href);
+watchMod.default(watchPi);
+guardMod.default(guardPi);
+await watchHandlers.get("session_start")({ type: "session_start" }, {
+  sessionManager: { getSessionId: () => "a", getEntries: () => [
+    { type: "custom", customType: "firstmate-home", data: { home: process.env.HOME_A } },
+  ] },
+});
+await watchHandlers.get("session_switch")({ type: "session_switch", reason: "resume" }, {
+  sessionManager: { getEntries: () => [{ type: "custom", customType: "firstmate-home", data: { home: process.env.HOME_B } }] },
+});
+const banner = await watchHandlers.get("before_agent_start")({ type: "before_agent_start", prompt: "resume" }, {});
+if (!banner?.message?.content?.includes("WATCHER DOWN")) throw new Error(`the watch extension did not surface the cross-home conflict: ${JSON.stringify(banner)}`);
+const conflictedStop = await guardHandlers.get("session_stop")({ type: "session_stop", stop_hook_active: false }, {});
+if (conflictedStop !== undefined) throw new Error(`the bound-home guard compelled the other home's conversation: ${JSON.stringify(conflictedStop)}`);
+const conflictedTool = await guardHandlers.get("tool_call")({ type: "tool_call", toolName: "bash", input: { command: "ls" } }, {});
+if (conflictedTool.block) throw new Error(`a bound-home pretool check affected the other home's conversation: ${JSON.stringify(conflictedTool)}`);
+if (existsSync(process.env.FM_GUARD_LOG) || existsSync(process.env.FM_CHECK_LOG)) {
+  throw new Error("home-dependent guard scripts ran during a cross-home conflict");
+}
+await watchHandlers.get("session_switch")({ type: "session_switch", reason: "resume" }, {
+  sessionManager: { getEntries: () => [{ type: "custom", customType: "firstmate-home", data: { home: process.env.HOME_A } }] },
+});
+const rearmed = await watchTool.execute();
+if (!/^watcher: (started|unchanged)/.test(rearmed.content[0].text)) throw new Error(`returning home did not restore the watch: ${rearmed.content[0].text}`);
+const activeStop = await guardHandlers.get("session_stop")({ type: "session_stop", stop_hook_active: false }, {});
+if (activeStop?.continue !== true) throw new Error(`the turn-end guard stayed down after returning home: ${JSON.stringify(activeStop)}`);
+const activeTool = await guardHandlers.get("tool_call")({ type: "tool_call", toolName: "bash", input: { command: "ls" } }, {});
+if (activeTool.block) throw new Error(`an allowed command was blocked after returning home: ${JSON.stringify(activeTool)}`);
+if (!existsSync(process.env.FM_GUARD_LOG)) throw new Error("the turn-end guard did not resume after returning home");
+const checks = readFileSync(process.env.FM_CHECK_LOG, "utf8").trim().split("\n");
+if (checks.join(",") !== "cd,arm") throw new Error(`pretool checks did not resume after returning home: ${JSON.stringify(checks)}`);
+await watchHandlers.get("session_shutdown")({}, {});
+await guardHandlers.get("session_shutdown")({}, {});
+process.exit(0);
+EOF
+)
+  status=$?
+  expect_code 0 "$status" "omp cross-home shared guard state: $out"
+  [ -z "$out" ] || fail "omp cross-home shared guard test printed output: $out"
+  pass ".omp extensions: cross-home conversations stand down bound-home guards until returning home"
+}
+
 test_turnend_guard_refuses_an_unbound_home_loudly() {
   local base="$TMP_ROOT/shared-guard" repo home_a home_b out status
   repo="$base/repo"; home_a="$base/home-a"; home_b="$base/home-b"
@@ -1696,6 +1775,7 @@ test_watch_extension_heals_shutdown_without_start
 test_watch_extension_restart_never_replays_a_cleaned_up_task
 test_watch_extension_binds_the_recorded_home_on_a_shared_code_root
 test_session_reconciliation_preserves_home_identity
+test_cross_home_conflict_stands_down_bound_home_guards
 test_turnend_guard_refuses_an_unbound_home_loudly
 test_unbound_farm_checkout_warns_without_compelling_workers
 test_extension_markers_name_only_the_lock_holder

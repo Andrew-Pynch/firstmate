@@ -45,7 +45,12 @@ import {
   classifyFirstmateCurrentOperationalText,
   encodeFirstmateOperationalInput,
 } from "../../.pi/extensions/lib/fm-operational-input.ts";
-import { bindFirstmateHome, launchFmHome, type FirstmateHomeBinding } from "../../.pi/extensions/lib/fm-home-binding.ts";
+import {
+  bindFirstmateHome,
+  firstmateHomeConflict,
+  launchFmHome,
+  type FirstmateHomeBinding,
+} from "../../.pi/extensions/lib/fm-home-binding.ts";
 
 // The omp extension API surface this file uses, declared locally: omp ships no
 // separately installable type package and is a Pi fork whose event names match
@@ -500,6 +505,7 @@ async function claimSessionstartMessage(
 // payload: a true value allows the stop, which is what bounds omp to one
 // forced continuation per turn.
 function runGuard(stopHookActive: boolean): Promise<{ code: number; stderr: string }> {
+  if (firstmateHomeConflict()) return Promise.resolve({ code: 0, stderr: "" });
   const binding = homeBinding;
   if (binding?.status === "ineligible" || binding?.status === "home-mismatch") {
     return Promise.resolve({ code: 0, stderr: "" });
@@ -532,6 +538,7 @@ function runGuard(stopHookActive: boolean): Promise<{ code: number; stderr: stri
 // surfaced the reason verbatim to the model). Each owner script owns its own
 // decision and is inert outside the real primary checkout.
 function runChecker(script: string, command: string): Promise<{ code: number; stderr: string }> {
+  if (firstmateHomeConflict()) return Promise.resolve({ code: 0, stderr: "" });
   return new Promise((resolveResult) => {
     const child = spawn(`${root}/bin/${script}`, ["--command", command], {
       env: childEnv(),

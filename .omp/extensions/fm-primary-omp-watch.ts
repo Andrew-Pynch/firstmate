@@ -90,6 +90,7 @@ import {
   FIRSTMATE_HOME_ENTRY,
   launchFmHome,
   recordedFirstmateHome,
+  setFirstmateHomeConflict,
   type FirstmateHomeBinding,
 } from "../../.pi/extensions/lib/fm-home-binding.ts";
 
@@ -1313,11 +1314,13 @@ export default function (pi: ExtensionAPI) {
     sessionHomeConflict = "";
     const binding = homeBinding;
     if (binding?.status !== "ok") return;
+    setFirstmateHomeConflict("");
     if (binding.warning) notify?.(`watcher: ${binding.warning}`, "warning");
     const recorded = recordedFirstmateHome(sessionManager);
     if (canonicalHome(recorded) === canonicalHome(binding.home)) return;
     if (recorded && !(allowExplicitLaunchOverride && binding.source === "env")) {
       sessionHomeConflict = `this conversation belongs to Firstmate home ${recorded}, but this omp process serves ${binding.home}, so nothing watches ${recorded}; relaunch with FM_HOME=${recorded} omp --resume=<this session>`;
+      setFirstmateHomeConflict(sessionHomeConflict);
       notify?.(`watcher: ${sessionHomeConflict}`, "warning");
       return;
     }

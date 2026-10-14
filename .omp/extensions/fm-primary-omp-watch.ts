@@ -1290,29 +1290,30 @@ export default function (pi: ExtensionAPI) {
 
   // Reconcile the session this process now serves with the home it is bound
   // to. The bound home is recorded in it, so the next environment-less resume
-  // of THAT session binds it too: an explicit launch home always wins, and a
-  // home recovered from a record is carried into a new session (/new, /fork)
-  // that has none of its own. A session that already records ANOTHER home
-  // under a recovered binding is a conversation for a home this process does
-  // not serve: one process serves one home, so that is surfaced on every turn
+  // of THAT session binds it too: an explicit launch home always wins at
+  // session_start, and a bound home is carried into a new session (/new,
+  // /fork) that has none of its own. An in-process switch to a session that
+  // already records ANOTHER home is a conversation this process does not
+  // serve: one process serves one home, so that is surfaced on every turn
   // instead of silently supervising the wrong state.
   let sessionHomeConflict = "";
   function reconcileSessionHome(
     sessionManager: { getEntries?: () => unknown[] } | undefined,
     notify: ((message: string, level: string) => void) | undefined,
+    allowExplicitLaunchOverride: boolean,
   ): void {
     sessionHomeConflict = "";
     const binding = homeBinding;
     if (binding?.status !== "ok") return;
     if (binding.warning) notify?.(`watcher: ${binding.warning}`, "warning");
-    if (binding.source !== "env" && binding.source !== "session") return;
     const recorded = recordedFirstmateHome(sessionManager);
     if (recorded === binding.home) return;
-    if (binding.source === "session" && recorded) {
+    if (recorded && !(allowExplicitLaunchOverride && binding.source === "env")) {
       sessionHomeConflict = `this conversation belongs to Firstmate home ${recorded}, but this omp process serves ${binding.home}, so nothing watches ${recorded}; relaunch with FM_HOME=${recorded} omp --resume=<this session>`;
       notify?.(`watcher: ${sessionHomeConflict}`, "warning");
       return;
     }
+    if (binding.source !== "env" && binding.source !== "session") return;
     const persistFailure = `could not record Firstmate home ${binding.home} in this omp session, so resuming it without FM_HOME will not recover that home; relaunch with FM_HOME=${binding.home}`;
     if (!pi.appendEntry) {
       notify?.(`watcher: ${persistFailure}`, "warning");
@@ -1331,7 +1332,7 @@ export default function (pi: ExtensionAPI) {
     if (generation.stopping) generation = createGeneration();
     activateGeneration(generation);
     const binding = bindHome(ctx?.sessionManager);
-    reconcileSessionHome(ctx?.sessionManager, ctx?.ui?.notify?.bind(ctx.ui));
+    reconcileSessionHome(ctx?.sessionManager, ctx?.ui?.notify?.bind(ctx.ui), true);
     if (binding.status === "refused" || binding.status === "home-mismatch") {
       ctx?.ui?.notify?.(`watcher: not armed - ${binding.message}`, "warning");
     }
@@ -1349,7 +1350,7 @@ export default function (pi: ExtensionAPI) {
   pi.on?.("session_switch", async (_event, ctx) => {
     if (childSession) return;
     const wasConflicted = sessionHomeConflict !== "";
-    reconcileSessionHome(ctx?.sessionManager, ctx?.ui?.notify?.bind(ctx.ui));
+    reconcileSessionHome(ctx?.sessionManager, ctx?.ui?.notify?.bind(ctx.ui), false);
     if (sessionHomeConflict && !wasConflicted) {
       if (replacementCoordinator.receiver === receiveReplacementActionable) replacementCoordinator.receiver = null;
       await stopSessionGeneration(generation, true);

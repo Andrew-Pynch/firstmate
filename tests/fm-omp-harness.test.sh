@@ -1396,6 +1396,115 @@ EOF
   pass ".omp watch extension: on a shared code root a resume arms for its recorded home, refuses with none, and an explicit launch records its home"
 }
 
+test_in_process_switch_preserves_another_homes_record() {
+  local base="$TMP_ROOT/cross-home-switch" repo home_a home_b out status
+  repo="$base/env-repo"; home_a="$base/home-a"; home_b="$base/home-b"
+  install_shared_code_root_fixture "$repo" "$home_a" "$home_b"
+  out=$(FM_HOME="$home_a" FM_HOME_BINDING_RUNTIME_DIR="$base/runtime-env" FM_ARM_LOG="$base/env-arm.log" \
+    HOME_A="$home_a" HOME_B="$home_b" EXT="$repo/.omp/extensions/fm-primary-omp-watch.ts" \
+    node --input-type=module 2>&1 <<'EOF'
+import { pathToFileURL } from "node:url";
+import { existsSync, writeFileSync } from "node:fs";
+writeFileSync(`${process.env.HOME_A}/state/.lock`, `${process.pid}\n`);
+const handlers = new Map(); let tool = null; const appended = []; const notices = [];
+const pi = {
+  on(e, h) { handlers.set(e, h); }, registerCommand() {}, registerTool(t) { tool = t; }, sendMessage() {},
+  appendEntry(type, data) { appended.push({ type, data }); },
+};
+const mod = await import(pathToFileURL(process.env.EXT).href);
+mod.default(pi);
+await handlers.get("session_start")({ type: "session_start" }, {
+  sessionManager: { getSessionId: () => "a", getEntries: () => [
+    { type: "custom", customType: "firstmate-home", data: { home: process.env.HOME_B } },
+  ] },
+});
+const armed = await tool.execute();
+if (!/^watcher: unchanged/.test(armed.content[0].text)) throw new Error(`the explicit-home launch did not arm: ${armed.content[0].text}`);
+for (let i = 0; i < 50 && !existsSync(process.env.FM_ARM_LOG); i += 1) await new Promise((r) => setTimeout(r, 50));
+if (!existsSync(process.env.FM_ARM_LOG)) throw new Error("the explicit-home launch never started its watch");
+await handlers.get("session_switch")({ type: "session_switch", reason: "resume" }, {
+  sessionManager: { getEntries: () => [{ type: "custom", customType: "firstmate-home", data: { home: process.env.HOME_B } }] },
+  ui: { notify(m, level) { notices.push({ m, level }); } },
+});
+if (JSON.stringify(appended) !== JSON.stringify([{ type: "firstmate-home", data: { home: process.env.HOME_A } }])) {
+  throw new Error(`the explicit process overwrote the switched session's home: ${JSON.stringify(appended)}`);
+}
+if (notices.length !== 1 || !notices[0].m.includes(process.env.HOME_B)) throw new Error(`the explicit-source conflict was not warned: ${JSON.stringify(notices)}`);
+const banner = await handlers.get("before_agent_start")({ type: "before_agent_start", prompt: "resume" }, {});
+const content = banner?.message?.content ?? "";
+if (!content.includes("WATCHER DOWN") || !content.includes(process.env.HOME_A) || !content.includes(process.env.HOME_B)) {
+  throw new Error(`the explicit-source conflict did not show the cross-home banner: ${JSON.stringify(banner)}`);
+}
+const refused = await tool.execute();
+if (!refused.content[0].text.includes(`not armed - this conversation belongs to Firstmate home ${process.env.HOME_B}`)) {
+  throw new Error(`the explicit-source conflict retained its watch: ${refused.content[0].text}`);
+}
+await handlers.get("session_shutdown")({}, {});
+process.exit(0);
+EOF
+)
+  status=$?
+  expect_code 0 "$status" "omp watch extension explicit-source cross-home switch: $out"
+  [ -z "$out" ] || fail "omp watch extension explicit-source cross-home test printed output: $out"
+
+  repo="$base/code-root"; home_b="$base/code-root-home-b"
+  fm_git_init_commit "$repo"
+  : > "$repo/AGENTS.md"
+  install_omp_extension_fixture "$repo"
+  mkdir -p "$repo/state" "$home_b/state"
+  cat > "$repo/bin/fm-watch-arm.sh" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "${FM_HOME:-unset}" >> "${FM_ARM_LOG:?}"
+printf 'watcher: started pid=%s (beacon 0s) recovery-generation=gen-1\n' "$$"
+sleep 30
+SH
+  chmod +x "$repo/bin/fm-watch-arm.sh"
+  out=$(env -u FM_HOME -u FM_ROOT_OVERRIDE -u FM_STATE_OVERRIDE -u FM_CONFIG_OVERRIDE \
+    FM_HOME_BINDING_RUNTIME_DIR="$base/runtime-code-root" FM_ARM_LOG="$base/code-root-arm.log" \
+    HOME_B="$home_b" REPO="$repo" EXT="$repo/.omp/extensions/fm-primary-omp-watch.ts" \
+    node --input-type=module 2>&1 <<'EOF'
+import { pathToFileURL } from "node:url";
+import { existsSync, writeFileSync } from "node:fs";
+writeFileSync(`${process.env.REPO}/state/.lock`, `${process.pid}\n`);
+const handlers = new Map(); let tool = null; const appended = []; const notices = [];
+const pi = {
+  on(e, h) { handlers.set(e, h); }, registerCommand() {}, registerTool(t) { tool = t; }, sendMessage() {},
+  appendEntry(type, data) { appended.push({ type, data }); },
+};
+const mod = await import(pathToFileURL(process.env.EXT).href);
+mod.default(pi);
+await handlers.get("session_start")({ type: "session_start" }, {
+  sessionManager: { getSessionId: () => "root", getEntries: () => [] },
+});
+const armed = await tool.execute();
+if (!/^watcher: unchanged/.test(armed.content[0].text)) throw new Error(`the code-root launch did not arm: ${armed.content[0].text}`);
+for (let i = 0; i < 50 && !existsSync(process.env.FM_ARM_LOG); i += 1) await new Promise((r) => setTimeout(r, 50));
+if (!existsSync(process.env.FM_ARM_LOG)) throw new Error("the code-root launch never started its watch");
+await handlers.get("session_switch")({ type: "session_switch", reason: "resume" }, {
+  sessionManager: { getEntries: () => [{ type: "custom", customType: "firstmate-home", data: { home: process.env.HOME_B } }] },
+  ui: { notify(m, level) { notices.push({ m, level }); } },
+});
+if (appended.length !== 0) throw new Error(`the code-root process overwrote the switched session's home: ${JSON.stringify(appended)}`);
+if (notices.length !== 1 || !notices[0].m.includes(process.env.HOME_B)) throw new Error(`the code-root conflict was not warned: ${JSON.stringify(notices)}`);
+const banner = await handlers.get("before_agent_start")({ type: "before_agent_start", prompt: "resume" }, {});
+const content = banner?.message?.content ?? "";
+if (!content.includes("WATCHER DOWN") || !content.includes(process.env.REPO) || !content.includes(process.env.HOME_B)) {
+  throw new Error(`the code-root conflict did not show the cross-home banner: ${JSON.stringify(banner)}`);
+}
+const refused = await tool.execute();
+if (!refused.content[0].text.includes(`not armed - this conversation belongs to Firstmate home ${process.env.HOME_B}`)) {
+  throw new Error(`the code-root conflict retained its watch: ${refused.content[0].text}`);
+}
+await handlers.get("session_shutdown")({}, {});
+process.exit(0);
+EOF
+)
+  status=$?
+  expect_code 0 "$status" "omp watch extension code-root cross-home switch: $out"
+  [ -z "$out" ] || fail "omp watch extension code-root cross-home test printed output: $out"
+  pass ".omp watch extension: in-process switches preserve another home's record for env and code-root bindings"
+}
+
 test_turnend_guard_refuses_an_unbound_home_loudly() {
   local base="$TMP_ROOT/shared-guard" repo home_a home_b out status
   repo="$base/repo"; home_a="$base/home-a"; home_b="$base/home-b"
@@ -1542,6 +1651,7 @@ test_watch_extension_child_session_never_owns_the_watch
 test_watch_extension_heals_shutdown_without_start
 test_watch_extension_restart_never_replays_a_cleaned_up_task
 test_watch_extension_binds_the_recorded_home_on_a_shared_code_root
+test_in_process_switch_preserves_another_homes_record
 test_turnend_guard_refuses_an_unbound_home_loudly
 test_unbound_farm_checkout_warns_without_compelling_workers
 test_extension_markers_name_only_the_lock_holder

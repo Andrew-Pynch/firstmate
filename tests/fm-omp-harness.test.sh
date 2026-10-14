@@ -1396,11 +1396,11 @@ EOF
   pass ".omp watch extension: on a shared code root a resume arms for its recorded home, refuses with none, and an explicit launch records its home"
 }
 
-test_in_process_switch_preserves_another_homes_record() {
+test_session_reconciliation_preserves_home_identity() {
   local base="$TMP_ROOT/cross-home-switch" repo home_a home_b out status
   repo="$base/env-repo"; home_a="$base/home-a"; home_b="$base/home-b"
   install_shared_code_root_fixture "$repo" "$home_a" "$home_b"
-  out=$(FM_HOME="$home_a" FM_HOME_BINDING_RUNTIME_DIR="$base/runtime-env" FM_ARM_LOG="$base/env-arm.log" \
+  out=$(FM_HOME="$home_a/./" FM_HOME_BINDING_RUNTIME_DIR="$base/runtime-env" FM_ARM_LOG="$base/env-arm.log" \
     HOME_A="$home_a" HOME_B="$home_b" EXT="$repo/.omp/extensions/fm-primary-omp-watch.ts" \
     node --input-type=module 2>&1 <<'EOF'
 import { pathToFileURL } from "node:url";
@@ -1423,21 +1423,45 @@ if (!/^watcher: unchanged/.test(armed.content[0].text)) throw new Error(`the exp
 for (let i = 0; i < 50 && !existsSync(process.env.FM_ARM_LOG); i += 1) await new Promise((r) => setTimeout(r, 50));
 if (!existsSync(process.env.FM_ARM_LOG)) throw new Error("the explicit-home launch never started its watch");
 await handlers.get("session_switch")({ type: "session_switch", reason: "resume" }, {
+  sessionManager: { getEntries: () => [{ type: "custom", customType: "firstmate-home", data: { home: process.env.HOME_A } }] },
+  ui: { notify(m, level) { notices.push({ m, level }); } },
+});
+if (notices.length !== 0) throw new Error(`equivalent physical homes conflicted: ${JSON.stringify(notices)}`);
+const sameHomeArm = await tool.execute();
+if (!/^watcher: unchanged/.test(sameHomeArm.content[0].text)) throw new Error(`an equivalent home path retired the watch: ${sameHomeArm.content[0].text}`);
+await handlers.get("session_start")({ type: "session_start" }, {
   sessionManager: { getEntries: () => [{ type: "custom", customType: "firstmate-home", data: { home: process.env.HOME_B } }] },
   ui: { notify(m, level) { notices.push({ m, level }); } },
 });
-if (JSON.stringify(appended) !== JSON.stringify([{ type: "firstmate-home", data: { home: process.env.HOME_A } }])) {
-  throw new Error(`the explicit process overwrote the switched session's home: ${JSON.stringify(appended)}`);
+if (JSON.stringify(appended) !== JSON.stringify([{ type: "firstmate-home", data: { home: process.env.FM_HOME } }])) {
+  throw new Error(`a later session_start overwrote the resumed session's home: ${JSON.stringify(appended)}`);
 }
-if (notices.length !== 1 || !notices[0].m.includes(process.env.HOME_B)) throw new Error(`the explicit-source conflict was not warned: ${JSON.stringify(notices)}`);
+if (notices.length !== 1 || !notices[0].m.includes(process.env.HOME_B)) throw new Error(`the later session_start conflict was not warned: ${JSON.stringify(notices)}`);
 const banner = await handlers.get("before_agent_start")({ type: "before_agent_start", prompt: "resume" }, {});
 const content = banner?.message?.content ?? "";
 if (!content.includes("WATCHER DOWN") || !content.includes(process.env.HOME_A) || !content.includes(process.env.HOME_B)) {
-  throw new Error(`the explicit-source conflict did not show the cross-home banner: ${JSON.stringify(banner)}`);
+  throw new Error(`the later session_start conflict did not show the cross-home banner: ${JSON.stringify(banner)}`);
 }
 const refused = await tool.execute();
 if (!refused.content[0].text.includes(`not armed - this conversation belongs to Firstmate home ${process.env.HOME_B}`)) {
-  throw new Error(`the explicit-source conflict retained its watch: ${refused.content[0].text}`);
+  throw new Error(`the later session_start conflict retained its watch: ${refused.content[0].text}`);
+}
+await handlers.get("session_start")({ type: "session_start" }, {
+  sessionManager: { getEntries: () => [{ type: "custom", customType: "firstmate-home", data: { home: process.env.HOME_A } }] },
+});
+const rearmed = await tool.execute();
+if (!/^watcher: (started|unchanged)/.test(rearmed.content[0].text)) throw new Error(`returning to the bound home did not re-arm: ${rearmed.content[0].text}`);
+await handlers.get("session_switch")({ type: "session_switch", reason: "resume" }, {
+  sessionManager: { getEntries: () => [{ type: "custom", customType: "firstmate-home", data: { home: process.env.HOME_B } }] },
+  ui: { notify(m, level) { notices.push({ m, level }); } },
+});
+if (JSON.stringify(appended) !== JSON.stringify([{ type: "firstmate-home", data: { home: process.env.FM_HOME } }])) {
+  throw new Error(`the explicit process overwrote the switched session's home: ${JSON.stringify(appended)}`);
+}
+if (notices.length !== 2 || !notices[1].m.includes(process.env.HOME_B)) throw new Error(`the explicit-source switch conflict was not warned: ${JSON.stringify(notices)}`);
+const switched = await tool.execute();
+if (!switched.content[0].text.includes(`not armed - this conversation belongs to Firstmate home ${process.env.HOME_B}`)) {
+  throw new Error(`the explicit-source switch conflict retained its watch: ${switched.content[0].text}`);
 }
 await handlers.get("session_shutdown")({}, {});
 process.exit(0);
@@ -1502,7 +1526,7 @@ EOF
   status=$?
   expect_code 0 "$status" "omp watch extension code-root cross-home switch: $out"
   [ -z "$out" ] || fail "omp watch extension code-root cross-home test printed output: $out"
-  pass ".omp watch extension: in-process switches preserve another home's record for env and code-root bindings"
+  pass ".omp watch extension: canonical homes stay supervised and later activations preserve cross-home records"
 }
 
 test_turnend_guard_refuses_an_unbound_home_loudly() {
@@ -1651,7 +1675,7 @@ test_watch_extension_child_session_never_owns_the_watch
 test_watch_extension_heals_shutdown_without_start
 test_watch_extension_restart_never_replays_a_cleaned_up_task
 test_watch_extension_binds_the_recorded_home_on_a_shared_code_root
-test_in_process_switch_preserves_another_homes_record
+test_session_reconciliation_preserves_home_identity
 test_turnend_guard_refuses_an_unbound_home_loudly
 test_unbound_farm_checkout_warns_without_compelling_workers
 test_extension_markers_name_only_the_lock_holder

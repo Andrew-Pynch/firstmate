@@ -73,7 +73,7 @@
 // a still-unconsumed record rides the replacement handoff.
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 // typebox resolves inside omp's extension loader (verified, omp 18.1.11); the
@@ -1297,6 +1297,14 @@ export default function (pi: ExtensionAPI) {
   // serve: one process serves one home, so that is surfaced on every turn
   // instead of silently supervising the wrong state.
   let sessionHomeConflict = "";
+  let sessionActivated = false;
+  function canonicalHome(home: string): string {
+    try {
+      return realpathSync(home);
+    } catch {
+      return home;
+    }
+  }
   function reconcileSessionHome(
     sessionManager: { getEntries?: () => unknown[] } | undefined,
     notify: ((message: string, level: string) => void) | undefined,
@@ -1307,7 +1315,7 @@ export default function (pi: ExtensionAPI) {
     if (binding?.status !== "ok") return;
     if (binding.warning) notify?.(`watcher: ${binding.warning}`, "warning");
     const recorded = recordedFirstmateHome(sessionManager);
-    if (recorded === binding.home) return;
+    if (canonicalHome(recorded) === canonicalHome(binding.home)) return;
     if (recorded && !(allowExplicitLaunchOverride && binding.source === "env")) {
       sessionHomeConflict = `this conversation belongs to Firstmate home ${recorded}, but this omp process serves ${binding.home}, so nothing watches ${recorded}; relaunch with FM_HOME=${recorded} omp --resume=<this session>`;
       notify?.(`watcher: ${sessionHomeConflict}`, "warning");
@@ -1332,11 +1340,17 @@ export default function (pi: ExtensionAPI) {
     if (generation.stopping) generation = createGeneration();
     activateGeneration(generation);
     const binding = bindHome(ctx?.sessionManager);
-    reconcileSessionHome(ctx?.sessionManager, ctx?.ui?.notify?.bind(ctx.ui), true);
+    const allowExplicitLaunchOverride = !sessionActivated;
+    sessionActivated = true;
+    reconcileSessionHome(ctx?.sessionManager, ctx?.ui?.notify?.bind(ctx.ui), allowExplicitLaunchOverride);
     if (binding.status === "refused" || binding.status === "home-mismatch") {
       ctx?.ui?.notify?.(`watcher: not armed - ${binding.message}`, "warning");
     }
-    if (sessionHomeConflict) return;
+    if (sessionHomeConflict) {
+      if (replacementCoordinator.receiver === receiveReplacementActionable) replacementCoordinator.receiver = null;
+      await stopSessionGeneration(generation, true);
+      return;
+    }
     markLoaded();
     if (lockOwnership() !== "owned") return;
     activateOwnedWatch(generation);

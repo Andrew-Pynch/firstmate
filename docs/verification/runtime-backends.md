@@ -2385,7 +2385,8 @@ A throwaway scout was spawned through `bin/fm-spawn.sh --scout --harness omp --m
 
 ### 2026-10-14 home binding across an environment-less resume
 
-Verified with omp 18.9.1 on Linux (Arch, kernel 7.2.3, x86_64) in a lab whose code root was a plain clone of this repository plus the branch's pending edits, model `openai-codex/gpt-6-astra` ([configuration](../configuration.md#home-binding) "Home binding" owns the contract).
+Verified with omp 18.9.1 on Linux (Arch, kernel 7.2.3, x86_64), model `openai-codex/gpt-6-astra` ([configuration](../configuration.md#home-binding) "Home binding" owns the contract).
+The lab home was a plain clone of this repository plus the branch's pending edits, and omp ran from a separate linked worktree of that clone as its code root, with the home's session lock left naming a dead pid before each launch.
 The second launch is the shape Herdr's `resume_agents_on_restore` produces: `omp --resume=<session>` from the code root with `FM_HOME` unset.
 Refresh after any omp upgrade:
 
@@ -2396,9 +2397,9 @@ FM_OMP_LIVE_E2E=1 tests/fm-omp-home-binding-live-e2e.test.sh
 Observed output:
 
 ```text
-ok - omp omp/18.9.1: an explicit FM_HOME launch records its home in the session and the code root
-ok - omp omp/18.9.1: a resume with FM_HOME unset exports the recorded home and arms the watcher for it
-ok - omp omp/18.9.1: a launch with no FM_HOME and no recorded home on a shared code root refuses to arm
+ok - omp omp/18.9.1: an explicit FM_HOME launch from a linked code root records its home and takes the home's stale lock
+ok - omp omp/18.9.1: a resume with FM_HOME unset reclaims the recorded home's stale lock, exports the home, and arms the watcher for it
+ok - omp omp/18.9.1: a launch with no FM_HOME and no recorded home from the linked code root arms nothing
 ```
 
 The second case rests on two vendor facts: a `pi.appendEntry` custom entry persists in the session file and is returned by `ctx.sessionManager.getEntries()` on resume, and omp recaptures `process.env` into the shell spawn environment after every main-session `session_start` handler, so the agent's own `echo $FM_HOME` printed the recorded home.

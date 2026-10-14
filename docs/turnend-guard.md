@@ -25,6 +25,7 @@ A secondmate home runs its own primary Firstmate session, so a genuine `.fm-seco
 The marker must be a regular non-symlink file whose whitespace-stripped first line is a non-empty identifier containing only letters, digits, dots, underscores, and dashes.
 An unmarked checkout or invalid marker falls through to the git-dir check.
 That check keeps crewmate and scout linked worktrees inert because their git dir differs from their git common dir.
+A linked checkout is still in scope when it is the code root of a separate primary home: `FM_HOME` names that home explicitly, the home is itself a primary root, and the process carries no `FM_TASK_ID` worker marker (`fm_linked_code_root_serves_home` in `bin/fm-primary-scope-lib.sh`), which is how a primary run from a linked worktree of its own home's repository stays guarded.
 It also requires `AGENTS.md`, `bin/`, and the effective state directory.
 
 For an in-scope primary, the guard counts in-flight work from `state/*.meta`.

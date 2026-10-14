@@ -592,9 +592,15 @@ export default function (pi: ExtensionAPI) {
     process.removeListener("exit", cleanupSessionstartOnProcessExit);
     sessionstartExitListenerRegistered = false;
   };
+  const retireSessionstartGeneration = async (): Promise<void> => {
+    const generation = sessionstartGeneration;
+    if (!generation) return;
+    await stopSessionstartGeneration(generation);
+    if (sessionstartGeneration === generation) sessionstartGeneration = null;
+  };
   registerSessionstartExitListener();
 
-  pi.on?.("session_start", (_event, ctx) => {
+  pi.on?.("session_start", async (_event, ctx) => {
     sessionStarts += 1;
     const source: SessionstartSource = sessionStarts === 1
       ? (launchResumeSource() ?? "startup")
@@ -602,10 +608,18 @@ export default function (pi: ExtensionAPI) {
     bindHome(ctx?.sessionManager);
     markLoaded();
     registerSessionstartExitListener();
+    if (firstmateHomeConflict()) {
+      await retireSessionstartGeneration();
+      return;
+    }
     sessionstartGeneration = createSessionstartGeneration(source, sessionIdFromContext(ctx));
   });
 
   pi.on?.("before_agent_start", async (_event, ctx) => {
+    if (firstmateHomeConflict()) {
+      await retireSessionstartGeneration();
+      return undefined;
+    }
     const generation = sessionstartGeneration;
     if (!generation) return undefined;
     const message = await claimSessionstartMessage(generation, ctx);
@@ -617,9 +631,17 @@ export default function (pi: ExtensionAPI) {
   // so the message is sent directly while sharing generation ownership.
   pi.on?.("session_compact", async (_event, ctx) => {
     registerSessionstartExitListener();
+    if (firstmateHomeConflict()) {
+      await retireSessionstartGeneration();
+      return;
+    }
     const generation = createSessionstartGeneration("compact", sessionIdFromContext(ctx));
     sessionstartGeneration = generation;
     const message = await claimSessionstartMessage(generation, ctx);
+    if (firstmateHomeConflict()) {
+      await retireSessionstartGeneration();
+      return;
+    }
     if (!message || !sessionstartGenerationIsLive(generation)) return;
     try {
       pi.sendMessage?.(message);
@@ -628,12 +650,14 @@ export default function (pi: ExtensionAPI) {
     }
   });
 
+  pi.on?.("session_switch", async () => {
+    if (firstmateHomeConflict()) await retireSessionstartGeneration();
+  });
+
   pi.on?.("session_shutdown", async () => {
-    const generation = sessionstartGeneration;
     try {
-      if (generation) await stopSessionstartGeneration(generation);
+      await retireSessionstartGeneration();
     } finally {
-      if (sessionstartGeneration === generation) sessionstartGeneration = null;
       removeSessionstartExitListener();
     }
   });

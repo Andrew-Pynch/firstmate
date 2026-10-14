@@ -1570,9 +1570,16 @@ SH
 printf 'arm\n' >> "${FM_CHECK_LOG:?}"
 exit 0
 SH
-  chmod +x "$repo/bin/fm-turnend-guard.sh" "$repo/bin/fm-cd-pretool-check.sh" "$repo/bin/fm-arm-pretool-check.sh"
+  cat > "$repo/bin/fm-sessionstart-run.sh" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "${FM_HOME:-unset}" >> "${FM_SESSIONSTART_LOG:?}"
+printf 'OMP DIGEST for %s\n' "${FM_HOME:-unset}"
+SH
+  chmod +x "$repo/bin/fm-turnend-guard.sh" "$repo/bin/fm-cd-pretool-check.sh" "$repo/bin/fm-arm-pretool-check.sh" \
+    "$repo/bin/fm-sessionstart-run.sh"
   out=$(FM_HOME="$home_a" FM_HOME_BINDING_RUNTIME_DIR="$base/runtime" FM_ARM_LOG="$base/arm.log" \
-    FM_GUARD_LOG="$base/guard.log" FM_CHECK_LOG="$base/check.log" HOME_A="$home_a" HOME_B="$home_b" \
+    FM_GUARD_LOG="$base/guard.log" FM_CHECK_LOG="$base/check.log" FM_SESSIONSTART_LOG="$base/sessionstart.log" \
+    HOME_A="$home_a" HOME_B="$home_b" \
     WATCH_EXT="$repo/.omp/extensions/fm-primary-omp-watch.ts" GUARD_EXT="$repo/.omp/extensions/fm-primary-turnend-guard.ts" \
     node --input-type=module 2>&1 <<'EOF'
 import { pathToFileURL } from "node:url";
@@ -1582,8 +1589,8 @@ const watchHandlers = new Map(); let watchTool = null;
 const watchPi = {
   on(e, h) { watchHandlers.set(e, h); }, registerCommand() {}, registerTool(t) { watchTool = t; }, sendMessage() {}, appendEntry() {},
 };
-const guardHandlers = new Map();
-const guardPi = { on(e, h) { guardHandlers.set(e, h); }, sendMessage() {} };
+const guardHandlers = new Map(); const guardSent = [];
+const guardPi = { on(e, h) { guardHandlers.set(e, h); }, sendMessage(m) { guardSent.push(m); } };
 const watchMod = await import(pathToFileURL(process.env.WATCH_EXT).href);
 const guardMod = await import(pathToFileURL(process.env.GUARD_EXT).href);
 watchMod.default(watchPi);
@@ -1593,9 +1600,29 @@ await watchHandlers.get("session_start")({ type: "session_start" }, {
     { type: "custom", customType: "firstmate-home", data: { home: process.env.HOME_A } },
   ] },
 });
-await watchHandlers.get("session_switch")({ type: "session_switch", reason: "resume" }, {
+const homeACtx = { sessionManager: { getSessionId: () => "a", getEntries: () => [
+  { type: "custom", customType: "firstmate-home", data: { home: process.env.HOME_A } },
+] } };
+await guardHandlers.get("session_start")({ type: "session_start" }, homeACtx);
+const initialDigest = await guardHandlers.get("before_agent_start")({ type: "before_agent_start", prompt: "start" }, homeACtx);
+if (!initialDigest?.message?.content?.includes(`OMP DIGEST for ${process.env.HOME_A}`)) {
+  throw new Error(`the bound home's initial digest was not delivered: ${JSON.stringify(initialDigest)}`);
+}
+const homeBCtx = { sessionManager: { getSessionId: () => "b", getEntries: () => [
+  { type: "custom", customType: "firstmate-home", data: { home: process.env.HOME_B } },
+] } };
+await watchHandlers.get("session_start")({ type: "session_start" }, {
   sessionManager: { getEntries: () => [{ type: "custom", customType: "firstmate-home", data: { home: process.env.HOME_B } }] },
 });
+await guardHandlers.get("session_start")({ type: "session_start" }, homeBCtx);
+const conflictedDigest = await guardHandlers.get("before_agent_start")({ type: "before_agent_start", prompt: "resume" }, homeBCtx);
+if (conflictedDigest !== undefined) throw new Error(`the other home's conversation received a bound-home digest: ${JSON.stringify(conflictedDigest)}`);
+await guardHandlers.get("session_compact")({ type: "session_compact" }, homeBCtx);
+if (guardSent.length !== 0) throw new Error(`compaction sent a bound-home digest during conflict: ${JSON.stringify(guardSent)}`);
+const sessionstartHomes = readFileSync(process.env.FM_SESSIONSTART_LOG, "utf8").trim().split("\n");
+if (sessionstartHomes.join(",") !== process.env.HOME_A) {
+  throw new Error(`session-start ran against the bound home during conflict: ${JSON.stringify(sessionstartHomes)}`);
+}
 const banner = await watchHandlers.get("before_agent_start")({ type: "before_agent_start", prompt: "resume" }, {});
 if (!banner?.message?.content?.includes("WATCHER DOWN")) throw new Error(`the watch extension did not surface the cross-home conflict: ${JSON.stringify(banner)}`);
 const conflictedStop = await guardHandlers.get("session_stop")({ type: "session_stop", stop_hook_active: false }, {});
@@ -1610,6 +1637,10 @@ await watchHandlers.get("session_switch")({ type: "session_switch", reason: "res
 });
 const rearmed = await watchTool.execute();
 if (!/^watcher: (started|unchanged)/.test(rearmed.content[0].text)) throw new Error(`returning home did not restore the watch: ${rearmed.content[0].text}`);
+await guardHandlers.get("session_compact")({ type: "session_compact" }, homeACtx);
+if (guardSent.length !== 1 || !guardSent[0].content.includes(`OMP DIGEST for ${process.env.HOME_A}`)) {
+  throw new Error(`session-start delivery did not resume after returning home: ${JSON.stringify(guardSent)}`);
+}
 const activeStop = await guardHandlers.get("session_stop")({ type: "session_stop", stop_hook_active: false }, {});
 if (activeStop?.continue !== true) throw new Error(`the turn-end guard stayed down after returning home: ${JSON.stringify(activeStop)}`);
 const activeTool = await guardHandlers.get("tool_call")({ type: "tool_call", toolName: "bash", input: { command: "ls" } }, {});
@@ -1625,7 +1656,7 @@ EOF
   status=$?
   expect_code 0 "$status" "omp cross-home shared guard state: $out"
   [ -z "$out" ] || fail "omp cross-home shared guard test printed output: $out"
-  pass ".omp extensions: cross-home conversations stand down bound-home guards until returning home"
+  pass ".omp extensions: cross-home conversations suppress bound-home digests and guards until returning home"
 }
 
 test_turnend_guard_refuses_an_unbound_home_loudly() {

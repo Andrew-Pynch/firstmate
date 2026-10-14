@@ -96,26 +96,23 @@
 # message of its own (several pending requests coalesce into one delivery,
 # since every ring names the whole inbox), and then removes each request it
 # saw. The message must not count as user-authored input, or the harness can
-# restore a queued copy into the composer next to the person's draft. A
-# native-capable lane never receives a keystroke from the ring, because a
-# composer check followed by typing still races a person who starts typing in
-# between. A lane is native-capable when its meta records `doorbell=native`,
-# which bin/fm-spawn.sh writes when the launch loads the extension, or when it
-# records no `doorbell=` at all and a harness in
-# FM_TASK_INBOX_NATIVE_HARNESSES: such a lane was spawned before the field
-# existed, so it predates its endpoint and must not be typed into either.
-# `doorbell=typed` (a raw omp launch command, which loads no extension) keeps
-# the typed doorbell. While a native-capable lane's endpoint names a live
-# process the ring writes its own request and waits up to
+# restore a queued copy into the composer next to the person's draft. A lane
+# whose recorded harness is in FM_TASK_INBOX_NATIVE_HARNESSES is native-capable
+# and never receives a keystroke from the ring, because a composer check
+# followed by typing still races a person who starts typing in between;
+# bin/fm-spawn.sh refuses a raw launch command for such a harness, since it
+# could not load the extension. While a native-capable lane's endpoint names a
+# live process the ring writes its own request and waits up to
 # FM_TASK_INBOX_NATIVE_ACK_SECS for the extension to remove it; a request
 # still present then is a failed ring the ladder retries, and it stays for the
 # extension to deliver once it recovers. Concurrent rings each wait on their
 # own request, so none can steal another's acknowledgement. While the endpoint
 # is not live (spawned before its extension served one, still starting, or its
 # extension failed) the ring is skipped, so an unacknowledged record escalates
-# through the ladder rather than being typed. bin/fm-spawn.sh writes the omp
-# extension that serves this endpoint; `bin/fm-control.sh <id> relaunch`
-# rewrites an older lane's extension and meta.
+# through the ladder rather than being typed. An endpoint file on any other
+# lane is never consulted. bin/fm-spawn.sh writes the omp extension that
+# serves this endpoint; `bin/fm-control.sh <id> relaunch` rewrites an older
+# lane's extension.
 #
 # Inbox names containing bytes outside printable ASCII are unsupported. The
 # doorbell refuses them rather than sending terminal control bytes to a pane.
@@ -145,8 +142,9 @@ FM_TASK_INBOX_RING_MAX_DEFAULT=3
 FM_TASK_INBOX_BUSY_MAX_DEFAULT=2
 FM_TASK_INBOX_LOCK_WAIT_DEFAULT=5
 FM_TASK_INBOX_NATIVE_ACK_DEFAULT=5
-# Harnesses whose lanes recorded before the `doorbell=` meta field are treated
-# as native-capable (see the header). Space-separated `harness=` values.
+# Harnesses whose lanes are native-capable (see the header): every launch
+# bin/fm-spawn.sh accepts for them loads the extension that serves the
+# endpoint. Space-separated `harness=` values.
 FM_TASK_INBOX_NATIVE_HARNESSES='omp'
 
 fm_task_inbox_grace_secs() {
@@ -410,8 +408,8 @@ fm_task_inbox_ring() {  # <backend> <target> <record-path> [expected-label]
   fi
   dir=${rec%/*}
   dir=${dir%/handled}
-  # The recorded route decides first: an endpoint file on a typed-route lane
-  # (a stale one from an earlier native incarnation) is never consulted.
+  # The recorded harness decides first: an endpoint file on any other lane (a
+  # stale one whose pid was reused) is never consulted.
   if fm_task_inbox_native_capable "$dir"; then
     fm_task_inbox_native_live "$dir" || return 1
     fm_task_inbox_native_ring "$dir" "$line"
@@ -454,14 +452,8 @@ fm_task_inbox_native_live() {  # <inbox-dir>
 
 # 0 when the inbox's lane is native-capable (see the header).
 fm_task_inbox_native_capable() {  # <inbox-dir>
-  local meta="${1%.inbox}.meta" route harness h
-  route=$(fm_meta_get "$meta" doorbell)
-  case "$route" in
-    native) return 0 ;;
-    '') ;;
-    *) return 1 ;;
-  esac
-  harness=$(fm_meta_get "$meta" harness)
+  local harness h
+  harness=$(fm_meta_get "${1%.inbox}.meta" harness)
   for h in $FM_TASK_INBOX_NATIVE_HARNESSES; do
     [ "$harness" != "$h" ] || return 0
   done

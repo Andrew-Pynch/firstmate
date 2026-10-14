@@ -207,7 +207,9 @@
 #   /updatefirstmate, restart). A bare adapter name (claude|codex|opencode|pi|pi-signed|grok|kimi|cursor|gemini|muse|rovo|omp|agy|devin)
 #   overrides it for this spawn (either kind). A non-flag string containing
 #   whitespace is treated as a RAW launch command - the escape hatch for verifying
-#   new adapters. For pi and pi-signed, fm-spawn resolves the selected executable
+#   new adapters. A raw command whose program is omp is refused: it cannot load
+#   the per-task extension that steers omp without typing into its composer
+#   (bin/fm-task-inbox-lib.sh "Native doorbell"). For pi and pi-signed, fm-spawn resolves the selected executable
 #   name from PATH once, probes that concrete path with --help, and launches the
 #   same path. It adds --tui-mode regular only when that help advertises the flag;
 #   a failed or inconclusive probe omits it so older Pi versions remain launchable.
@@ -431,9 +433,10 @@
 # source exists. Grok keeps its rendered-tail fallback and is not given a parent
 # turn-end hook. Cursor's transcript binding is written for a secondmate the same way
 # as for a crewmate. Muse, gemini, agy, devin, and rovo are refused as secondmates.
-# A raw launch command for a claude, pi, pi-signed, or omp secondmate is not armed
+# A raw launch command for a claude, pi, or pi-signed secondmate is not armed
 # and retires any arm an earlier launch of that mate left, so its verdict is unknown:
-# the raw command carries no --settings or -e flag to load the wiring.
+# the raw command carries no --settings or -e flag to load the wiring. A raw omp
+# command is refused outright (see the raw-launch check below).
 # A claude secondmate gets no Stop busy hook; its home's tracked Stop guard is its
 # only Stop writer, through the .fm-busy-stop pointer in that home. A home whose
 # guard predates that pointer keeps the ordinary Stop idle hook instead.
@@ -2434,6 +2437,14 @@ case "$ARG3" in
   }
   ;;
 esac
+
+# A raw omp command loads no per-task extension, and that extension is the only
+# path a steer takes into an omp lane without typing into its composer, where a
+# person may be writing a draft (bin/fm-task-inbox-lib.sh, "Native doorbell").
+if [ "$RAW_LAUNCH" -ne 0 ] && [ "$HARNESS" = omp ]; then
+  echo "error: a raw omp launch command cannot load the per-task extension that steers omp without typing into its composer; pass the harness as plain 'omp' (with --model and --effort) instead" >&2
+  exit 1
+fi
 
 # muse, gemini, agy, and devin are verified as CREWMATE/SCOUT adapters only. A secondmate is
 # a firstmate instance, so it needs a primary supervision protocol.
@@ -4732,16 +4743,17 @@ fi
 # open-close pair. A secondmate's hooks update this record and do not touch
 # the parent's turn-ended marker; parent turn-end wiring for grok and kimi
 # stays on the ordinary-task path below. A raw launch command for a claude,
-# pi, pi-signed, or omp secondmate is not armed: those four reach their
-# wiring only through a launch-template flag (--settings, -e) that a raw
-# command does not carry, so the record would never be updated.
+# pi, or pi-signed secondmate is not armed: those three reach their wiring
+# only through a launch-template flag (--settings, -e) that a raw command does
+# not carry, so the record would never be updated. A raw omp command never
+# reaches this point.
 busy_notify_turnend=true
 WIRING_HARNESS=$HARNESS
 if [ "$KIND" = secondmate ]; then
   busy_notify_turnend=false
   if [ "$RAW_LAUNCH" -ne 0 ]; then
     case "$HARNESS" in
-    claude* | pi | pi-signed | omp)
+    claude* | pi | pi-signed)
       WIRING_HARNESS=
       if [ -e "$STATE_REAL/$ID.busy-gen" ]; then
         "$FM_ROOT/bin/fm-busy-event.sh" retire "$STATE_REAL" "$ID" --current-gen || {
@@ -5311,7 +5323,7 @@ SPAWN_META_PATH=$SPAWN_META_TMP
 preserve_relaunch_meta() {
   awk -F= '
     BEGIN {
-      split("window endpoint_task_id worktree project harness doorbell kind mode yolo branch tasktmp base_branch upstream_consent model effort account account_provider busy_gen spawn_gen traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id home projects control_relaunch_tx", keys, " ")
+      split("window endpoint_task_id worktree project harness kind mode yolo branch tasktmp base_branch upstream_consent model effort account account_provider busy_gen spawn_gen traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id home projects control_relaunch_tx", keys, " ")
       for (i in keys) owned[keys[i]] = 1
     }
     !($1 in owned)
@@ -5323,12 +5335,6 @@ preserve_relaunch_meta() {
   echo "worktree=$WT"
   echo "project=$PROJ_ABS"
   echo "harness=$HARNESS"
-  # The steering doorbell route bin/fm-task-inbox-lib.sh reads: an omp launch
-  # template loads the per-task extension that serves the native doorbell, and
-  # a raw omp command does not, so its lane stays on the typed doorbell.
-  if [ "$HARNESS" = omp ]; then
-    if [ "$RAW_LAUNCH" -eq 0 ]; then echo "doorbell=native"; else echo "doorbell=typed"; fi
-  fi
   echo "kind=$KIND"
   [ -z "$MODE" ] || echo "mode=$MODE"
   [ -z "$YOLO" ] || echo "yolo=$YOLO"

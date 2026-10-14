@@ -764,7 +764,7 @@ test_secondmate_opencode_plugin_closes_without_a_parent_turnend() {
 # updated by the launched command.
 test_raw_secondmate_launch_writes_no_busy_wiring() {
   local harness raw case_dir id state sm out launch
-  for harness in claude pi pi-signed omp; do
+  for harness in claude pi pi-signed; do
     case_dir="$TMP_ROOT/sm-raw-$harness"
     id="sm-raw-$harness"
     raw="$harness --fm-raw-flag"
@@ -785,6 +785,14 @@ test_raw_secondmate_launch_writes_no_busy_wiring() {
     [ "$out" = "unknown missing" ] || fail "raw $harness secondmate must classify unknown missing, got '$out'"
   done
 
+  # A raw omp secondmate is refused outright: without its extension it could
+  # only be steered by typing into its composer (bin/fm-task-inbox-lib.sh).
+  case_dir="$TMP_ROOT/sm-raw-omp"
+  out=$(spawn_secondmate_harness "$case_dir" sm-raw-omp 'omp --fm-raw-flag' omp) \
+    && fail "a raw omp secondmate spawn must be refused: $out"
+  assert_contains "$out" "pass the harness as plain 'omp'" "the raw omp refusal must name the supported launch form: $out"
+  assert_absent "$case_dir/primary/state/sm-raw-omp.meta" "a refused raw omp secondmate must publish no record"
+
   case_dir="$TMP_ROOT/sm-raw-over-armed"
   id='sm-raw-over-armed'
   out=$(spawn_secondmate_harness "$case_dir" "$id" claude) \
@@ -803,7 +811,7 @@ test_raw_secondmate_launch_writes_no_busy_wiring() {
   assert_absent "$sm/.fm-busy-stop" "raw respawn kept the earlier Stop pointer"
   out=$(classify claude "$id" "$state")
   [ "$out" = "unknown missing" ] || fail "raw respawn over an armed secondmate must classify unknown missing, got '$out'"
-  pass "a raw claude, pi, pi-signed, or omp secondmate launch writes no busy wiring and classifies unknown"
+  pass "a raw claude, pi, or pi-signed secondmate launch writes no busy wiring and classifies unknown, and a raw omp one is refused"
 }
 
 test_secondmate_codex_and_grok_do_not_arm_a_parent_turnend() {

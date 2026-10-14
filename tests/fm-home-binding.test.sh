@@ -120,15 +120,20 @@ test_unrecordable_served_home_is_reported() {
 }
 
 test_linked_worktree_stands_down_and_is_never_noted() {
-  local repo="$TMP_ROOT/linked/repo" wt="$TMP_ROOT/linked/wt" h1="$TMP_ROOT/linked/h1" out
+  local repo="$TMP_ROOT/linked/repo" wt="$TMP_ROOT/linked/wt" h1="$TMP_ROOT/linked/h1" out lib f
   fm_git_worktree "$repo" "$wt" task
   : > "$wt/AGENTS.md"
   mkdir -p "$wt/bin" "$h1"
-  out=$(env -u FM_HOME -u FM_ROOT_OVERRIDE bash "$LIB" resolve --code-root "$wt" --primary-only; printf 'rc=%s\n' "$?")
+  # The lib runs from the worktree itself, as the extensions loaded there run it.
+  for f in fm-home-binding-lib.sh fm-primary-scope-lib.sh fm-wake-lib.sh fm-classify-lib.sh fm-timeout-lib.sh; do
+    cp "$ROOT/bin/$f" "$wt/bin/$f"
+  done
+  lib="$wt/bin/fm-home-binding-lib.sh"
+  out=$(env -u FM_HOME -u FM_ROOT_OVERRIDE -u STATE bash "$lib" resolve --primary-only --record-pid "$$"; printf 'rc=%s\n' "$?")
   assert_contains "$out" "status=ineligible" "a linked task worktree naming no home must stand the extensions down"
   assert_contains "$out" "rc=3" "a stand-down must exit 3"
-  FM_HOME="$h1" bash "$LIB" resolve --code-root "$wt" --record-pid "$$" >/dev/null
-  assert_absent "$wt/state/.code-root-served-homes" "a linked worktree must never be noted as serving a home"
+  env -u STATE FM_HOME="$h1" bash "$lib" resolve --record-pid "$$" >/dev/null
+  assert_absent "$wt/state" "resolving from a linked worktree must never create its state directory or a served record"
   pass "fm-home-binding: a linked task worktree stands down and never records a served home"
 }
 

@@ -1216,6 +1216,7 @@ export default function (pi: ExtensionAPI) {
     }
     const binding = bindHome();
     if (binding.status !== "ok") return { ok: false, message: `watcher: not armed - ${binding.message}` };
+    if (sessionHomeConflict) return { ok: false, message: `watcher: not armed - ${sessionHomeConflict}` };
     markLoaded();
     if (generationIsLive(generation)) return activateOwnedWatch(generation);
     const recovery = recoverOrphanedGeneration(trigger);
@@ -1228,7 +1229,7 @@ export default function (pi: ExtensionAPI) {
     // A session still starting turns after a session_shutdown that no
     // session_start followed is orphaned, not ending: re-arm without waiting
     // for a model to notice the silence.
-    if (childSession || generationIsLive(generation)) return;
+    if (childSession || sessionHomeConflict || generationIsLive(generation)) return;
     const recovery = recoverOrphanedGeneration("agent start");
     if (!recovery.ok) return;
     markLoaded();
@@ -1312,9 +1313,15 @@ export default function (pi: ExtensionAPI) {
       notify?.(`watcher: ${sessionHomeConflict}`, "warning");
       return;
     }
+    const persistFailure = `could not record Firstmate home ${binding.home} in this omp session, so resuming it without FM_HOME will not recover that home; relaunch with FM_HOME=${binding.home}`;
+    if (!pi.appendEntry) {
+      notify?.(`watcher: ${persistFailure}`, "warning");
+      return;
+    }
     try {
-      pi.appendEntry?.(FIRSTMATE_HOME_ENTRY, { home: binding.home });
-    } catch {
+      pi.appendEntry(FIRSTMATE_HOME_ENTRY, { home: binding.home });
+    } catch (error) {
+      notify?.(`watcher: ${persistFailure}: ${error instanceof Error ? error.message : String(error)}`, "warning");
     }
   }
 
@@ -1326,14 +1333,30 @@ export default function (pi: ExtensionAPI) {
     const binding = bindHome(ctx?.sessionManager);
     reconcileSessionHome(ctx?.sessionManager, ctx?.ui?.notify?.bind(ctx.ui));
     if (binding.status === "refused") ctx?.ui?.notify?.(`watcher: not armed - ${binding.message}`, "warning");
+    if (sessionHomeConflict) return;
     markLoaded();
     if (lockOwnership() !== "owned") return;
     activateOwnedWatch(generation);
   });
   // omp 18.2.10+ keeps the process across /new, /resume and /fork and emits
   // session_switch instead of session_start, so the record follows it there.
-  pi.on?.("session_switch", (_event, ctx) => {
-    if (!childSession) reconcileSessionHome(ctx?.sessionManager, ctx?.ui?.notify?.bind(ctx.ui));
+  // A switch into a conversation recorded for another home retires this
+  // home's watch, so none of its wakes reach that conversation; anything still
+  // pending rides the replacement handoff, and switching back to a
+  // conversation of the bound home arms a fresh generation that replays it.
+  pi.on?.("session_switch", async (_event, ctx) => {
+    if (childSession) return;
+    const wasConflicted = sessionHomeConflict !== "";
+    reconcileSessionHome(ctx?.sessionManager, ctx?.ui?.notify?.bind(ctx.ui));
+    if (sessionHomeConflict && !wasConflicted) {
+      if (replacementCoordinator.receiver === receiveReplacementActionable) replacementCoordinator.receiver = null;
+      await stopSessionGeneration(generation, true);
+    } else if (!sessionHomeConflict && wasConflicted) {
+      generation = createGeneration();
+      activateGeneration(generation);
+      markLoaded();
+      if (lockOwnership() === "owned") activateOwnedWatch(generation);
+    }
   });
   pi.on?.("session_shutdown", async () => {
     // A child session's end leaves the primary serving; it holds no generation.

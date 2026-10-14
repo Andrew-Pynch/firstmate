@@ -232,8 +232,20 @@ fm_home_binding_runtime_dir() {
   printf '%s\n' "${FM_HOME_BINDING_RUNTIME_DIR:-${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/firstmate-home-binding-$(id -u)}"
 }
 
+# Load bin/fm-wake-lib.sh for its pid-identity and lock primitives. Sourcing it
+# creates its STATE directory, so a caller that has not chosen one (the CLI an
+# extension runs) sources it with STATE and the home names it derives held
+# local and pointed at this lib's own runtime dir: a refused or stood-down
+# resolution never creates a code root's or worktree's state/.
 fm_home_binding_load_wake_lib() {
   command -v fm_pid_identity >/dev/null 2>&1 && return 0
+  if [ -n "${STATE:-}" ]; then
+    # shellcheck source=bin/fm-wake-lib.sh
+    . "$FM_HOME_BINDING_LIB_DIR/fm-wake-lib.sh"
+    return
+  fi
+  local STATE FM_HOME FM_ROOT FM_WAKE_QUEUE FM_WAKE_QUEUE_LOCK
+  STATE=$(fm_home_binding_runtime_dir)
   # shellcheck source=bin/fm-wake-lib.sh
   . "$FM_HOME_BINDING_LIB_DIR/fm-wake-lib.sh"
 }

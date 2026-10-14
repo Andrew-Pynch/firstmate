@@ -1316,6 +1316,20 @@ const bannerText = banner?.message?.content ?? "";
 if (!bannerText.includes("WATCHER DOWN") || !bannerText.includes(`belongs to Firstmate home ${process.env.HOME_A}`) || !bannerText.includes(`serves ${process.env.HOME_B}`)) {
   throw new Error(`the next turn did not name the cross-home conversation: ${JSON.stringify(banner)}`);
 }
+// B's watch is retired while A's conversation is open: no arm, no B wakes.
+const refused = await tool.execute();
+if (!refused.content[0].text.includes(`not armed - this conversation belongs to Firstmate home ${process.env.HOME_A}`)) {
+  throw new Error(`the cross-home conversation could still arm the other home's watcher: ${refused.content[0].text}`);
+}
+// Back in a conversation of the bound home, a fresh generation arms B again.
+await handlers.get("session_switch")({ type: "session_switch", reason: "resume" }, { sessionManager: { getEntries: () => [
+  { type: "custom", customType: "firstmate-home", data: { home: process.env.HOME_B } },
+] } });
+const rearmed = await tool.execute();
+if (!/^watcher: (started|unchanged)/.test(rearmed.content[0].text)) throw new Error(`switching back did not re-arm the bound home: ${rearmed.content[0].text}`);
+for (let i = 0; i < 50 && readFileSync(process.env.FM_ARM_LOG, "utf8").trim().split("\n").length < 2; i += 1) await new Promise((r) => setTimeout(r, 50));
+const arms = readFileSync(process.env.FM_ARM_LOG, "utf8").trim().split("\n");
+if (arms.length !== 2 || arms.some((home) => home !== process.env.HOME_B)) throw new Error(`arm children ran for ${JSON.stringify(arms)}, not twice for the bound home`);
 await handlers.get("session_shutdown")({}, {});
 process.exit(0);
 EOF
@@ -1361,6 +1375,14 @@ const mod = await import(pathToFileURL(process.env.EXT).href);
 mod.default(pi);
 await handlers.get("session_start")({ type: "session_start" }, { sessionManager: { getSessionId: () => "s-a", getEntries: () => [] } });
 if (process.env.FM_HOME !== process.env.HOME_A) throw new Error(`a relative launch home was not exported in absolute form: ${process.env.FM_HOME}`);
+// A session the process cannot record its home in says what that costs.
+const persistNotices = [];
+pi.appendEntry = () => { throw new Error("session store is read-only"); };
+await handlers.get("session_switch")({ type: "session_switch", reason: "new" }, { sessionManager: { getEntries: () => [] }, ui: { notify(m, level) { persistNotices.push({ m, level }); } } });
+pi.appendEntry = (type, data) => { appended.push({ type, data }); };
+if (persistNotices.length !== 1 || !persistNotices[0].m.includes("resuming it without FM_HOME will not recover that home")) {
+  throw new Error(`a failed session-home record was silent: ${JSON.stringify(persistNotices)}`);
+}
 if (JSON.stringify(appended) !== JSON.stringify([{ type: "firstmate-home", data: { home: process.env.HOME_A } }])) {
   throw new Error(`the explicit launch home was not recorded once: ${JSON.stringify(appended)}`);
 }

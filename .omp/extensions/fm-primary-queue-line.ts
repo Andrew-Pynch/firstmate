@@ -42,13 +42,16 @@
 // reimplement it to save one bounded read per refresh.
 //
 // Environment:
-//   FM_HOME                    home to read (default: the root this file loaded from).
+//   FM_HOME                    home to read; unset, the home binding decides
+//                              (docs/configuration.md "Home binding"), and an
+//                              unbound process renders no line.
 //   FM_ROOT_OVERRIDE           code root that holds bin/ (default: this file's root).
 //   FM_QUEUE_LINE_CMD          program to run (default <root>/bin/fm-queue-line.sh).
 //                              A test or a host with an unusual layout overrides it.
 //   FM_QUEUE_LINE_MIN_INTERVAL_MS  shortest gap between two reads (default 60000).
 //   FM_QUEUE_LINE_POLL_MS      idle re-read cadence (default 120000).
 import { runCommandAsync, type AsyncExecResult } from "../../.pi/extensions/lib/fm-async-exec.ts";
+import { bindFirstmateHome, firstmateHomeConflict } from "../../.pi/extensions/lib/fm-home-binding.ts";
 import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -57,7 +60,6 @@ const WIDGET_KEY = "firstmate-queue-line";
 
 const extensionFile = fileURLToPath(import.meta.url);
 const root = process.env.FM_ROOT_OVERRIDE || resolve(dirname(extensionFile), "../..");
-const fmHome = process.env.FM_HOME || root;
 const command = process.env.FM_QUEUE_LINE_CMD || `${root}/bin/fm-queue-line.sh`;
 
 function positiveInteger(name: string, fallback: number): number {
@@ -77,10 +79,12 @@ export interface QueueLineState {
   lastStart: number;
   timer: ReturnType<typeof setTimeout> | null;
   interval: ReturnType<typeof setInterval> | null;
+  deferred: ReturnType<typeof setTimeout> | null;
+  revision: number;
 }
 
 export function newState(): QueueLineState {
-  return { inFlight: false, pending: false, lastStart: 0, timer: null, interval: null };
+  return { inFlight: false, pending: false, lastStart: 0, timer: null, interval: null, deferred: null, revision: 0 };
 }
 
 /** Pin one line above the editor, or clear the pin. Returns whether the surface took it. */
@@ -99,7 +103,12 @@ export interface QueueLineRead {
 /** Run the line program once. A non-zero exit or a missing program is a failure. */
 export async function readLine(run?: () => Promise<AsyncExecResult>): Promise<QueueLineRead> {
   if (!run && !existsSync(command)) return { ok: false, line: "" };
-  const exec = run ?? (() => runCommandAsync(command, [], { cwd: fmHome, env: { ...process.env, FM_HOME: fmHome } }));
+  let exec = run;
+  if (!exec) {
+    const binding = bindFirstmateHome(root);
+    if (binding.status !== "ok") return { ok: false, line: "" };
+    exec = () => runCommandAsync(command, [], { cwd: binding.home, env: { ...process.env, FM_HOME: binding.home } });
+  }
   const result = await exec();
   if (result.status !== 0) return { ok: false, line: "" };
   return { ok: true, line: result.stdout.trim() };
@@ -118,6 +127,17 @@ export async function refresh(ctx: any, run?: () => Promise<AsyncExecResult>): P
  * often a whole-fleet read may happen. Returns the read it performed, if any.
  */
 export async function trigger(ctx: any, state: QueueLineState, run?: () => Promise<AsyncExecResult>): Promise<void> {
+  if (firstmateHomeConflict()) {
+    state.revision += 1;
+    state.pending = false;
+    state.lastStart = 0;
+    if (state.timer !== null) {
+      clearTimeout(state.timer);
+      state.timer = null;
+    }
+    applyLine(ctx, "");
+    return;
+  }
   if (state.inFlight) {
     state.pending = true;
     return;
@@ -135,8 +155,11 @@ export async function trigger(ctx: any, state: QueueLineState, run?: () => Promi
   }
   state.lastStart = Date.now();
   state.inFlight = true;
+  const revision = state.revision;
   try {
-    await refresh(ctx, run);
+    const { ok, line } = await readLine(run);
+    if (revision !== state.revision || firstmateHomeConflict()) return;
+    if (ok) applyLine(ctx, line);
   } finally {
     state.inFlight = false;
     if (state.pending) {
@@ -155,6 +178,28 @@ function stopTimers(state: QueueLineState): void {
     clearInterval(state.interval);
     state.interval = null;
   }
+  if (state.deferred !== null) {
+    clearTimeout(state.deferred);
+    state.deferred = null;
+  }
+}
+
+function deferTrigger(ctx: any, state: QueueLineState): void {
+  if (state.deferred !== null) clearTimeout(state.deferred);
+  state.deferred = setTimeout(() => {
+    state.deferred = null;
+    void trigger(ctx, state);
+  }, 0);
+  state.deferred.unref?.();
+}
+
+function deferConflictCheck(ctx: any, state: QueueLineState): void {
+  if (state.deferred !== null) clearTimeout(state.deferred);
+  state.deferred = setTimeout(() => {
+    state.deferred = null;
+    if (firstmateHomeConflict()) void trigger(ctx, state);
+  }, 0);
+  state.deferred.unref?.();
 }
 
 export default function firstmateQueueLine(pi: any): void {
@@ -171,9 +216,16 @@ export default function firstmateQueueLine(pi: any): void {
   // whole-fleet read instead of only delaying this line.
   pi.on?.("session_start", (_event: unknown, ctx: any) => {
     stopTimers(state);
+    // Bind before the first read: a resumed session's recorded home is only
+    // readable from its session manager.
+    bindFirstmateHome(root, ctx?.sessionManager);
     state.interval = setInterval(() => void trigger(ctx, state), pollMs);
     state.interval.unref?.();
     void trigger(ctx, state);
+    deferConflictCheck(ctx, state);
+  });
+  pi.on?.("session_switch", (_event: unknown, ctx: any) => {
+    deferTrigger(ctx, state);
   });
   pi.on?.("turn_end", (_event: unknown, ctx: any) => {
     void trigger(ctx, state);

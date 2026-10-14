@@ -358,6 +358,7 @@ family_for_basename() {
     fm-opencode-primary-live-e2e.test.sh|fm-pi-branch-live-e2e.test.sh|\
     fm-pi-branch-responsiveness-live-e2e.test.sh|\
     fm-pi-primary-live-e2e.test.sh|fm-pi-codex-native.test.sh|fm-omp-primary-live-e2e.test.sh|\
+    fm-omp-home-binding-live-e2e.test.sh|\
     fm-omp-secondmate-live-e2e.test.sh|\
     fm-omp-worker-overlay-live-e2e.test.sh|\
     fm-pr-state-live-e2e.test.sh|\
@@ -737,6 +738,7 @@ tests/fm-herdr-pi-stale-registration-live-e2e.test.sh 47
 tests/fm-herdr-session-cleanup.test.sh 6828
 tests/fm-herdr-submit-confirm-live-e2e.test.sh 46
 tests/fm-herdr-version-floor-live-e2e.test.sh 72
+tests/fm-home-binding.test.sh 700
 tests/fm-home-summary-refresh.test.sh 37264
 tests/fm-inactive-reconcile.test.sh 53178
 tests/fm-kimi-harness.test.sh 19151
@@ -749,6 +751,7 @@ tests/fm-muse-signals-live-e2e.test.sh 77
 tests/fm-nm-test-contract.test.sh 128
 tests/fm-no-mistakes-required.test.sh 247
 tests/fm-omp-harness.test.sh 47734
+tests/fm-omp-home-binding-live-e2e.test.sh 46
 tests/fm-omp-primary-live-e2e.test.sh 46
 tests/fm-omp-worker-overlay-live-e2e.test.sh 23
 tests/fm-on.test.sh 11001

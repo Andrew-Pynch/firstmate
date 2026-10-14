@@ -230,7 +230,10 @@ install_extension_fixture() {  # <repo>
   local repo=$1
   mkdir -p "$repo/.omp/extensions" "$repo/.pi/extensions/lib" "$repo/bin"
   cp "$ROOT/.omp/extensions/fm-primary-queue-line.ts" "$repo/.omp/extensions/"
-  cp "$ROOT/.pi/extensions/lib/fm-async-exec.ts" "$repo/.pi/extensions/lib/"
+  cp "$ROOT/.pi/extensions/lib/fm-async-exec.ts" "$ROOT/.pi/extensions/lib/fm-home-binding.ts" \
+    "$ROOT/.pi/extensions/lib/fm-operational-input.ts" "$repo/.pi/extensions/lib/"
+  cp "$ROOT/bin/fm-home-binding-lib.sh" "$ROOT/bin/fm-primary-scope-lib.sh" "$ROOT/bin/fm-wake-lib.sh" \
+    "$ROOT/bin/fm-classify-lib.sh" "$ROOT/bin/fm-timeout-lib.sh" "$repo/bin/"
   cat > "$repo/bin/fm-queue-line.sh" <<'SH'
 #!/usr/bin/env bash
 printf 'run\n' >> "${FM_LINE_LOG:?}"
@@ -251,8 +254,8 @@ SH
 # worker pane, and each case that wants it sets it in its own program.
 run_extension() {  # <repo> <program>
   local repo=$1 program=$2
-  env -u FM_TASK_ID EXT="$repo/.omp/extensions/fm-primary-queue-line.ts" \
-    FM_LINE_LOG="${FM_LINE_LOG:-}" node --input-type=module -e "$program" 2>&1
+  env -u FM_TASK_ID -u FM_ROOT_OVERRIDE FM_HOME="$repo" EXT="$repo/.omp/extensions/fm-primary-queue-line.ts" \
+    FM_HOME_BINDING_RUNTIME_DIR="$TMP_ROOT/runtime" FM_LINE_LOG="${FM_LINE_LOG:-}" node --input-type=module -e "$program" 2>&1
 }
 
 test_extension_pins_and_clears_the_line() {
@@ -431,6 +434,68 @@ if (runs() !== 2) throw new Error(`three triggers during one read must coalesce 
   pass "one read at a time, one coalesced follow-up, never a read per trigger"
 }
 
+test_extension_stands_down_during_cross_home_conflict() {
+  local repo out status
+  repo=$(install_extension_fixture "$TMP_ROOT/ext-conflict")
+  out=$(FM_LINE_LOG="$TMP_ROOT/ext-conflict/run.log" run_extension "$repo" '
+import { existsSync, readFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
+const handlers = new Map();
+const calls = [];
+const pi = { on(e, h) { handlers.set(e, h); } };
+const ctx = { hasUI: true, ui: { setWidget: (...args) => calls.push(args) } };
+const settled = async (done, ms = 5000) => {
+  const deadline = Date.now() + ms;
+  while (Date.now() < deadline) {
+    if (done()) return true;
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  return false;
+};
+const runs = () => {
+  if (!existsSync(process.env.FM_LINE_LOG)) return 0;
+  const log = readFileSync(process.env.FM_LINE_LOG, "utf8").trim();
+  return log === "" ? 0 : log.split("\n").length;
+};
+process.env.FM_QUEUE_LINE_MIN_INTERVAL_MS = "1";
+process.env.FM_LINE_MODE = "waiting";
+const extensionUrl = pathToFileURL(process.env.EXT).href;
+const homeBindingUrl = new URL("../../.pi/extensions/lib/fm-home-binding.ts", extensionUrl);
+const { setFirstmateHomeConflict } = await import(homeBindingUrl.href);
+(await import(extensionUrl + "?conflict=1")).default(pi);
+if (!handlers.has("session_switch")) throw new Error("no session_switch handler was registered");
+handlers.get("session_start")({ type: "session_start" }, ctx);
+if (!(await settled(() => calls.some((call) => call[1]?.[0]?.includes("top-row"))))) {
+  throw new Error(`the initial queue line was not pinned: ${JSON.stringify(calls)}`);
+}
+
+process.env.FM_LINE_MODE = "slow";
+handlers.get("turn_end")({ type: "turn_end" }, ctx);
+if (!(await settled(() => runs() === 2))) throw new Error("the slow refresh never started");
+setFirstmateHomeConflict("conversation belongs to another home");
+handlers.get("session_switch")({ type: "session_switch" }, ctx);
+if (!(await settled(() => calls.some((call) => call[1] === undefined)))) {
+  throw new Error(`the conflict did not clear the pin: ${JSON.stringify(calls)}`);
+}
+const clearedAt = calls.length;
+await new Promise((r) => setTimeout(r, 600));
+if (calls.length !== clearedAt) {
+  throw new Error(`the in-flight home read repainted during conflict: ${JSON.stringify(calls.slice(clearedAt))}`);
+}
+
+setFirstmateHomeConflict("");
+process.env.FM_LINE_MODE = "waiting";
+handlers.get("turn_end")({ type: "turn_end" }, ctx);
+if (!(await settled(() => calls.length > clearedAt && calls.at(-1)?.[1]?.[0]?.includes("top-row")))) {
+  throw new Error(`the queue line did not resume after conflict cleared: ${JSON.stringify(calls)}`);
+}
+')
+  status=$?
+  expect_code 0 "$status" "the extension stands down during a cross-home conflict: $out"
+  [ -z "$out" ] || fail "the extension conflict test printed output: $out"
+  pass "a cross-home conflict clears, invalidates, and later resumes the queue line"
+}
+
 test_extension_stays_out_of_worker_panes() {
   local repo out status
   repo=$(install_extension_fixture "$TMP_ROOT/ext-worker")
@@ -464,4 +529,5 @@ test_extension_pins_and_clears_the_line
 test_extension_repins_on_a_turn_boundary
 test_extension_keeps_the_line_when_a_read_fails
 test_extension_reads_once_per_interval_and_coalesces
+test_extension_stands_down_during_cross_home_conflict
 test_extension_stays_out_of_worker_panes

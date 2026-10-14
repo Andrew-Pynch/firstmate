@@ -365,7 +365,7 @@ A secondmate row resolves through the projects it serves (`projects=` in its met
 ## FM_HOME
 
 `FM_HOME` selects the operational home for one firstmate instance.
-When it is unset, most scripts use the repo root as the home; when it is set, scripts still run from this repo's `bin/`, but `state/`, `data/`, `config/`, and `projects/` come from `$FM_HOME`.
+When it is unset, most scripts use the repo root as the home ([Home binding](#home-binding) owns when a launch is refused instead); when it is set, scripts still run from this repo's `bin/`, but `state/`, `data/`, `config/`, and `projects/` come from `$FM_HOME`.
 `FM_ROOT_OVERRIDE` overrides the firstmate repo root used by scripts, including the primary checkout watched by the worktree-tangle guard.
 When `FM_HOME` is unset, it also behaves as the old whole-root override.
 `bin/fm-send.sh` is intentionally stricter than that general fallback: it requires `FM_HOME` to be set before resolving a target, so operator steers cannot silently resolve against the wrong home.
@@ -379,6 +379,30 @@ For the zellij backend, `FM_HOME` does not split containers, but it determines t
 The full zellij home label also includes a short hash of the resolved `FM_ROOT` path.
 For the cmux backend, `FM_CONFIG_OVERRIDE` overrides where `config/cmux-socket-password` is read from, while `FM_HOME` determines the default config path and readable home prefix embedded in workspace titles.
 The full cmux home label also includes a short hash of the resolved `FM_ROOT` path, and there is no per-home container split.
+
+## Home binding
+
+Several homes can share one code root: a primary whose code root is not its home, and secondmate homes that run the same scripts.
+A harness restore can relaunch a primary with its working directory and none of its environment; Herdr's `resume_agents_on_restore` reruns `omp --resume=<session>` in the pane's cwd that way.
+A process that then falls back to "the code root is the home" serves the wrong state directory without any error, so the home is bound to the harness session that was launched for it instead of to a shared per-code-root default.
+[`bin/fm-home-binding-lib.sh`](../bin/fm-home-binding-lib.sh) owns the resolution order and every record below; its header owns the exact mechanics.
+
+- **Order.** `FM_HOME`, then `FM_ROOT_OVERRIDE`, then the home the harness session recorded, then the code root.
+- **Session record.** An omp primary launched with an explicit `FM_HOME` records it in its session as a `firstmate-home` entry, replacing a different record only on the process's first session activation because the explicit home is the recovery authority.
+  A bound home is carried into any new in-process session (`/new`, `/fork`) that has no record, but every later `session_start` or in-process switch preserves a record naming another home: it compares physical home paths, warns, retires the current watch, shows the watcher-down banner, clears and stops refreshing the queue line, and stands down home-dependent session-start and compaction delivery, turn-end, and pretool guards until a session of the bound home is active again.
+  A resume launched with no `FM_HOME` reads the record back, binds that home, and exports it, so the agent's own shell commands and every extension child name it explicitly.
+- **Served homes.** `state/.code-root-served-homes` in a primary code root lists the other homes explicitly served from it, appended under its own lock by the omp extension at an explicit launch and by a locked `bin/fm-session-start.sh`; a linked task worktree is never recorded, and an entry that cannot be written is reported (`HOME_MISMATCH` at session start, an omp warning) because its absence reopens the code-root fallback.
+- **Refusal.** When a launch names no home and carries no session record, the code-root fallback is refused whenever the served-homes record names another existing home: the omp extensions do not arm, the turn-end guard delivers the refusal instead of a digest, and `bin/fm-session-start.sh` prints a `HOME_MISMATCH` line and stops before locking.
+  Relaunch with `FM_HOME=<home>`, for omp `FM_HOME=<home> omp --resume=<session>`, or remove a home that is no longer served with `bin/fm-home-binding-lib.sh forget <home>`.
+- **Comparison.** Every session start prints one `BOOTSTRAP_INFO: home binding:` line comparing its own `FM_HOME` and state directory with the harness process's launch `FM_HOME` and `FM_STATE_OVERRIDE` and with the state directory the omp extensions resolved, and a `HOME_MISMATCH` line naming both state directories when they disagree.
+  When the omp extensions' own record proves they serve another state directory, session start prints that `HOME_MISMATCH` line and stops before locking or changing anything; an omp process switched to a conversation recorded for another home warns and shows a `WATCHER DOWN` banner on every turn instead of supervising the wrong state.
+- **Linked code root.** A code root that is a linked worktree is never its own home.
+  A task worker marked by `FM_TASK_ID`, or a linked checkout whose repository primary checkout is not a Firstmate home with `state/`, stands down silently when it names no home and carries no record.
+  In the farm shape, where the repository primary checkout is a Firstmate home with `state/`, the same unmarked launch receives a `HOME_MISMATCH` session-start line instead of a digest and a `WATCHER DOWN` banner on every turn; it does not compel a turn-end continuation, and the operator relaunches it with the home named by `FM_HOME=<home> omp --resume=<session>`.
+  With an explicit or recorded home that is itself a primary root, the hooks treat the linked code root as primary ([turn-end guard](turnend-guard.md) owns that scope).
+
+A code root that has never served another home keeps the plain fallback, so a single-checkout home needs no setup.
+Only the omp primary records and reads a session home today; other harnesses still rely on their launch environment, and the session-start comparison is what makes their mismatch visible.
 
 ## Harness support
 

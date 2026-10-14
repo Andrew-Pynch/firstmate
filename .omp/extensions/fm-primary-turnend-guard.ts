@@ -26,6 +26,14 @@
 // before_agent_start returning { message } was verified to reach model context
 // on omp 18.1.11 (the model quoted an injected marker back), so omp qualifies
 // for the Run tier.
+//
+// Home binding: this extension resolves its home through the same owner as
+// the watch extension (bin/fm-home-binding-lib.sh, docs/configuration.md
+// "Home binding") and hands it to every child explicitly. A refused home is
+// delivered as the session-start context instead of a digest for some other
+// home's state, and a stop compels one continuation naming it. An unbound farm
+// checkout also delivers a mismatch but does not compel a continuation; a
+// linked task worktree stands down without starting the wrapper at all.
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
@@ -37,6 +45,12 @@ import {
   classifyFirstmateCurrentOperationalText,
   encodeFirstmateOperationalInput,
 } from "../../.pi/extensions/lib/fm-operational-input.ts";
+import {
+  bindFirstmateHome,
+  firstmateHomeConflict,
+  launchFmHome,
+  type FirstmateHomeBinding,
+} from "../../.pi/extensions/lib/fm-home-binding.ts";
 
 // The omp extension API surface this file uses, declared locally: omp ships no
 // separately installable type package and is a Pi fork whose event names match
@@ -49,9 +63,11 @@ type ExtensionAPI = {
 const extensionFile = fileURLToPath(import.meta.url);
 const extensionDir = dirname(extensionFile);
 const root = resolve(extensionDir, "../..");
-const fmHome = process.env.FM_HOME || process.env.FM_ROOT_OVERRIDE || root;
-const state = process.env.FM_STATE_OVERRIDE || `${fmHome}/state`;
-const marker = `${state}/.omp-turnend-extension-loaded`;
+// Home-dependent paths stay empty until bindHome resolves this process's home.
+let homeBinding: FirstmateHomeBinding | null = null;
+let fmHome = "";
+let state = "";
+let marker = "";
 const extensionVersion = `sha256:${createHash("sha256").update(readFileSync(extensionFile)).digest("hex")}`;
 
 function pidAlive(pid: string): boolean {
@@ -63,6 +79,25 @@ function pidAlive(pid: string): boolean {
   }
 }
 
+// Bind this process to its home once; an unresolved answer is retried at the
+// next session_start, which may supply the session's recorded home.
+function bindHome(sessionManager?: { getEntries?: () => unknown[] }): FirstmateHomeBinding {
+  if (homeBinding?.status === "ok") return homeBinding;
+  homeBinding = bindFirstmateHome(root, sessionManager);
+  if (homeBinding.status !== "ok") return homeBinding;
+  fmHome = homeBinding.home;
+  state = process.env.FM_STATE_OVERRIDE || `${fmHome}/state`;
+  marker = `${state}/.omp-turnend-extension-loaded`;
+  return homeBinding;
+}
+
+// The environment every child of this extension runs with: the bound home
+// named explicitly, so a restored process whose launch environment lost
+// FM_HOME never lets a script fall back to the code root.
+function childEnv(): NodeJS.ProcessEnv {
+  return fmHome ? { ...process.env, FM_HOME: fmHome } : { ...process.env };
+}
+
 // The loaded marker vouches that the session holding this home's lock loaded
 // this build, and bin/fm-wake-lib.sh accepts it only when it names the lock
 // pid. So only that process, or a candidate while no live session holds the
@@ -70,7 +105,7 @@ function pidAlive(pid: string): boolean {
 // (the `omp models` listing bin/fm-spawn.sh runs from the primary's own shell)
 // would otherwise record its own short-lived pid over the live primary's.
 function markLoaded(): void {
-  if (!existsSync(state)) return;
+  if (!state || !existsSync(state)) return;
   let lockPid = "";
   try {
     lockPid = readFileSync(`${state}/.lock`, "utf8").trim();
@@ -81,6 +116,7 @@ function markLoaded(): void {
     if (!/^[0-9]+$/.test(lockPid) || lockPid === "1") return;
     if (lockPid !== String(process.pid) && pidAlive(lockPid)) return;
   }
+
   writeFileSync(marker, `${extensionVersion}\n${process.pid}\n`);
 }
 
@@ -258,6 +294,22 @@ function runSessionstartHook(generation: SessionstartGeneration): Promise<Sessio
       settled = true;
       resolveResult(result);
     };
+    const binding = homeBinding;
+    if (binding?.status === "ineligible") {
+      settle({ kind: "ineligible" });
+      return;
+    }
+    if (binding?.status === "home-mismatch") {
+      settle({ kind: "ready", raw: `HOME_MISMATCH: ${binding.message}` });
+      return;
+    }
+    if (binding?.status === "refused") {
+      settle({
+        kind: "ready",
+        raw: `HOME_MISMATCH: session start did not run because this omp process serves no Firstmate home: ${binding.message}`,
+      });
+      return;
+    }
     const supervised = process.platform !== "win32";
     const runner = `${root}/bin/fm-sessionstart-run.sh`;
     // The internal --pi-prerequisite mode is shared: it is the wrapper's
@@ -277,6 +329,7 @@ function runSessionstartHook(generation: SessionstartGeneration): Promise<Sessio
           : ["--source", generation.source, "--pi-prerequisite"],
         {
           detached: supervised,
+          env: childEnv(),
           stdio: supervised
             ? ["ignore", "pipe", "ignore", "ipc"]
             : ["ignore", "pipe", "ignore"],
@@ -452,8 +505,19 @@ async function claimSessionstartMessage(
 // payload: a true value allows the stop, which is what bounds omp to one
 // forced continuation per turn.
 function runGuard(stopHookActive: boolean): Promise<{ code: number; stderr: string }> {
+  if (firstmateHomeConflict()) return Promise.resolve({ code: 0, stderr: "" });
+  const binding = homeBinding;
+  if (binding?.status === "ineligible" || binding?.status === "home-mismatch") {
+    return Promise.resolve({ code: 0, stderr: "" });
+  }
+  if (binding?.status === "refused") {
+    return Promise.resolve(stopHookActive
+      ? { code: 0, stderr: "" }
+      : { code: 2, stderr: `This omp process serves no Firstmate home, so no watcher can run for it: ${binding.message}\n` });
+  }
   return new Promise((resolveResult) => {
     const child = spawn(`${root}/bin/fm-turnend-guard.sh`, {
+      env: childEnv(),
       stdio: ["pipe", "ignore", "pipe"],
     });
     let stderr = "";
@@ -474,8 +538,10 @@ function runGuard(stopHookActive: boolean): Promise<{ code: number; stderr: stri
 // surfaced the reason verbatim to the model). Each owner script owns its own
 // decision and is inert outside the real primary checkout.
 function runChecker(script: string, command: string): Promise<{ code: number; stderr: string }> {
+  if (firstmateHomeConflict()) return Promise.resolve({ code: 0, stderr: "" });
   return new Promise((resolveResult) => {
     const child = spawn(`${root}/bin/${script}`, ["--command", command], {
+      env: childEnv(),
       stdio: ["ignore", "ignore", "pipe"],
     });
     let stderr = "";
@@ -526,19 +592,34 @@ export default function (pi: ExtensionAPI) {
     process.removeListener("exit", cleanupSessionstartOnProcessExit);
     sessionstartExitListenerRegistered = false;
   };
+  const retireSessionstartGeneration = async (): Promise<void> => {
+    const generation = sessionstartGeneration;
+    if (!generation) return;
+    await stopSessionstartGeneration(generation);
+    if (sessionstartGeneration === generation) sessionstartGeneration = null;
+  };
   registerSessionstartExitListener();
 
-  pi.on?.("session_start", (_event, ctx) => {
+  pi.on?.("session_start", async (_event, ctx) => {
     sessionStarts += 1;
     const source: SessionstartSource = sessionStarts === 1
       ? (launchResumeSource() ?? "startup")
       : "clear";
+    bindHome(ctx?.sessionManager);
     markLoaded();
     registerSessionstartExitListener();
+    if (firstmateHomeConflict()) {
+      await retireSessionstartGeneration();
+      return;
+    }
     sessionstartGeneration = createSessionstartGeneration(source, sessionIdFromContext(ctx));
   });
 
   pi.on?.("before_agent_start", async (_event, ctx) => {
+    if (firstmateHomeConflict()) {
+      await retireSessionstartGeneration();
+      return undefined;
+    }
     const generation = sessionstartGeneration;
     if (!generation) return undefined;
     const message = await claimSessionstartMessage(generation, ctx);
@@ -550,9 +631,17 @@ export default function (pi: ExtensionAPI) {
   // so the message is sent directly while sharing generation ownership.
   pi.on?.("session_compact", async (_event, ctx) => {
     registerSessionstartExitListener();
+    if (firstmateHomeConflict()) {
+      await retireSessionstartGeneration();
+      return;
+    }
     const generation = createSessionstartGeneration("compact", sessionIdFromContext(ctx));
     sessionstartGeneration = generation;
     const message = await claimSessionstartMessage(generation, ctx);
+    if (firstmateHomeConflict()) {
+      await retireSessionstartGeneration();
+      return;
+    }
     if (!message || !sessionstartGenerationIsLive(generation)) return;
     try {
       pi.sendMessage?.(message);
@@ -561,12 +650,14 @@ export default function (pi: ExtensionAPI) {
     }
   });
 
+  pi.on?.("session_switch", async () => {
+    if (firstmateHomeConflict()) await retireSessionstartGeneration();
+  });
+
   pi.on?.("session_shutdown", async () => {
-    const generation = sessionstartGeneration;
     try {
-      if (generation) await stopSessionstartGeneration(generation);
+      await retireSessionstartGeneration();
     } finally {
-      if (sessionstartGeneration === generation) sessionstartGeneration = null;
       removeSessionstartExitListener();
     }
   });
@@ -607,5 +698,8 @@ export default function (pi: ExtensionAPI) {
     return { continue: true, additionalContext: content };
   });
 
+  // An explicit launch home binds now; anything else waits for session_start,
+  // the first point the session's recorded home can be read.
+  if (launchFmHome || process.env.FM_ROOT_OVERRIDE) bindHome();
   markLoaded();
 }

@@ -17,11 +17,12 @@ fm_root_is_secondmate_home() {
   return 0
 }
 
-# Return 0 when $1 is a genuine primary root whose effective state dir is $2.
-# A valid secondmate marker force-includes a linked secondmate home.
-# Otherwise only a plain checkout is primary, never a linked task worktree.
-fm_primary_scope_matches() {
-  local root=$1 state=$2 git_dir git_common_dir
+# Return 0 when $1 is a genuine primary root, whether or not its state dir
+# exists yet. A valid secondmate marker force-includes a linked secondmate
+# home. Otherwise only a plain checkout is primary, never a linked task
+# worktree.
+fm_primary_root_matches() {
+  local root=$1 git_dir git_common_dir
   if ! fm_root_is_secondmate_home "$root"; then
     git_dir=$(git -C "$root" rev-parse --git-dir 2>/dev/null) || return 1
     git_common_dir=$(git -C "$root" rev-parse --git-common-dir 2>/dev/null) || return 1
@@ -29,5 +30,26 @@ fm_primary_scope_matches() {
   fi
   [ -f "$root/AGENTS.md" ] || return 1
   [ -d "$root/bin" ] || return 1
-  [ -d "$state" ] || return 1
+}
+
+# Return 0 when $1 is a linked firstmate checkout serving as the code root of
+# a separate primary home: FM_HOME names that home explicitly, the home is
+# itself a genuine primary root, and this process is not a ship or scout
+# worker (bin/fm-spawn.sh marks every worker with FM_TASK_ID). A primary run
+# from a linked checkout of its own home's repository is that shape; a task
+# worktree carries FM_TASK_ID and names no home, so it stays exempt.
+fm_linked_code_root_serves_home() {
+  local root=$1 home=${FM_HOME:-} canonical_root canonical_home
+  [ -z "${FM_TASK_ID:-}" ] && [ -n "$home" ] || return 1
+  [ -f "$root/AGENTS.md" ] && [ -d "$root/bin" ] || return 1
+  canonical_root=$(CDPATH='' cd -P -- "$root" 2>/dev/null && pwd -P) || return 1
+  canonical_home=$(CDPATH='' cd -P -- "$home" 2>/dev/null && pwd -P) || return 1
+  [ "$canonical_root" != "$canonical_home" ] || return 1
+  fm_primary_root_matches "$canonical_home"
+}
+
+# Return 0 when $1 is a genuine primary root, or a linked code root serving a
+# separate primary home, whose effective state dir $2 already exists.
+fm_primary_scope_matches() {
+  { fm_primary_root_matches "$1" || fm_linked_code_root_serves_home "$1"; } && [ -d "$2" ]
 }

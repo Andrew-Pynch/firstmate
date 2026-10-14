@@ -51,7 +51,10 @@ LAB="$TMP_ROOT/home"
 AGENT_DIR="$TMP_ROOT/agent"
 mkdir -p "$LAB/.omp/extensions" "$LAB/.pi/extensions/lib" "$LAB/bin" "$AGENT_DIR"
 cp "$ROOT/.omp/extensions/fm-primary-queue-line.ts" "$LAB/.omp/extensions/"
-cp "$ROOT/.pi/extensions/lib/fm-async-exec.ts" "$LAB/.pi/extensions/lib/"
+cp "$ROOT/.pi/extensions/lib/fm-async-exec.ts" "$ROOT/.pi/extensions/lib/fm-home-binding.ts" \
+  "$ROOT/.pi/extensions/lib/fm-operational-input.ts" "$LAB/.pi/extensions/lib/"
+cp "$ROOT/bin/fm-home-binding-lib.sh" "$ROOT/bin/fm-primary-scope-lib.sh" "$ROOT/bin/fm-wake-lib.sh" \
+  "$ROOT/bin/fm-classify-lib.sh" "$ROOT/bin/fm-timeout-lib.sh" "$LAB/bin/"
 cat > "$LAB/bin/fm-queue-line.sh" <<'SH'
 #!/usr/bin/env bash
 case "${FM_LINE_MODE:?}" in
@@ -68,7 +71,8 @@ chmod +x "$LAB/bin/fm-queue-line.sh"
 # deliberately renders nothing.
 session_frames() {  # <mode>
   local mode=$1
-  (cd "$LAB" && sleep 8) | timeout 60 env -u FM_TASK_ID OMP_SKIP_SETUP=1 PI_CODING_AGENT_DIR="$AGENT_DIR" \
+  (cd "$LAB" && sleep 8) | timeout 60 env -u FM_TASK_ID -u FM_ROOT_OVERRIDE OMP_SKIP_SETUP=1 PI_CODING_AGENT_DIR="$AGENT_DIR" \
+    FM_HOME="$LAB" FM_HOME_BINDING_RUNTIME_DIR="$TMP_ROOT/runtime" \
     FM_LINE_MODE="$mode" omp --mode rpc --no-session --cwd "$LAB" 2>"$TMP_ROOT/err.$mode"
 }
 

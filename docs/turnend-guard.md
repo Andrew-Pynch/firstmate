@@ -25,6 +25,7 @@ A secondmate home runs its own primary Firstmate session, so a genuine `.fm-seco
 The marker must be a regular non-symlink file whose whitespace-stripped first line is a non-empty identifier containing only letters, digits, dots, underscores, and dashes.
 An unmarked checkout or invalid marker falls through to the git-dir check.
 That check keeps crewmate and scout linked worktrees inert because their git dir differs from their git common dir.
+A linked checkout is still in scope when it is the code root of a separate primary home: `FM_HOME` names that home explicitly, the home is itself a primary root, and the process carries no `FM_TASK_ID` worker marker (`fm_linked_code_root_serves_home` in `bin/fm-primary-scope-lib.sh`), which is how a primary run from a linked worktree of its own home's repository stays guarded.
 It also requires `AGENTS.md`, `bin/`, and the effective state directory.
 
 For an in-scope primary, the guard counts in-flight work from `state/*.meta`.
@@ -73,6 +74,13 @@ That hook and `bin/fm-watch.sh`'s own pre-acquisition staleness check (the "lock
 The auto-arm hook additionally exports its resolved `FM_GUARD_GRACE` when it forks `bin/fm-watch-arm.sh`, so the arm wrapper and the watcher it may start judge staleness with the exact same value the hook just judged it with, whether that value came from an operator override or the poll-derived default.
 `bin/fm-turnend-guard.sh`'s daemon-ownership branch (`fm_afk_daemon_owns_supervision`, above, covering both away and quiet mode) also derives its beacon grace from `fm_poll_derived_grace` rather than falling back to the bare 300-second default, for the same reason: the daemon's watcher-restart cadence there is not a fixed poll loop, so a flat grace misreads a daemon that is genuinely still cycling as down.
 Every other direct `FM_GUARD_GRACE` reader (`bin/fm-guard.sh`, the strict-watcher checks in `bin/fm-turnend-guard.sh` and its harness-specific wrappers, `bin/fm-wake-lib.sh`) still falls back to the bare 300-second default unless `FM_GUARD_GRACE` is set explicitly in the environment.
+
+### Watcher-down banner
+
+The turn-end guard fires only when a turn ends, so a primary that sits idle while its watcher is dead stays silent until someone happens to look.
+The omp watch extension therefore runs `bin/fm-watcher-down.sh` at every agent start and shows its line, a `WATCHER DOWN` banner, at the top of that turn.
+The script prints only while a live harness holds the session lock, the home needs supervision, and no watcher has beaten for `FM_WATCHER_DOWN_BANNER_MINUTES` (default 10) minutes or the poll-derived grace when that is longer; its header owns the exact predicate and wording.
+An omp process that serves no home or whose active conversation belongs to another home shows its home-binding diagnostic as the banner instead (`docs/configuration.md` "Home binding").
 
 ## Harness integrations
 

@@ -109,12 +109,16 @@ test_lock_identity_and_liveness_classification() {
 
 # --- 2. Launch ---------------------------------------------------------------
 
-# A fake omp that answers `models --json` with a two-provider catalog and exits
-# 0 for everything else (the launch itself is only recorded by the fake tmux).
+# A fake omp that answers `--version`, answers `models --json` with a
+# two-provider catalog, and exits 0 for everything else (the launch itself is
+# only recorded by the fake tmux).
 make_fake_omp() {  # <fakebin>
   cat > "$1/omp" <<'SH'
 #!/usr/bin/env bash
 case "$1" in
+  --version)
+    printf 'omp/%s\n' "${FM_FAKE_OMP_VERSION:-18.9.1}"
+    ;;
   models)
     printf '%s\n' '{"models":[{"provider":"openai-codex","id":"gpt-6-astra","selector":"openai-codex/gpt-6-astra"},{"provider":"ollama","id":"qwen3:8b","selector":"ollama/qwen3:8b"}]}'
     ;;
@@ -180,6 +184,20 @@ test_spawn_launch_line_and_worker_wiring() {
   [ "$(fm_busy_classify tmux fake:w omp "$id" "$state")" = "busy fm-spawn" ] \
     || fail "omp spawn must seed the busy-state contract"
   pass "fm-spawn: the omp launch line clears markers, pins posture, and wires the state-resident extension"
+}
+
+test_spawn_refuses_unsupported_version() {
+  local rec id=omp-version-old-q2 out status
+  rec=$(make_spawn_case version-old omp "$id")
+  read_case_record "$rec"
+  out=$(FM_FAKE_OMP_VERSION=18.6.1 run_scout_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --harness omp)
+  status=$?
+  expect_code 1 "$status" "omp older than the supported floor must be refused: $out"
+  assert_contains "$out" "18.6.1" "the refusal must name the installed omp version: $out"
+  assert_contains "$out" "18.6.3" "the refusal must name the supported omp floor: $out"
+  assert_absent "$HOME_DIR/state/$id.meta" "an unsupported omp spawn must publish no task record"
+  [ ! -s "$LAUNCH_LOG" ] || fail "an unsupported omp spawn must launch nothing: $(cat "$LAUNCH_LOG")"
+  pass "fm-spawn: omp below 18.6.3 is refused before record or launch"
 }
 
 test_spawn_model_validation_scoped_to_listed_providers() {
@@ -1043,6 +1061,7 @@ EOF
 test_detection_anchored_name_and_marker_precedence
 test_lock_identity_and_liveness_classification
 test_spawn_launch_line_and_worker_wiring
+test_spawn_refuses_unsupported_version
 test_spawn_model_validation_scoped_to_listed_providers
 test_secondmate_launch_relies_on_discovery
 test_secondmate_config_pinned_model_is_validated

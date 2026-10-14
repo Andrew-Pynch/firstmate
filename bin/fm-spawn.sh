@@ -2028,6 +2028,8 @@ shell_quote() {
   printf "'"
 }
 
+FM_OMP_MIN_VERSION=18.6.3
+
 resolve_pi_executable() {
   local candidate dir
   candidate=$(type -P -- "$1" 2>/dev/null) || return 1
@@ -2039,6 +2041,46 @@ resolve_pi_executable() {
     printf '%s/%s\n' "$dir" "$(basename "$candidate")"
     ;;
   esac
+}
+
+omp_version_check() {
+  local executable=$1 raw installed major minor patch floor_major floor_minor floor_patch status=0
+  raw=$("$executable" --version 2>&1) || status=$?
+  case "$raw" in
+    omp/*) installed=${raw#omp/} ;;
+    *) installed=${raw:-unknown}; status=1 ;;
+  esac
+  if [ "$status" -eq 0 ]; then
+    case "$installed" in
+      *.*.*)
+        major=${installed%%.*}
+        minor=${installed#*.}
+        patch=${minor#*.}
+        minor=${minor%%.*}
+        ;;
+      *) status=1 ;;
+    esac
+  fi
+  if [ "$status" -eq 0 ]; then
+    case "$major" in '' | *[!0-9]*) status=1 ;; esac
+    case "$minor" in '' | *[!0-9]*) status=1 ;; esac
+    case "$patch" in '' | *[!0-9]*) status=1 ;; esac
+    [ "${#major}" -le 9 ] && [ "${#minor}" -le 9 ] && [ "${#patch}" -le 9 ] || status=1
+  fi
+  if [ "$status" -ne 0 ]; then
+    echo "error: installed omp version '$installed' cannot be parsed; omp $FM_OMP_MIN_VERSION or newer is required" >&2
+    return 1
+  fi
+  IFS=. read -r floor_major floor_minor floor_patch <<< "$FM_OMP_MIN_VERSION"
+  major=$((10#$major))
+  minor=$((10#$minor))
+  patch=$((10#$patch))
+  if [ "$major" -lt "$floor_major" ] \
+    || { [ "$major" -eq "$floor_major" ] && [ "$minor" -lt "$floor_minor" ]; } \
+    || { [ "$major" -eq "$floor_major" ] && [ "$minor" -eq "$floor_minor" ] && [ "$patch" -lt "$floor_patch" ]; }; then
+    echo "error: installed omp version '$installed' is older than the required floor $FM_OMP_MIN_VERSION; update omp before launching it" >&2
+    return 1
+  fi
 }
 
 # Pi's CLI surface is version-dependent, so probe the resolved executable's help
@@ -2542,6 +2584,7 @@ omp)
     echo "error: omp executable not found on PATH; install Oh My Pi or select a different verified harness" >&2
     exit 1
   }
+  omp_version_check "$OMP_BIN" || exit 1
   OMP_WORKER_CFG="$FM_ROOT/.omp/fm-worker-overlay.yml"
   [ -f "$OMP_WORKER_CFG" ] || {
     echo "error: omp worker posture overlay missing at $OMP_WORKER_CFG; a worker launched without it can park on the captain's own approval or plan-mode settings" >&2

@@ -100,10 +100,10 @@
 # whose recorded harness is in FM_TASK_INBOX_NATIVE_HARNESSES is native-capable
 # and never receives a keystroke from the ring, because a composer check
 # followed by typing still races a person who starts typing in between. A lane
-# whose record contains a `harness=` value that is not a verified adapter also
-# receives no keystrokes: a raw launch command may hide its actual harness
-# behind arbitrary shell syntax, so the ring cannot prove that typed delivery
-# is safe. A legacy record with no `harness=` field keeps typed delivery. While
+# whose record does not name a verified adapter also receives no keystrokes: a
+# raw launch command may hide its actual harness behind arbitrary shell syntax,
+# and a record with no `harness=` field provides no classification, so the ring
+# cannot prove that typed delivery is safe. While
 # a native-capable lane's endpoint names a live process the ring writes its own
 # request and waits up to FM_TASK_INBOX_NATIVE_ACK_SECS for the extension to
 # remove it; a request
@@ -408,10 +408,8 @@ fm_task_inbox_ring() {  # <backend> <target> <record-path> [expected-label]
   dir=${rec%/*}
   dir=${dir%/handled}
   meta="${dir%.inbox}.meta"
-  if grep -q '^harness=' "$meta" 2>/dev/null; then
-    harness=$(fm_meta_get "$meta" harness)
-    fm_control_harness_supported "$harness" || return 1
-  fi
+  harness=$(fm_meta_get "$meta" harness)
+  fm_control_harness_supported "$harness" || return 1
   case "$(fm_backend_agent_state "$backend" "$target" 2>/dev/null || true)" in
     dead|missing) return 3 ;;
   esac

@@ -54,6 +54,12 @@ inbox_lib() {  # <state> <function> [args...]
   ' _ "$ROOT/bin/fm-task-inbox-lib.sh" "$@"
 }
 
+record_harness() {  # <record> <harness>
+  local inbox=${1%/*}
+  inbox=${inbox%/handled}
+  printf 'harness=%s\n' "$2" > "${inbox%.inbox}.meta"
+}
+
 # A fake tmux for the watcher cases: capture-pane replays FM_FAKE_TMUX_CAPTURE,
 # display-message yields a numeric cursor row, and every literal send-keys is
 # logged to FM_SEND_LOG so a doorbell ring is observable. With
@@ -242,6 +248,7 @@ test_doorbell_rejects_terminal_controls() {
     esac
     task="${control}touch marker; # $label"
     rec=$(inbox_lib "$state" fm_task_inbox_write "$state" "$task" "please continue")
+    record_harness "$rec" claude
     doorbell=
     rc=0
     doorbell=$(inbox_lib "$state" fm_task_inbox_doorbell_line "$rec") || rc=$?
@@ -270,6 +277,7 @@ test_ring_skips_dead_agent() {
   mkdir -p "$state"
   make_watch_stubs "$dir" >/dev/null
   rec=$(inbox_lib "$state" fm_task_inbox_write "$state" t1 "please continue")
+  record_harness "$rec" claude
   log="$dir/send.log"; : > "$log"
   rc=0
   PATH="$dir/fakebin:$PATH" FM_SEND_LOG="$log" FM_FAKE_TMUX_AGENT=zsh \
@@ -360,6 +368,7 @@ test_ring_submits_its_own_stuck_doorbell() {
   mkdir -p "$state"
   make_composer_stub "$dir"
   rec=$(inbox_lib "$state" fm_task_inbox_write "$state" t1 "please continue")
+  record_harness "$rec" claude
   doorbell=$(inbox_lib "$state" fm_task_inbox_doorbell_line "$rec")
   log="$dir/send.log"; composer="$dir/composer"; drops="$dir/drops"
   ring() {
@@ -422,6 +431,10 @@ test_ring_native_endpoint_and_unproven_composer() {
     PATH="$dir/fakebin:$PATH" FM_SEND_LOG="$log" FM_FAKE_TMUX_CAPTURE="${1-$capture}" \
       FM_TASK_INBOX_NATIVE_ACK_SECS=1 inbox_lib "$state" fm_task_inbox_ring tmux sess:fm-t1 "$rec" fm-t1
   }
+
+  : > "$log"; rc=0; ring '' || rc=$?
+  [ "$rc" = 1 ] || fail "a record with no harness must skip a proven-empty composer, got rc $rc"
+  [ ! -s "$log" ] || fail "a record with no harness received keystrokes:"$'\n'"$(cat "$log")"
 
   printf 'harness=claude\n' > "$state/t1.meta"
   : > "$log"; rc=0; ring || rc=$?

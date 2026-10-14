@@ -107,6 +107,18 @@ test_concurrent_served_updates_keep_every_home() {
   pass "fm-home-binding: concurrent served-homes additions and a forget never drop an unrelated entry"
 }
 
+test_unrecordable_served_home_is_reported() {
+  local root="$TMP_ROOT/unrecordable/root" h1="$TMP_ROOT/unrecordable/h1" out
+  make_primary_root "$root"
+  mkdir -p "$h1" "$root/state"
+  ln -s "$TMP_ROOT/unrecordable/elsewhere" "$root/state/.code-root-served-homes"
+  out=$(FM_HOME="$h1" resolve "$root" --record-pid "$$")
+  assert_contains "$out" "status=ok" "an explicit home still binds when its served record cannot be written"
+  assert_contains "$out" "message=could not record in $root/state/.code-root-served-homes that code root $root serves $h1" \
+    "a served record that cannot be written must be reported, never dropped silently"
+  pass "fm-home-binding: a served-homes record that cannot be written is reported with the fallback it reopens"
+}
+
 test_linked_worktree_stands_down_and_is_never_noted() {
   local repo="$TMP_ROOT/linked/repo" wt="$TMP_ROOT/linked/wt" h1="$TMP_ROOT/linked/h1" out
   fm_git_worktree "$repo" "$wt" task
@@ -170,6 +182,31 @@ test_session_start_refuses_an_ambiguous_launch() {
   pass "fm-session-start: a launch naming no home on a shared code root refuses before locking"
 }
 
+test_session_start_refuses_a_harness_bound_elsewhere() {
+  local root="$TMP_ROOT/conflict/root" ha="$TMP_ROOT/conflict/ha" hb="$TMP_ROOT/conflict/hb" bin out f
+  bin="$TMP_ROOT/conflict/bin"
+  make_primary_root "$root"
+  mkdir -p "$ha/state" "$hb/state" "$bin"
+  for f in fm-session-start.sh fm-home-binding-lib.sh fm-primary-scope-lib.sh fm-wake-lib.sh fm-classify-lib.sh \
+    fm-timeout-lib.sh fm-session-lock-lib.sh fm-cursor-lib.sh; do
+    cp "$ROOT/bin/$f" "$root/bin/$f"
+  done
+  : > "$hb/state/.wake-queue"
+  ln -sf /bin/bash "$bin/omp"
+  # The omp-named shell stands in for the harness: it records its extensions
+  # bound to home A, then runs session start for home B from inside it.
+  # shellcheck disable=SC2016 # the quoted body expands inside the named shell
+  out=$(env -u FM_ROOT_OVERRIDE -u FM_STATE_OVERRIDE "$bin/omp" -c '
+    FM_HOME="$3" bash "$1" resolve --code-root "$4" --record-pid "$$" >/dev/null
+    FM_HOME="$5" bash "$2" 2>&1; :' _ "$root/bin/fm-home-binding-lib.sh" "$root/bin/fm-session-start.sh" "$ha" "$root" "$hb")
+  assert_contains "$out" "HOME_MISMATCH: session start did not lock or change $hb/state: the harness extensions in pid" \
+    "a harness proven bound to another home must stop session start before it touches the selected home"
+  assert_contains "$out" "act on $ha/state" "the refusal must name the state the harness serves"
+  assert_absent "$hb/state/.lock" "a refused session start must not lock the selected home"
+  assert_absent "$ha/state/.lock" "a refused session start must not lock the harness home either"
+  pass "fm-session-start: a harness whose extensions serve another home leaves the selected home untouched"
+}
+
 test_watcher_down_banner() {
   local home="$TMP_ROOT/down/home" bin out pid now
   bin="$TMP_ROOT/down/bin"
@@ -206,7 +243,9 @@ test_watcher_down_banner() {
 test_resolution_order
 test_two_homes_one_code_root
 test_concurrent_served_updates_keep_every_home
+test_unrecordable_served_home_is_reported
 test_linked_worktree_stands_down_and_is_never_noted
 test_report_names_both_state_directories
 test_session_start_refuses_an_ambiguous_launch
+test_session_start_refuses_a_harness_bound_elsewhere
 test_watcher_down_banner

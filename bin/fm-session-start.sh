@@ -112,7 +112,10 @@
 # before locking anything. A locked full start notes an explicit FM_HOME as
 # served from this code root, and the BOOTSTRAP section opens with that lib's
 # comparison of this session's home with the harness process's (one
-# BOOTSTRAP_INFO line, plus HOME_MISMATCH on a disagreement).
+# BOOTSTRAP_INFO line, plus HOME_MISMATCH on a disagreement). When the omp
+# extensions' own record proves they serve another state directory
+# (fm_home_binding_conflict), the parent prints HOME_MISMATCH and exits 0
+# before the lock, so the selected home is never touched.
 #
 # Why lock first: the old documented order (bootstrap, THEN lock) let a
 # SECOND concurrent session run bootstrap's mutating sweeps - converging
@@ -300,6 +303,15 @@ stage() {  # <stage-name>: breadcrumb for the parent's truncation banner
 . "$SCRIPT_DIR/fm-session-lock-lib.sh"
 
 if [ -z "${FM_SESSION_START_STAGE_FILE:-}" ]; then
+  # A harness whose extensions are proven bound to another state directory
+  # (bin/fm-home-binding-lib.sh) gets no lock, sweep, or drain of this one:
+  # nothing in this session would supervise what those steps change.
+  HOME_BINDING_CONFLICT=$(fm_home_binding_conflict "$STATE" "$(fm_harness_ancestry_pid 2>/dev/null || true)" 2>/dev/null || true)
+  if [ -n "$HOME_BINDING_CONFLICT" ]; then
+    printf '=== SESSION START - HOME MISMATCH - %s ===\n' "$FM_HOME"
+    printf 'HOME_MISMATCH: session start did not lock or change %s: %s\n' "$STATE" "$HOME_BINDING_CONFLICT"
+    exit 0
+  fi
   SESSION_START_BUDGET=${FM_SESSION_START_TIMEOUT:-120}
   # A non-positive or non-numeric budget is not a budget (`timeout 0` disables
   # the deadline outright), so an unusable value falls back to the default
@@ -690,8 +702,9 @@ if [ "$READ_ONLY" -eq 0 ]; then
   # Record that this code root serves an explicitly named home, so a later
   # launch from here that names no home is refused as ambiguous rather than
   # handed this code root's own state (bin/fm-home-binding-lib.sh).
+  HOME_BINDING_NOTE_WARNING=
   if [ "$REEMIT" -eq 0 ] && [ -n "$FM_HOME_LAUNCH" ] && [ -z "${FM_ROOT_OVERRIDE:-}" ]; then
-    fm_home_binding_note_served "$FM_ROOT" "$FM_HOME" || true
+    fm_home_binding_note_served_or_warn "$FM_ROOT" "$FM_HOME" || HOME_BINDING_NOTE_WARNING="HOME_MISMATCH: $FM_HOME_BINDING_MESSAGE"
   fi
   # Every network call and the potentially slow inactive-outcome startup scan
   # are launched HERE, detached and bounded, so they run concurrently with the
@@ -740,6 +753,8 @@ else
   )
 fi
 HOME_BINDING_OUT=$(fm_home_binding_report "$FM_HOME" "$STATE" "$REBUILDING_SESSION_PID" 2>/dev/null || true)
+[ -z "${HOME_BINDING_NOTE_WARNING:-}" ] || HOME_BINDING_OUT=$(printf '%s\n%s' "$HOME_BINDING_OUT" "$HOME_BINDING_NOTE_WARNING")
+HOME_BINDING_OUT=${HOME_BINDING_OUT#$'\n'}
 [ -z "$HOME_BINDING_OUT" ] || BOOT_OUT=$(printf '%s\n%s' "$HOME_BINDING_OUT" "$BOOT_OUT")
 BOOT_OUT=${BOOT_OUT%$'\n'}
 if [ -n "$BOOT_OUT" ]; then

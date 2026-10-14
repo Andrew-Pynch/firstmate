@@ -8,11 +8,13 @@ import { spawnSync } from "node:child_process";
 import { firstmateShellInvocation } from "./fm-operational-input.ts";
 
 export type FirstmateHomeBinding =
-  | { status: "ok"; home: string; source: "env" | "override" | "session" | "code-root" }
+  // warning: a bound home whose ambiguity protection could not be recorded.
+  | { status: "ok"; home: string; source: "env" | "override" | "session" | "code-root"; warning: string }
   | { status: "ineligible" | "refused"; message: string };
 
 // The session custom entry that carries the home a session was launched for.
-// It is written only from an explicit FM_HOME and read back on resume, when a
+// It is written from an explicit FM_HOME (and carried into a new session the
+// process opens) and read back on resume, when a
 // restore (Herdr's resume_agents_on_restore, a hand-run `omp --resume`) has
 // rerun the harness with its working directory but none of its environment.
 export const FIRSTMATE_HOME_ENTRY = "firstmate-home";
@@ -90,8 +92,10 @@ export function bindFirstmateHome(
   const home = fields.get("home") ?? "";
   const source = fields.get("source");
   if (status === "ok" && home && (source === "env" || source === "override" || source === "session" || source === "code-root")) {
-    if (source === "session") process.env.FM_HOME = home;
-    const binding: FirstmateHomeBinding = { status, home, source };
+    // An explicit or recorded home is exported in its resolved absolute form,
+    // so a later `cd` in the agent's shell cannot re-anchor a relative one.
+    if (source === "session" || source === "env") process.env.FM_HOME = home;
+    const binding: FirstmateHomeBinding = { status, home, source, warning: fields.get("message") ?? "" };
     processBindings.set(codeRoot, binding);
     return binding;
   }

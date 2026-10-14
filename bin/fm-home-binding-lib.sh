@@ -57,7 +57,12 @@
 # A HOME_MISMATCH line names both state directories. The launch environment is
 # read from /proc/<pid>/environ (only FM_HOME and FM_STATE_OVERRIDE are
 # extracted; no other value is ever printed) and reads `unreadable` where /proc
-# is unavailable. No harness pid prints nothing.
+# is unavailable. No harness pid prints nothing. fm_home_binding_conflict is
+# the stricter pre-lock subset: it prints a reason only when <pid>'s own record
+# proves its extensions serve another state directory, and bin/fm-session-start.sh
+# then stops before locking. A served-homes entry that cannot be written sets
+# FM_HOME_BINDING_MESSAGE (fm_home_binding_note_served_or_warn) for the caller
+# to surface; `resolve --record-pid` prints it as message= with status=ok.
 #
 # CLI (exit 0 ok, 3 ineligible, 4 refused, 2 usage):
 #   fm-home-binding-lib.sh resolve [--code-root DIR] [--recorded HOME]
@@ -170,6 +175,16 @@ fm_home_binding_note_served() {  # <code-root> <home>
   fm_home_binding_served_edit add "$root" "$home"
 }
 
+# Note <home> as served and, when that record cannot be written, set
+# FM_HOME_BINDING_MESSAGE to the warning every caller must surface: without the
+# entry, a later launch from <code-root> naming no home would bind the code
+# root's own state again.
+fm_home_binding_note_served_or_warn() {  # <code-root> <home>
+  fm_home_binding_note_served "$1" "$2" && return 0
+  FM_HOME_BINDING_MESSAGE="could not record in $(fm_home_binding_served_file "$1") that code root $1 serves $2, so a later launch from $1 that names no home would bind $1/state; make $1/state writable and restart the session"
+  return 1
+}
+
 fm_home_binding_set() {  # <status> <home> <source> <message>
   FM_HOME_BINDING_STATUS=$1
   FM_HOME_BINDING_HOME=$2
@@ -261,22 +276,50 @@ fm_home_binding_launch_env() {  # <pid> <name>
   printf '%s\n' "${value:-unset}"
 }
 
+# Read <pid>'s per-process record into FM_HOME_BINDING_EXT_STATUS, _STATE,
+# _SOURCE, and _MESSAGE (all empty when there is no record this exact process
+# wrote and this user owns).
+fm_home_binding_read_record() {  # <pid>
+  local record identity
+  FM_HOME_BINDING_EXT_STATUS=
+  FM_HOME_BINDING_EXT_STATE=
+  FM_HOME_BINDING_EXT_SOURCE=
+  FM_HOME_BINDING_EXT_MESSAGE=
+  case "$1" in ''|*[!0-9]*) return 1 ;; esac
+  record="$(fm_home_binding_runtime_dir)/$1"
+  [ -f "$record" ] && [ ! -L "$record" ] && [ -O "$record" ] || return 1
+  identity=$(fm_home_binding_identity "$1") || return 1
+  [ "$(fm_home_binding_record_field "$record" identity)" = "$identity" ] || return 1
+  FM_HOME_BINDING_EXT_STATUS=$(fm_home_binding_record_field "$record" status)
+  FM_HOME_BINDING_EXT_STATE=$(fm_home_binding_record_field "$record" state)
+  FM_HOME_BINDING_EXT_SOURCE=$(fm_home_binding_record_field "$record" source)
+  FM_HOME_BINDING_EXT_MESSAGE=$(fm_home_binding_record_field "$record" message)
+}
+
+# Print why session start must leave <state> untouched, or nothing: the
+# harness extensions in <pid> are proven (by that process's own record) to
+# serve a different state directory, so locking, reconciling, or draining
+# <state> from this session would act on a home nothing here supervises.
+fm_home_binding_conflict() {  # <state> <harness-pid>
+  fm_home_binding_read_record "$2" || return 0
+  [ "$FM_HOME_BINDING_EXT_STATUS" = ok ] || return 0
+  [ "$(fm_home_binding_canonical "$FM_HOME_BINDING_EXT_STATE")" != "$(fm_home_binding_canonical "$1")" ] || return 0
+  printf 'the harness extensions in pid %s act on %s, not %s; rerun bin/fm-session-start.sh with the FM_HOME the harness serves, or relaunch the harness with the intended FM_HOME (omp: FM_HOME=<home> omp --resume=<session>)\n' \
+    "$2" "$FM_HOME_BINDING_EXT_STATE" "$1"
+}
+
 fm_home_binding_report() {  # <shell-home> <shell-state> <harness-pid>
-  local home=$1 state=$2 pid=$3 record env_home env_state ext_status ext_state ext_source ext_message
-  local identity canon_state remedy ext_desc
+  local home=$1 state=$2 pid=$3 env_home env_state ext_status ext_state ext_source ext_message
+  local canon_state remedy ext_desc
   case "$pid" in ''|*[!0-9]*) return 0 ;; esac
   canon_state=$(fm_home_binding_canonical "$state")
   env_home=$(fm_home_binding_launch_env "$pid" FM_HOME) || env_home=unreadable
   env_state=$(fm_home_binding_launch_env "$pid" FM_STATE_OVERRIDE) || env_state=unreadable
-  record="$(fm_home_binding_runtime_dir)/$pid"
-  ext_status=
-  if [ -f "$record" ] && [ ! -L "$record" ] && [ -O "$record" ] && identity=$(fm_home_binding_identity "$pid") \
-    && [ "$(fm_home_binding_record_field "$record" identity)" = "$identity" ]; then
-    ext_status=$(fm_home_binding_record_field "$record" status)
-    ext_state=$(fm_home_binding_record_field "$record" state)
-    ext_source=$(fm_home_binding_record_field "$record" source)
-    ext_message=$(fm_home_binding_record_field "$record" message)
-  fi
+  fm_home_binding_read_record "$pid" || true
+  ext_status=$FM_HOME_BINDING_EXT_STATUS
+  ext_state=$FM_HOME_BINDING_EXT_STATE
+  ext_source=$FM_HOME_BINDING_EXT_SOURCE
+  ext_message=$FM_HOME_BINDING_EXT_MESSAGE
   case "$ext_status" in
     ok) ext_desc="resolved $ext_state (source=$ext_source)" ;;
     refused) ext_desc="refused to bind a home" ;;
@@ -346,10 +389,8 @@ fm_home_binding_main() {
       [ "$#" -eq 0 ] || fm_home_binding_usage
       fm_home_binding_resolve "$root" "$recorded" "$primary_only"
       if [ -n "$record_pid" ]; then
+        [ "$FM_HOME_BINDING_SOURCE" != env ] || fm_home_binding_note_served_or_warn "$root" "$FM_HOME_BINDING_HOME"
         fm_home_binding_record "$record_pid" || true
-        if [ "$FM_HOME_BINDING_SOURCE" = env ]; then
-          fm_home_binding_note_served "$root" "$FM_HOME_BINDING_HOME" || true
-        fi
       fi
       printf 'status=%s\nhome=%s\nsource=%s\nmessage=%s\n' "$FM_HOME_BINDING_STATUS" \
         "$FM_HOME_BINDING_HOME" "$FM_HOME_BINDING_SOURCE" "$FM_HOME_BINDING_MESSAGE"

@@ -1301,11 +1301,21 @@ await handlers.get("session_switch")({ type: "session_switch", reason: "new" }, 
 if (JSON.stringify(appended) !== JSON.stringify([{ type: "firstmate-home", data: { home: process.env.HOME_B } }])) {
   throw new Error(`a new session after an environment-less resume did not record the recovered home: ${JSON.stringify(appended)}`);
 }
-// A resumed session that already names a home keeps its own record.
-await handlers.get("session_switch")({ type: "session_switch", reason: "resume" }, { sessionManager: { getEntries: () => [
-  { type: "custom", customType: "firstmate-home", data: { home: process.env.HOME_A } },
-] } });
+// /resume of a conversation recorded for home A while this process serves B:
+// A's record is kept, and every turn says nothing watches A instead of B's
+// supervision silently standing in for it.
+const notices = [];
+await handlers.get("session_switch")({ type: "session_switch", reason: "resume" }, {
+  sessionManager: { getEntries: () => [{ type: "custom", customType: "firstmate-home", data: { home: process.env.HOME_A } }] },
+  ui: { notify(m, level) { notices.push({ m, level }); } },
+});
 if (appended.length !== 1) throw new Error(`a recovered home overwrote another session's own record: ${JSON.stringify(appended)}`);
+if (notices.length !== 1 || notices[0].level !== "warning" || !notices[0].m.includes(process.env.HOME_A)) throw new Error(`the cross-home switch was not surfaced: ${JSON.stringify(notices)}`);
+const banner = await handlers.get("before_agent_start")({ type: "before_agent_start", prompt: "hi" }, {});
+const bannerText = banner?.message?.content ?? "";
+if (!bannerText.includes("WATCHER DOWN") || !bannerText.includes(`belongs to Firstmate home ${process.env.HOME_A}`) || !bannerText.includes(`serves ${process.env.HOME_B}`)) {
+  throw new Error(`the next turn did not name the cross-home conversation: ${JSON.stringify(banner)}`);
+}
 await handlers.get("session_shutdown")({}, {});
 process.exit(0);
 EOF
@@ -1339,8 +1349,9 @@ EOF
   status=$?
   expect_code 0 "$status" "omp watch extension ambiguous refusal: $out"
   [ -z "$out" ] || fail "omp watch extension refusal test printed output: $out"
-  # An explicit launch records its home into the session for the next resume.
-  out=$(env -u FM_ROOT_OVERRIDE -u FM_STATE_OVERRIDE -u FM_CONFIG_OVERRIDE FM_HOME="$home_a" \
+  # An explicit launch, here relative to the launch directory, records its
+  # absolute home into the session and exports that absolute form.
+  out=$(cd "$base" && env -u FM_ROOT_OVERRIDE -u FM_STATE_OVERRIDE -u FM_CONFIG_OVERRIDE FM_HOME=home-a HOME_A="$home_a" \
     FM_HOME_BINDING_RUNTIME_DIR="$base/runtime" FM_ARM_LOG="$base/arm-a.log" \
     EXT="$repo/.omp/extensions/fm-primary-omp-watch.ts" node --input-type=module 2>&1 <<'EOF'
 import { pathToFileURL } from "node:url";
@@ -1349,7 +1360,8 @@ const pi = { on(e, h) { handlers.set(e, h); }, registerCommand() {}, registerToo
 const mod = await import(pathToFileURL(process.env.EXT).href);
 mod.default(pi);
 await handlers.get("session_start")({ type: "session_start" }, { sessionManager: { getSessionId: () => "s-a", getEntries: () => [] } });
-if (JSON.stringify(appended) !== JSON.stringify([{ type: "firstmate-home", data: { home: process.env.FM_HOME } }])) {
+if (process.env.FM_HOME !== process.env.HOME_A) throw new Error(`a relative launch home was not exported in absolute form: ${process.env.FM_HOME}`);
+if (JSON.stringify(appended) !== JSON.stringify([{ type: "firstmate-home", data: { home: process.env.HOME_A } }])) {
   throw new Error(`the explicit launch home was not recorded once: ${JSON.stringify(appended)}`);
 }
 await handlers.get("session_shutdown")({}, {});

@@ -1247,6 +1247,8 @@ export default function (pi: ExtensionAPI) {
     let text = "";
     if (binding.status === "refused") {
       text = `WATCHER DOWN - this omp process serves no Firstmate home, so no watcher runs for it: ${binding.message}`;
+    } else if (sessionHomeConflict) {
+      text = `WATCHER DOWN - ${sessionHomeConflict}`;
     } else {
       const invocation = firstmateShellInvocation(`${fmRoot}/bin/fm-watcher-down.sh`, []);
       const result = await runCommandAsync(invocation.command, invocation.args, {
@@ -1285,15 +1287,31 @@ export default function (pi: ExtensionAPI) {
     consumeWake(generation, message.content);
   });
 
-  // Record the bound home in the session this process now serves, so the next
-  // environment-less resume of THAT session binds it too: an explicit launch
-  // home always wins, and a home recovered from a record is carried into a
-  // new session (/new, /fork) that has none of its own.
-  function recordSessionHome(sessionManager?: { getEntries?: () => unknown[] }): void {
+  // Reconcile the session this process now serves with the home it is bound
+  // to. The bound home is recorded in it, so the next environment-less resume
+  // of THAT session binds it too: an explicit launch home always wins, and a
+  // home recovered from a record is carried into a new session (/new, /fork)
+  // that has none of its own. A session that already records ANOTHER home
+  // under a recovered binding is a conversation for a home this process does
+  // not serve: one process serves one home, so that is surfaced on every turn
+  // instead of silently supervising the wrong state.
+  let sessionHomeConflict = "";
+  function reconcileSessionHome(
+    sessionManager: { getEntries?: () => unknown[] } | undefined,
+    notify: ((message: string, level: string) => void) | undefined,
+  ): void {
+    sessionHomeConflict = "";
     const binding = homeBinding;
-    if (binding?.status !== "ok" || (binding.source !== "env" && binding.source !== "session")) return;
+    if (binding?.status !== "ok") return;
+    if (binding.warning) notify?.(`watcher: ${binding.warning}`, "warning");
+    if (binding.source !== "env" && binding.source !== "session") return;
     const recorded = recordedFirstmateHome(sessionManager);
-    if (recorded === binding.home || (binding.source === "session" && recorded)) return;
+    if (recorded === binding.home) return;
+    if (binding.source === "session" && recorded) {
+      sessionHomeConflict = `this conversation belongs to Firstmate home ${recorded}, but this omp process serves ${binding.home}, so nothing watches ${recorded}; relaunch with FM_HOME=${recorded} omp --resume=<this session>`;
+      notify?.(`watcher: ${sessionHomeConflict}`, "warning");
+      return;
+    }
     try {
       pi.appendEntry?.(FIRSTMATE_HOME_ENTRY, { home: binding.home });
     } catch {
@@ -1306,7 +1324,7 @@ export default function (pi: ExtensionAPI) {
     if (generation.stopping) generation = createGeneration();
     activateGeneration(generation);
     const binding = bindHome(ctx?.sessionManager);
-    recordSessionHome(ctx?.sessionManager);
+    reconcileSessionHome(ctx?.sessionManager, ctx?.ui?.notify?.bind(ctx.ui));
     if (binding.status === "refused") ctx?.ui?.notify?.(`watcher: not armed - ${binding.message}`, "warning");
     markLoaded();
     if (lockOwnership() !== "owned") return;
@@ -1315,7 +1333,7 @@ export default function (pi: ExtensionAPI) {
   // omp 18.2.10+ keeps the process across /new, /resume and /fork and emits
   // session_switch instead of session_start, so the record follows it there.
   pi.on?.("session_switch", (_event, ctx) => {
-    if (!childSession) recordSessionHome(ctx?.sessionManager);
+    if (!childSession) reconcileSessionHome(ctx?.sessionManager, ctx?.ui?.notify?.bind(ctx.ui));
   });
   pi.on?.("session_shutdown", async () => {
     // A child session's end leaves the primary serving; it holds no generation.

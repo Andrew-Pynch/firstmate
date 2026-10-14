@@ -465,6 +465,16 @@ test_ring_native_endpoint_and_unproven_composer() {
   [ "$rc" = 1 ] || fail "a lane recording the native route must never be typed into, got rc $rc"
   [ ! -s "$log" ] || fail "a native-route lane received keystrokes"
 
+  # A stale endpoint naming a LIVE process never diverts a typed-route lane.
+  sleep 30 &
+  sleeper=$!
+  printf '%s' "$sleeper" > "$inbox/.native-doorbell"
+  printf 'harness=omp\ndoorbell=typed\n' > "$state/t1.meta"
+  : > "$log"; rc=0; ring || rc=$?
+  kill "$sleeper" 2>/dev/null; wait "$sleeper" 2>/dev/null
+  [ "$rc" = 0 ] || fail "a typed-route lane with a stale live endpoint must still be rung, got rc $rc"
+  grep -qF 'Firstmate instruction waiting' "$log" || fail "a stale live endpoint diverted a typed-route lane's doorbell"
+
   # A leading-zero wait is decimal, not an arithmetic error after publishing.
   [ "$(FM_TASK_INBOX_NATIVE_ACK_SECS=08 inbox_lib "$state" fm_task_inbox_native_ack_secs)" = 8 ] \
     || fail "a leading-zero acknowledgement wait must read as decimal"

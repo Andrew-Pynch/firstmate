@@ -377,10 +377,10 @@ fm_task_inbox_doorbell_line() {  # <record-path>
     "$quoted"
 }
 
-# Ring the doorbell, best-effort: one endpoint-liveness pre-check, then the
-# native endpoint when one is live (see the header), otherwise, on a lane whose
-# harness serves no native endpoint, one advisory composer pre-check and the
-# backend's submit machinery with a minimal retry budget, verdict discarded.
+# Ring the doorbell, best-effort: one endpoint-liveness pre-check, then on a
+# native-capable lane only the native endpoint (see the header), otherwise one
+# advisory composer pre-check and the backend's submit machinery with a
+# minimal retry budget, verdict discarded.
 # Returns 0 rang, 1 skipped to protect the composer (it PROVENLY holds pending
 # text other than our own doorbell, or the lane is native-capable but its
 # endpoint is not live; the watcher re-rings later), 2 the backend send or the
@@ -410,11 +410,13 @@ fm_task_inbox_ring() {  # <backend> <target> <record-path> [expected-label]
   fi
   dir=${rec%/*}
   dir=${dir%/handled}
-  if fm_task_inbox_native_live "$dir"; then
+  # The recorded route decides first: an endpoint file on a typed-route lane
+  # (a stale one from an earlier native incarnation) is never consulted.
+  if fm_task_inbox_native_capable "$dir"; then
+    fm_task_inbox_native_live "$dir" || return 1
     fm_task_inbox_native_ring "$dir" "$line"
     return
   fi
-  ! fm_task_inbox_native_capable "$dir" || return 1
   cstate=$(fm_backend_composer_state "$backend" "$target" "$label" 2>/dev/null) || cstate=unknown
   case "$cstate" in
     pending)

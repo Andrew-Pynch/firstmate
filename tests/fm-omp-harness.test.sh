@@ -411,6 +411,7 @@ test_native_doorbell_spares_the_composer() {
   expect_code 0 $? "omp spawn should succeed: $out"
   state="$HOME_DIR/state"
   assert_grep "harness=omp" "$state/$id.meta" "the lane must record its omp harness"
+  assert_grep "doorbell=native" "$state/$id.meta" "a templated omp launch loads the extension, so it must record the native doorbell route"
   inbox="$state/$id.inbox"
   fakebin="$CASE_DIR/panebin"
   mkdir -p "$fakebin"
@@ -499,6 +500,32 @@ EOF
   draft_intact "after shutdown"
   [ "$(wc -l < "$sent" | tr -d ' ')" = "$delivered" ] || fail "a withdrawn endpoint must not deliver"
   pass "omp native doorbell: rings reach omp as their own message, and an omp lane never receives keystrokes"
+}
+
+# A raw omp launch command loads no per-task extension, so no native endpoint
+# will ever answer it: the spawn records the typed route and the ring keeps
+# typing into that lane exactly as it does for any harness without one.
+test_raw_omp_launch_keeps_the_typed_doorbell() {
+  local rec id=omp-raw-q8 out state fakebin composer log rc
+  rec=$(make_spawn_case rawdoor omp "$id")
+  read_case_record "$rec"
+  out=$(run_scout_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" 'omp --fm-raw-flag')
+  expect_code 0 $? "a raw omp spawn should succeed: $out"
+  state="$HOME_DIR/state"
+  assert_grep "doorbell=typed" "$state/$id.meta" "a raw omp launch must record the typed doorbell route"
+  fakebin="$CASE_DIR/panebin"
+  mkdir -p "$fakebin"
+  make_omp_pane_stub "$fakebin" "fm-$id"
+  composer="$CASE_DIR/composer"; log="$CASE_DIR/send.log"
+  : > "$composer"; : > "$log"
+  rec=$(FM_STATE_OVERRIDE="$state" bash -c '. "$1"; fm_task_inbox_write "$2" "$3" "please rebase"' \
+    _ "$ROOT/bin/fm-task-inbox-lib.sh" "$state" "$id") || fail "could not enqueue the steer"
+  rc=0
+  PATH="$fakebin:$PATH" FM_FAKE_COMPOSER="$composer" FM_SEND_LOG="$log" \
+    bash -c '. "$1"; fm_task_inbox_ring tmux "$2" "$3" "$4"' _ "$ROOT/bin/fm-task-inbox-lib.sh" "sess:fm-$id" "$rec" "fm-$id" || rc=$?
+  [ "$rc" = 0 ] || fail "a raw omp lane must still be rung, got rc $rc"
+  grep -qF 'Firstmate instruction waiting' "$log" || fail "a raw omp lane did not receive the typed doorbell"
+  pass "omp raw launch: no extension, so the lane records the typed doorbell route and stays steerable"
 }
 
 # --- 4. Control, composer, supervision model -----------------------------------
@@ -1022,6 +1049,7 @@ test_secondmate_launch_relies_on_discovery
 test_secondmate_config_pinned_model_is_validated
 test_busy_extension_lifecycle
 test_native_doorbell_spares_the_composer
+test_raw_omp_launch_keeps_the_typed_doorbell
 test_control_composer_and_model_tables
 test_ownership_proof_is_omp_keyed
 test_turnend_guard_extension_compels_one_continuation

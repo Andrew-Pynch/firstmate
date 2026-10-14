@@ -940,6 +940,11 @@ ok - live steering-inbox doorbell guard: 1 harness(es) honored the doorbell cont
 
 The doorbell arrived as its own user message, the worker acted and acknowledged with the `mv`, and the composer still held the unsent draft afterwards.
 `pi.sendUserMessage` with no `deliverAs` started a turn on an idle worker and queued a steer on a streaming one; both were observed in a manual run on the same version.
+The `attribution: "agent"` option is what keeps a doorbell queued behind a running turn out of the composer, and that was checked by hand on the same version, not by the guard.
+With the worker inside a long foreground tool call and a draft in its composer, a second steer was rung and Escape pressed before the turn consumed it.
+With the option removed, Escape put the doorbell line back into the composer above the draft (`❯ : Firstmate instruction waiting: ...`, then the draft on the next row).
+With the option, the composer read only the draft afterwards and the record stayed unhandled for the ladder's next ring.
+The guard does not automate this step, because whether the model holds the turn inside a foreground tool call long enough for the doorbell to queue varies from run to run; `tests/fm-omp-harness.test.sh` pins the delivery options.
 
 ## Waiting-worker command ceilings
 

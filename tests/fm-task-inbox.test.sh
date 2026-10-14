@@ -454,6 +454,20 @@ test_ring_native_endpoint_and_unproven_composer() {
   : > "$log"; rc=0; ring || rc=$?
   [ "$rc" = 1 ] || fail "an endpoint naming a dead pid is not live, so the omp lane must skip, got rc $rc"
   [ ! -s "$log" ] || fail "a dead endpoint led to typing into an unproven omp composer"
+
+  # The recorded route outranks the harness: a raw omp launch records typed.
+  printf 'harness=omp\ndoorbell=typed\n' > "$state/t1.meta"
+  : > "$log"; rc=0; ring || rc=$?
+  [ "$rc" = 0 ] || fail "a lane recording the typed route must still be rung, got rc $rc"
+  grep -qF 'Firstmate instruction waiting' "$log" || fail "a typed-route omp lane did not receive the doorbell"
+  printf 'harness=claude\ndoorbell=native\n' > "$state/t1.meta"
+  : > "$log"; rc=0; ring || rc=$?
+  [ "$rc" = 1 ] || fail "a lane recording the native route must never be typed into, got rc $rc"
+  [ ! -s "$log" ] || fail "a native-route lane received keystrokes"
+
+  # A leading-zero wait is decimal, not an arithmetic error after publishing.
+  [ "$(FM_TASK_INBOX_NATIVE_ACK_SECS=08 inbox_lib "$state" fm_task_inbox_native_ack_secs)" = 8 ] \
+    || fail "a leading-zero acknowledgement wait must read as decimal"
   pass "inbox: a native-capable lane never receives keystrokes, and a silent endpoint fails the ring instead of typing"
 }
 

@@ -1,0 +1,3 @@
+# omp (omp/18.9.1): idle composer never classified empty before the draft
+ok - omp (omp/18.9.1): the native doorbell reached a real worker, which acted and acked, and the draft stayed in the composer
+ok - live steering-inbox doorbell guard: 1 harness(es) honored the doorbell contract

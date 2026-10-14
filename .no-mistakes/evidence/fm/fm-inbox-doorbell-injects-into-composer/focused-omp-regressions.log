@@ -1,0 +1,3 @@
+ok - fm-spawn: omp below 18.6.3 is refused before record or launch
+ok - omp native doorbell: rings reach omp as their own message, and an omp lane never receives keystrokes
+ok - omp raw launch: refused before launch, so no omp lane is ever steered by typing

@@ -1,18 +1,20 @@
 #!/usr/bin/env bash
 # Opt-in credentialed omp (Oh My Pi) guard for home binding
-# (docs/configuration.md "Home binding") in an isolated lab: a plain clone of
-# this working tree is the shared code root, and two scratch homes sit beside
-# it. It submits three short prompts through `omp -p` with the captain's
-# existing login and proves, against the installed omp, what
-# tests/fm-omp-harness.test.sh can only pin over a fake API:
+# (docs/configuration.md "Home binding") in the shape Main runs on Ron: the
+# home is a plain checkout of this repository, and the code root omp starts in
+# is a separate LINKED worktree of that same repository. The home's session
+# lock is left stale, as a reboot leaves it. It submits three short prompts
+# through `omp -p` with the captain's existing login and proves, against the
+# installed omp, what tests/fm-omp-harness.test.sh can only pin over a fake API:
 #   1. a launch with an explicit FM_HOME records it in the session as a
-#      firstmate-home custom entry and notes it served from the code root;
-#   2. a resume of that session with FM_HOME unset (the shape Herdr's
-#      resume_agents_on_restore produces) exports the recorded home into the
-#      agent's own shell and arms fm_watch_arm_omp for that home, never the
-#      code root;
-#   3. a fresh launch from the same code root with no FM_HOME and no recorded
-#      home is refused by fm_watch_arm_omp, naming the code root's state.
+#      firstmate-home custom entry, and its native session start runs for that
+#      home from the linked code root (the primary scope admits it);
+#   2. after the lock goes stale again, a resume of that session with FM_HOME
+#      unset (the shape Herdr's resume_agents_on_restore produces) reclaims
+#      the home's lock, exports the recorded home into the agent's own shell,
+#      and arms fm_watch_arm_omp for that home, never the code root;
+#   3. a fresh launch from the linked code root with no FM_HOME and no
+#      recorded home arms nothing and touches no state.
 # Run it after every omp upgrade: the custom-entry persistence, the
 # session_start shell-environment refresh, and the tool surface are vendor
 # behavior.
@@ -40,15 +42,29 @@ reap_lab() {
 }
 trap reap_lab EXIT
 
-git clone -q "$ROOT" "$CODE" || fail "could not clone the repository into the lab"
+git clone -q "$ROOT" "$HOME_MAIN" || fail "could not clone the repository into the lab home"
+git -C "$HOME_MAIN" worktree add -q --detach "$CODE" || fail "could not add the linked code root"
 while IFS= read -r path; do
   [ -n "$path" ] && [ -f "$ROOT/$path" ] || continue
-  mkdir -p "$CODE/$(dirname "$path")"
-  cp "$ROOT/$path" "$CODE/$path"
+  for dest in "$HOME_MAIN" "$CODE"; do
+    mkdir -p "$dest/$(dirname "$path")"
+    cp "$ROOT/$path" "$dest/$path"
+  done
 done <<EOF
 $(git -C "$ROOT" ls-files --modified --others --exclude-standard)
 EOF
 mkdir -p "$HOME_MAIN/state" "$HOME_MAIN/data" "$SESSIONS"
+[ "$(git -C "$CODE" rev-parse --git-dir)" != "$(git -C "$CODE" rev-parse --git-common-dir)" ] \
+  || fail "fixture: the code root is not a linked worktree"
+
+stale_lock() {  # write a dead session pid into the home's lock, as a reboot leaves it
+  local dead
+  sleep 0 &
+  dead=$!
+  wait "$dead" 2>/dev/null || true
+  printf '%s\n' "$dead" > "$HOME_MAIN/state/.lock"
+  printf '%s\n' "$dead"
+}
 
 run_omp() {  # <output-file> <omp args...>: from the code root, with the lab's runtime record dir
   local out=$1
@@ -58,18 +74,21 @@ run_omp() {  # <output-file> <omp args...>: from the code root, with the lab's r
     "$@" > "$out" 2> "$out.err")
 }
 
-# 1. Explicit launch records the home.
+# 1. Explicit launch from the linked code root records the home.
+STALE=$(stale_lock)
 run_omp "$LAB/run1.out" FM_HOME="$HOME_MAIN" omp -p --model "$MODEL" --session-dir "$SESSIONS" \
   "Reply with the single word ok." || fail "omp $OMP_VERSION: the explicit launch failed: $(tail -3 "$LAB/run1.out.err")"
 SESSION=$(find "$SESSIONS" -maxdepth 1 -name '*.jsonl' | head -1)
 [ -n "$SESSION" ] || fail "omp $OMP_VERSION: the explicit launch wrote no session file"
 recorded=$(jq -r 'select(.type == "custom" and .customType == "firstmate-home") | .data.home' "$SESSION" | tail -1)
 [ "$recorded" = "$HOME_MAIN" ] || fail "omp $OMP_VERSION: the session recorded home '$recorded', not $HOME_MAIN"
-grep -qxF "$HOME_MAIN" "$CODE/state/.code-root-served-homes" 2>/dev/null \
-  || fail "omp $OMP_VERSION: the explicit launch did not note its home as served from the code root"
-pass "omp $OMP_VERSION: an explicit FM_HOME launch records its home in the session and the code root"
+[ -f "$HOME_MAIN/state/.session-start-complete" ] && [ "$(sed -n 1p "$HOME_MAIN/state/.lock")" != "$STALE" ] \
+  || fail "omp $OMP_VERSION: the native session start never took the home's stale lock from the linked code root"
+pass "omp $OMP_VERSION: an explicit FM_HOME launch from a linked code root records its home and takes the home's stale lock"
 
-# 2. Resume with FM_HOME unset binds the recorded home.
+# 2. Lock stale again (the reboot), then resume with FM_HOME unset.
+STALE=$(stale_lock)
+rm -f "$HOME_MAIN/state/.session-start-complete" "$HOME_MAIN/state/.omp-watch-extension-loaded"
 run_omp "$LAB/run2.out" omp -p --model "$MODEL" --session-dir "$SESSIONS" --resume="$SESSION" \
   "Do exactly two things. First run this bash command: echo FM_HOME=\$FM_HOME. Second call the fm_watch_arm_omp tool once. Then reply with the bash output line and the tool's exact text, nothing else." \
   || fail "omp $OMP_VERSION: the resume failed: $(tail -3 "$LAB/run2.out.err")"
@@ -77,18 +96,19 @@ assert_contains "$(cat "$LAB/run2.out")" "FM_HOME=$HOME_MAIN" \
   "omp $OMP_VERSION: the resumed session's shell did not inherit the recorded home"
 assert_contains "$(cat "$LAB/run2.out")" "watcher: started omp extension arm child" \
   "omp $OMP_VERSION: the resumed session did not arm the watcher"
-[ "$(sed -n 2p "$HOME_MAIN/state/.omp-watch-extension-loaded" 2>/dev/null)" = "$(sed -n 1p "$HOME_MAIN/state/.lock" 2>/dev/null)" ] \
+lock_pid=$(sed -n 1p "$HOME_MAIN/state/.lock" 2>/dev/null)
+[ -n "$lock_pid" ] && [ "$lock_pid" != "$STALE" ] || fail "omp $OMP_VERSION: the resume never reclaimed the home's stale lock"
+[ "$(sed -n 2p "$HOME_MAIN/state/.omp-watch-extension-loaded" 2>/dev/null)" = "$lock_pid" ] \
   || fail "omp $OMP_VERSION: the watch extension's marker in the recorded home does not name the session holding its lock"
 assert_absent "$CODE/state/.omp-watch-extension-loaded" "omp $OMP_VERSION: the resumed session loaded the watcher against the code root"
 assert_absent "$CODE/state/.lock" "omp $OMP_VERSION: the resumed session locked the code root's state"
-pass "omp $OMP_VERSION: a resume with FM_HOME unset exports the recorded home and arms the watcher for it"
+pass "omp $OMP_VERSION: a resume with FM_HOME unset reclaims the recorded home's stale lock, exports the home, and arms the watcher for it"
 reap_lab
 
-# 3. A fresh launch naming no home on the shared code root is refused.
+# 3. A fresh launch from the linked code root naming no home arms nothing.
 run_omp "$LAB/run3.out" omp -p --model "$MODEL" --session-dir "$LAB/sessions-none" \
   "Call the fm_watch_arm_omp tool once, then reply with its exact text and nothing else." \
   || fail "omp $OMP_VERSION: the unbound launch failed: $(tail -3 "$LAB/run3.out.err")"
-assert_contains "$(cat "$LAB/run3.out")" "watcher: not armed" "omp $OMP_VERSION: an unbound launch on a shared code root armed"
-assert_contains "$(cat "$LAB/run3.out")" "$CODE/state" "omp $OMP_VERSION: the refusal did not name the code root's state"
+assert_contains "$(cat "$LAB/run3.out")" "watcher: not armed" "omp $OMP_VERSION: an unbound launch from the linked code root armed"
 assert_absent "$CODE/state/.lock" "omp $OMP_VERSION: the unbound launch locked the code root's state"
-pass "omp $OMP_VERSION: a launch with no FM_HOME and no recorded home on a shared code root refuses to arm"
+pass "omp $OMP_VERSION: a launch with no FM_HOME and no recorded home from the linked code root arms nothing"

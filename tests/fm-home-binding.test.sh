@@ -137,6 +137,28 @@ test_linked_worktree_stands_down_and_is_never_noted() {
   pass "fm-home-binding: a linked task worktree stands down and never records a served home"
 }
 
+test_linked_code_root_serving_a_primary_home_is_in_scope() {
+  local home="$TMP_ROOT/farm/home" code="$TMP_ROOT/farm/code" scope
+  fm_git_init_commit "$home"
+  : > "$home/AGENTS.md"
+  mkdir -p "$home/bin" "$home/state"
+  git -C "$home" worktree add --quiet -b farm "$code"
+  : > "$code/AGENTS.md"
+  mkdir -p "$code/bin" "$code/state"
+  scope=". \"$ROOT/bin/fm-primary-scope-lib.sh\"; fm_primary_scope_matches \"\$1\" \"\$2\""
+  env -u FM_TASK_ID FM_HOME="$home" bash -c "$scope" _ "$code" "$home/state" \
+    || fail "a linked code root serving an explicitly named primary home must be in primary scope"
+  ! env -u FM_TASK_ID -u FM_HOME bash -c "$scope" _ "$code" "$code/state" \
+    || fail "a linked checkout naming no home must stay exempt"
+  ! env FM_TASK_ID=demo FM_HOME="$home" bash -c "$scope" _ "$code" "$home/state" \
+    || fail "a ship or scout worker must stay exempt even when it names a home"
+  ! env -u FM_TASK_ID FM_HOME="$code" bash -c "$scope" _ "$code" "$code/state" \
+    || fail "a linked checkout naming itself as its home must stay exempt"
+  ! env -u FM_TASK_ID FM_HOME="$TMP_ROOT/farm" bash -c "$scope" _ "$code" "$TMP_ROOT/farm" \
+    || fail "a linked checkout naming a home that is not a primary root must stay exempt"
+  pass "fm-primary-scope: a linked code root serving a separate primary home is guarded; workers and unnamed homes stay exempt"
+}
+
 test_report_names_both_state_directories() {
   local h1="$TMP_ROOT/report/h1" h2="$TMP_ROOT/report/h2" root="$TMP_ROOT/report/root" pid out
   make_primary_root "$root"
@@ -250,6 +272,7 @@ test_two_homes_one_code_root
 test_concurrent_served_updates_keep_every_home
 test_unrecordable_served_home_is_reported
 test_linked_worktree_stands_down_and_is_never_noted
+test_linked_code_root_serving_a_primary_home_is_in_scope
 test_report_names_both_state_directories
 test_session_start_refuses_an_ambiguous_launch
 test_session_start_refuses_a_harness_bound_elsewhere

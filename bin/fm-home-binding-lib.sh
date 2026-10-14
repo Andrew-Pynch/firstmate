@@ -347,6 +347,9 @@ fm_home_binding_report() {  # <shell-home> <shell-state> <harness-pid>
   elif [ "$ext_status" = refused ]; then
     printf 'HOME_MISMATCH: the harness extensions in pid %s refused to act on any home (%s), so nothing watches %s; %s\n' \
       "$pid" "$ext_message" "$state" "$remedy"
+  elif [ "$ext_status" = ineligible ] && [ -z "${FM_TASK_ID:-}" ]; then
+    printf 'HOME_MISMATCH: the harness extensions in pid %s stood down because their code root is a linked checkout and the process names no home (%s), so nothing watches %s; %s\n' \
+      "$pid" "$ext_message" "$state" "$remedy"
   fi
   case "$env_home" in
     unset|unreadable) ;;

@@ -5035,11 +5035,13 @@ EOF
 // Native doorbell endpoint (contract owned by bin/fm-task-inbox-lib.sh): a
 // typed doorbell lands in omp's composer and was sent with whatever a person
 // had half-typed there, so the ring hands its line here instead and omp takes
-// it as a user message of its own, never touching the composer.
+// it as a message of its own, never touching the composer.
 // sendUserMessage with no deliverAs starts a turn when idle and queues a steer
-// while streaming, as a typed Enter did (verified, omp 18.9.1).
+// while streaming, as a typed Enter did. attribution "agent" keeps a queued
+// copy out of the user-authored queue that Escape and Alt+Up restore into the
+// composer next to a draft (verified, omp 18.9.1).
 import { execFile } from "node:child_process";
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 const notifyTurnEnd = $busy_notify_turnend;
 const busyEvent = (state: string, event: string) =>
   new Promise<void>((resolve) => {
@@ -5056,17 +5058,19 @@ const writeAtomic = (path: string, text: string) => {
   renameSync(tmp, path);
 };
 let doorbellTimer: any = null;
-let lastRang = "";
 const answerRing = (pi: any) => {
-  let request = "";
-  try { request = readFileSync(inbox + "/.native-ring", "utf8"); } catch { return; }
-  const cut = request.indexOf("\n");
-  const token = cut > 0 ? request.slice(0, cut) : "";
-  const line = cut > 0 ? request.slice(cut + 1) : "";
-  if (!token || !line || token === lastRang) return;
-  try { pi.sendUserMessage(line); } catch { return; }
-  lastRang = token;
-  try { writeAtomic(inbox + "/.native-rang", token); } catch {}
+  let requests: string[] = [];
+  try { requests = readdirSync(inbox).filter((name: string) => name.startsWith(".native-ring.")); } catch { return; }
+  let line = "";
+  for (const name of requests) {
+    try { line = readFileSync(inbox + "/" + name, "utf8"); } catch {}
+    if (line) break;
+  }
+  if (!line) return;
+  try { pi.sendUserMessage(line, { attribution: "agent" }); } catch { return; }
+  for (const name of requests) {
+    try { rmSync(inbox + "/" + name, { force: true }); } catch {}
+  }
 };
 export default function (pi: any) {
   pi.on("agent_start", () => busyEvent("busy", "agent-start"));
@@ -5077,7 +5081,6 @@ export default function (pi: any) {
   pi.on("turn_end", () => { if (notifyTurnEnd) execFile("touch", ["$TURNEND"]); });
   pi.on("session_start", () => {
     if (doorbellTimer) return;
-    try { lastRang = readFileSync(inbox + "/.native-rang", "utf8"); } catch {}
     try {
       mkdirSync(inbox + "/handled", { recursive: true });
       writeAtomic(endpoint, String(process.pid));

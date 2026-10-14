@@ -404,6 +404,7 @@ SH
 # at all.
 test_native_doorbell_spares_the_composer() {
   local rec id=omp-door-q7 out state inbox fakebin composer log sent host rc i doorbell
+  local rc_a=0 rc_b=0 pid_a pid_b delivered
   rec=$(make_spawn_case doorbell omp "$id")
   read_case_record "$rec"
   out=$(run_scout_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --harness omp)
@@ -464,11 +465,30 @@ EOF
     draft_intact "native ring $i"
     [ "$(wc -l < "$sent" | tr -d ' ')" = "$i" ] || { kill "$host" 2>/dev/null; fail "ring $i should hand omp exactly one message each:"$'\n'"$(cat "$sent")"; }
   done
+  # Two rings at once each wait on their own request; neither may report a
+  # failure the other's delivery caused, and they may share one delivery.
+  ring & pid_a=$!
+  ring & pid_b=$!
+  wait "$pid_a" || rc_a=$?
+  wait "$pid_b" || rc_b=$?
+  if [ "$rc_a" != 0 ] || [ "$rc_b" != 0 ]; then
+    kill "$host" 2>/dev/null
+    fail "concurrent native rings must both report rung, got $rc_a and $rc_b"
+  fi
+  draft_intact "concurrent native rings"
+  delivered=$(wc -l < "$sent" | tr -d ' ')
+  case "$delivered" in
+    3|4) ;;
+    *) kill "$host" 2>/dev/null; fail "concurrent rings should hand omp one or two messages, saw $((delivered - 2))" ;;
+  esac
   out=$(DOORBELL="$doorbell" node -e '
     const lines = require("node:fs").readFileSync(process.argv[1], "utf8").trim().split("\n").map((l) => JSON.parse(l));
     for (const { m, o } of lines) {
       if (m !== process.env.DOORBELL) throw new Error("unexpected message: " + m);
-      if (o !== undefined) throw new Error("the doorbell must use omp default delivery (turn when idle, steer while streaming): " + JSON.stringify(o));
+      // No deliverAs keeps omp default delivery (a turn when idle, a steer while
+      // streaming); agent attribution keeps a queued copy from being restored
+      // into the composer by Escape or Alt+Up.
+      if (JSON.stringify(o) !== JSON.stringify({ attribution: "agent" })) throw new Error("unexpected delivery options: " + JSON.stringify(o));
     }' "$sent" 2>&1) || { kill "$host" 2>/dev/null; fail "native delivery was not the exact doorbell line: $out"; }
 
   touch "$CASE_DIR/stop"
@@ -477,7 +497,7 @@ EOF
   rc=0; ring || rc=$?
   [ "$rc" = 1 ] || fail "after shutdown the omp lane must skip the ring again, got rc $rc"
   draft_intact "after shutdown"
-  [ "$(wc -l < "$sent" | tr -d ' ')" = 2 ] || fail "a withdrawn endpoint must not deliver"
+  [ "$(wc -l < "$sent" | tr -d ' ')" = "$delivered" ] || fail "a withdrawn endpoint must not deliver"
   pass "omp native doorbell: rings reach omp as their own message, and an omp lane never receives keystrokes"
 }
 

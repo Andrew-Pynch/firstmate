@@ -36,9 +36,9 @@
 #   <task>.inbox/.native-doorbell  native doorbell endpoint: "<pid>", written by
 #                              the worker's own harness extension while its
 #                              session can accept a message
-#   <task>.inbox/.native-ring  newest native ring request: "<token>\n<line>"
-#   <task>.inbox/.native-rang  token of the newest request the extension has
-#                              handed to its harness
+#   <task>.inbox/.native-ring.<id>  one pending native ring request whose body
+#                              is the doorbell line; the extension removes it
+#                              once handed to its harness (the acknowledgement)
 #
 # Record format (fm_task_inbox_write / fm_task_inbox_body):
 #   schema=fm-task-inbox.v1
@@ -92,19 +92,24 @@
 # A harness whose per-task extension can submit a user message without
 # touching the composer serves a native endpoint instead: the extension writes
 # .native-doorbell when its session starts and removes it at shutdown, polls
-# .native-ring, hands each new request's line to the harness as its own user
-# message, and writes that request's token to .native-rang. A lane whose
-# recorded harness is in FM_TASK_INBOX_NATIVE_HARNESSES never receives a
+# for .native-ring.<id> requests, hands their line to the harness as one
+# message of its own (several pending requests coalesce into one delivery,
+# since every ring names the whole inbox), and then removes each request it
+# saw. The message must not count as user-authored input, or the harness can
+# restore a queued copy into the composer next to the person's draft. A lane
+# whose recorded harness is in FM_TASK_INBOX_NATIVE_HARNESSES never receives a
 # keystroke from the ring, because a composer check followed by typing still
 # races a person who starts typing in between. While its endpoint names a live
-# process the ring writes a request and waits up to
-# FM_TASK_INBOX_NATIVE_ACK_SECS for its token; a missing token is a failed ring
-# the ladder retries. While its endpoint is not live (spawned before its
-# extension served one, still starting, or its extension failed) the ring is
-# skipped, so an unacknowledged record escalates through the ladder rather than
-# being typed. bin/fm-spawn.sh writes the omp extension that serves this
-# endpoint; `bin/fm-control.sh <id> relaunch` rewrites an older lane's
-# extension.
+# process the ring writes its own request and waits up to
+# FM_TASK_INBOX_NATIVE_ACK_SECS for the extension to remove it; a request
+# still present then is a failed ring the ladder retries, and it stays for the
+# extension to deliver once it recovers. Concurrent rings each wait on their
+# own request, so none can steal another's acknowledgement. While the endpoint
+# is not live (spawned before its extension served one, still starting, or its
+# extension failed) the ring is skipped, so an unacknowledged record escalates
+# through the ladder rather than being typed. bin/fm-spawn.sh writes the omp
+# extension that serves this endpoint; `bin/fm-control.sh <id> relaunch`
+# rewrites an older lane's extension.
 #
 # Inbox names containing bytes outside printable ASCII are unsupported. The
 # doorbell refuses them rather than sending terminal control bytes to a pane.
@@ -456,20 +461,20 @@ fm_task_inbox_native_ack_secs() {
   printf '%s' "$s"
 }
 
-# Publish one native ring request and wait for the extension to acknowledge
-# its token. Returns 0 acknowledged, 2 not written or not acknowledged in time
-# (the request stays, so a recovering extension still delivers it).
+# Publish one native ring request and wait for the extension to remove it.
+# Returns 0 acknowledged, 2 not written or not acknowledged in time (the
+# request stays, so a recovering extension still delivers it). The staging
+# name never matches the request glob, so a half-written request is unseen.
 fm_task_inbox_native_ring() {  # <inbox-dir> <line>
-  local dir=$1 line=$2 token tmp ticks
-  token="$(date +%s).$$.$RANDOM$RANDOM"
-  tmp=$(mktemp "$dir/.native-ring.XXXXXX" 2>/dev/null) || return 2
-  if ! { printf '%s\n%s' "$token" "$line" > "$tmp" && mv -f "$tmp" "$dir/.native-ring"; } 2>/dev/null; then
+  local dir=$1 line=$2 tmp req ticks
+  tmp=$(mktemp "$dir/.native-staging.XXXXXX" 2>/dev/null) || return 2
+  req="$dir/.native-ring.${tmp##*/.native-staging.}"
+  if ! { printf '%s' "$line" > "$tmp" && mv -f "$tmp" "$req"; } 2>/dev/null; then
     rm -f "$tmp" 2>/dev/null
     return 2
   fi
   ticks=$(( $(fm_task_inbox_native_ack_secs) * 10 ))
-  while :; do
-    [ "$(cat "$dir/.native-rang" 2>/dev/null)" != "$token" ] || return 0
+  while [ -e "$req" ]; do
     [ "$ticks" -gt 0 ] || return 2
     ticks=$((ticks - 1))
     sleep 0.1

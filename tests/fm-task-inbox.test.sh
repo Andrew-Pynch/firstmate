@@ -446,8 +446,10 @@ test_ring_native_endpoint_and_unproven_composer() {
   kill "$sleeper" 2>/dev/null; wait "$sleeper" 2>/dev/null
   [ "$rc" = 2 ] || fail "an unacknowledged native ring must report a failed ring, got rc $rc"
   [ ! -s "$log" ] || fail "an unacknowledged native ring fell back to typing:"$'\n'"$(cat "$log")"
-  [ "$(sed -n 2p "$inbox/.native-ring")" = "$doorbell" ] \
-    || fail "the native request must carry the doorbell line:"$'\n'"$(cat "$inbox/.native-ring")"
+  set -- "$inbox"/.native-ring.*
+  [ "$#" = 1 ] || fail "one ring must leave exactly one request: $*"
+  [ -f "$1" ] || fail "an unacknowledged request must stay for a recovering extension: $*"
+  [ "$(cat "$1")" = "$doorbell" ] || fail "the native request must carry the doorbell line:"$'\n'"$(cat "$1")"
 
   : > "$log"; rc=0; ring || rc=$?
   [ "$rc" = 1 ] || fail "an endpoint naming a dead pid is not live, so the omp lane must skip, got rc $rc"

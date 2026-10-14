@@ -13,11 +13,12 @@
 # here rather than improvised per harness in agent prose.
 #
 # This file owns three capability tables plus their pure artifact-path tables,
-# and ONE named exception to that purity - fm_control_endpoint_absence_verdict,
-# the single owner of the per-backend endpoint-absence proof, which does run
-# backend reads. Everything else has no side effects, runs no backend command,
-# and reads no state, so sourcing this file is still free and the tables can be
-# read by a test as a pure contract:
+# and two named exceptions to that purity: fm_control_endpoint_absence_verdict
+# owns the per-backend endpoint-absence proof and fm_control_omp_version_check
+# owns the OMP compatibility floor. Those functions run backend reads or the
+# selected executable respectively. Everything else has no side effects, runs
+# no backend command, and reads no state, so sourcing this file is still free
+# and the tables can be read by a test as a pure contract:
 #
 #   1. Verb allowlist. There is no arbitrary-text and no generic raw-key entry
 #      point on the control plane; a caller either names an allowlisted verb or
@@ -43,6 +44,48 @@
 # its durable instruction. The relaunch-time exception is
 # fm_control_relaunch_resume_flag below: a reference the endpoint's runtime
 # bound as its status authority is returned to a replacement with that adapter.
+
+FM_CONTROL_OMP_MIN_VERSION=18.6.3
+
+fm_control_omp_version_check() {  # <executable>
+  local executable=$1 raw installed major minor patch floor_major floor_minor floor_patch status=0
+  raw=$("$executable" --version 2>&1) || status=$?
+  case "$raw" in
+    omp/*) installed=${raw#omp/} ;;
+    *) installed=${raw:-unknown}; status=1 ;;
+  esac
+  if [ "$status" -eq 0 ]; then
+    case "$installed" in
+      *.*.*)
+        major=${installed%%.*}
+        minor=${installed#*.}
+        patch=${minor#*.}
+        minor=${minor%%.*}
+        ;;
+      *) status=1 ;;
+    esac
+  fi
+  if [ "$status" -eq 0 ]; then
+    case "$major" in '' | *[!0-9]*) status=1 ;; esac
+    case "$minor" in '' | *[!0-9]*) status=1 ;; esac
+    case "$patch" in '' | *[!0-9]*) status=1 ;; esac
+    [ "${#major}" -le 9 ] && [ "${#minor}" -le 9 ] && [ "${#patch}" -le 9 ] || status=1
+  fi
+  if [ "$status" -ne 0 ]; then
+    echo "error: installed omp version '$installed' cannot be parsed; omp $FM_CONTROL_OMP_MIN_VERSION or newer is required" >&2
+    return 1
+  fi
+  IFS=. read -r floor_major floor_minor floor_patch <<< "$FM_CONTROL_OMP_MIN_VERSION"
+  major=$((10#$major))
+  minor=$((10#$minor))
+  patch=$((10#$patch))
+  if [ "$major" -lt "$floor_major" ] \
+    || { [ "$major" -eq "$floor_major" ] && [ "$minor" -lt "$floor_minor" ]; } \
+    || { [ "$major" -eq "$floor_major" ] && [ "$minor" -eq "$floor_minor" ] && [ "$patch" -lt "$floor_patch" ]; }; then
+    echo "error: installed omp version '$installed' is older than the required floor $FM_CONTROL_OMP_MIN_VERSION; update omp before launching it" >&2
+    return 1
+  fi
+}
 
 # The complete control-plane verb allowlist, one per line.
 fm_control_verbs() {

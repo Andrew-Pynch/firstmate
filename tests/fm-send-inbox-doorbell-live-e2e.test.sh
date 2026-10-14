@@ -209,14 +209,17 @@ check_omp_native_doorbell() {
   fakebin=$(make_spawn_fakebin "$world/fake" claude)
   cat > "$fakebin/omp" <<'SH'
 #!/usr/bin/env bash
-[ "${1:-}" != models ] || printf '%s\n' '{"models":[]}'
+case "${1:-}" in
+  --version) printf '%s\n' "$FM_LIVE_OMP_VERSION" ;;
+  models) printf '%s\n' '{"models":[]}' ;;
+esac
 exit 0
 SH
   chmod +x "$fakebin/omp"
   fm_test_spawn_home "$home" omp
   fm_git_worktree "$world/project" "$world/wt" live-omp >/dev/null
   fm_test_spawn_brief "$home" "$task"
-  if ! FM_FAKE_LAUNCH_LOG="$world/launch.log" fm_test_run_spawn "$home" "$world/wt" "$fakebin" \
+  if ! FM_LIVE_OMP_VERSION="$version" FM_FAKE_LAUNCH_LOG="$world/launch.log" fm_test_run_spawn "$home" "$world/wt" "$fakebin" \
     "$task" "$world/project" --harness omp --scout >/dev/null || [ ! -f "$home/state/$task.omp-ext.ts" ]; then
     FAILED=1
     printf 'not ok - %s (%s): fm-spawn did not write the per-task extension\n' "$name" "$version" >&2

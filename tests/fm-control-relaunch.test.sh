@@ -884,6 +884,25 @@ test_relaunch_onto_an_unverified_harness_is_refused() {
   pass "fm-control relaunch: refuses to relaunch onto an adapter with no verified mechanics"
 }
 
+test_unsupported_omp_relaunch_refuses_before_stop() {
+  local dir out rc
+  dir=$(new_case oldomp rl75)
+  add_ship_task "$dir" rl75 claude
+  cat > "$dir/fakebin/omp" <<'SH'
+#!/usr/bin/env bash
+printf 'omp/18.6.1\n'
+SH
+  chmod +x "$dir/fakebin/omp"
+  out=$(run_control "$dir" rl75 relaunch --harness omp --note "move to omp"); rc=$?
+  expect_code 1 "$rc" "an unsupported omp replacement must refuse before stop"$'\n'"$out"
+  assert_contains "$out" "18.6.1" "the refusal must name the installed omp version"
+  assert_contains "$out" "18.6.3" "the refusal must name the supported omp floor"
+  [ "$(cat "$dir/fake/command")" = claude ] || fail "an unsupported omp replacement stopped the running agent"
+  [ ! -s "$dir/fake/literal" ] || fail "an unsupported omp replacement sent lifecycle input"
+  [ ! -e "$dir/home/state/rl75.control-relaunch" ] || fail "an unsupported omp replacement entered the relaunch transaction"
+  pass "fm-control relaunch: unsupported omp refuses before stopping the agent"
+}
+
 test_prior_harness_turnend_registry_entry_is_cleared() {
   local dir auth
   dir=$(new_case grokauth rl9)
@@ -2552,6 +2571,7 @@ test_pi_exclude_tools_follow_the_relaunch
 test_exclude_tools_refusals_happen_before_the_agent_stops
 test_explicit_model_wins_over_the_recorded_one
 test_relaunch_onto_an_unverified_harness_is_refused
+test_unsupported_omp_relaunch_refuses_before_stop
 test_prior_harness_turnend_registry_entry_is_cleared
 test_wiring_removal_failure_refuses_before_replacement_arm
 test_turnend_auth_paths_are_owned_by_the_control_adapter

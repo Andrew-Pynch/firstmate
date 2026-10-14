@@ -923,6 +923,24 @@ ok - opencode (1.18.33): the doorbell reached a real worker, which acted and ack
 OpenCode needed `FM_SEND_INBOX_LIVE_TIMEOUT=560` because its configured model was still mid-turn at the default 240 seconds.
 Pi 0.87.1 was installed but not verified: its configured model returned an account error (`The 'gpt-5.6-sol' model is not supported when using Codex with a ChatGPT account`) before it read the inbox.
 
+### omp native doorbell
+
+omp workers are steered without any keystroke: the per-task extension `bin/fm-spawn.sh` writes serves the native endpoint that `bin/fm-task-inbox-lib.sh` owns, so a draft a person is typing in the worker's composer is never touched.
+Verified on 2026-10-14 with omp 18.9.1 on Linux x64, tmux on an isolated private socket, through the same guard restricted to omp: the worker is launched with the tracked worker overlay and the spawn-written extension, a draft is typed into its composer, and the REAL `bin/fm-send.sh` steers it.
+
+```sh
+FM_SEND_INBOX_LIVE_E2E=1 FM_SEND_INBOX_LIVE_HARNESSES=omp tests/fm-send-inbox-doorbell-live-e2e.test.sh
+```
+
+```text
+# omp (omp/18.9.1): idle composer never classified empty before the draft
+ok - omp (omp/18.9.1): the native doorbell reached a real worker, which acted and acked, and the draft stayed in the composer
+ok - live steering-inbox doorbell guard: 1 harness(es) honored the doorbell contract
+```
+
+The doorbell arrived as its own user message, the worker acted and acknowledged with the `mv`, and the composer still held the unsent draft afterwards.
+`pi.sendUserMessage` with no `deliverAs` started a turn on an idle worker and queued a steer on a streaming one; both were observed in a manual run on the same version.
+
 ## Waiting-worker command ceilings
 
 The `# Waiting` section of the ship and scout briefs (`bin/fm-brief.sh`) has a worker hold every external wait inside one blocking shell command, bounded by what its harness lets one command run.

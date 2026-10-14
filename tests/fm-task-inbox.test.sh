@@ -398,6 +398,63 @@ test_ring_submits_its_own_stuck_doorbell() {
   pass "inbox: the ring submits its own stuck doorbell, skips other pending text, and retries a lost Enter once on both paths"
 }
 
+# The native doorbell endpoint and the recorded-harness gate around it
+# (bin/fm-task-inbox-lib.sh header, "Native doorbell"). The capture below is
+# omp's bordered composer holding a draft, which the classifier cannot prove
+# either way. Other harnesses keep the advisory typed policy on that verdict.
+# A lane whose harness serves a native endpoint is never typed into, not even
+# when its composer reads empty, because a person can start typing between
+# that read and the keystrokes; a live endpoint that never acknowledges fails
+# the ring without typing; and a dead endpoint pid is not live.
+test_ring_native_endpoint_and_unproven_composer() {
+  local dir state rec log capture inbox rc sleeper doorbell
+  dir="$TMP_ROOT/ring-native"
+  state="$dir/state"
+  mkdir -p "$state"
+  make_watch_stubs "$dir" >/dev/null
+  rec=$(inbox_lib "$state" fm_task_inbox_write "$state" t1 "please continue")
+  doorbell=$(inbox_lib "$state" fm_task_inbox_doorbell_line "$rec")
+  inbox="$state/t1.inbox"
+  log="$dir/send.log"
+  capture="$dir/capture"
+  printf ' Connected to MCP servers: drive.\n╭── π > ◑ GPT-6-Astra > 📁 ~/wt ────────╮\n╰─ Is the des                           ─╯\n' > "$capture"
+  ring() {  # [capture-file]
+    PATH="$dir/fakebin:$PATH" FM_SEND_LOG="$log" FM_FAKE_TMUX_CAPTURE="${1-$capture}" \
+      FM_TASK_INBOX_NATIVE_ACK_SECS=1 inbox_lib "$state" fm_task_inbox_ring tmux sess:fm-t1 "$rec" fm-t1
+  }
+
+  printf 'harness=claude\n' > "$state/t1.meta"
+  : > "$log"; rc=0; ring || rc=$?
+  [ "$rc" = 0 ] || fail "a harness with no native endpoint keeps ringing an unproven composer, got rc $rc"
+  grep -qF 'Firstmate instruction waiting' "$log" || fail "an unproven composer on a typed lane did not receive the doorbell"
+  : > "$log"; rc=0; ring '' || rc=$?
+  [ "$rc" = 0 ] || fail "a harness with no native endpoint should ring a proven-empty composer, got rc $rc"
+  grep -qF 'Firstmate instruction waiting' "$log" || fail "a proven-empty composer on a typed lane did not receive the doorbell"
+
+  printf 'harness=omp\n' > "$state/t1.meta"
+  : > "$log"; rc=0; ring || rc=$?
+  [ "$rc" = 1 ] || fail "an omp lane without a live endpoint must skip an unproven composer, got rc $rc"
+  [ ! -s "$log" ] || fail "an unproven omp composer was typed into:"$'\n'"$(cat "$log")"
+  : > "$log"; rc=0; ring '' || rc=$?
+  [ "$rc" = 1 ] || fail "an omp lane without a live endpoint must skip even a proven-empty composer, got rc $rc"
+  [ ! -s "$log" ] || fail "an omp lane received keystrokes:"$'\n'"$(cat "$log")"
+
+  sleep 30 &
+  sleeper=$!
+  printf '%s' "$sleeper" > "$inbox/.native-doorbell"
+  : > "$log"; rc=0; ring || rc=$?
+  kill "$sleeper" 2>/dev/null; wait "$sleeper" 2>/dev/null
+  [ "$rc" = 2 ] || fail "an unacknowledged native ring must report a failed ring, got rc $rc"
+  [ ! -s "$log" ] || fail "an unacknowledged native ring fell back to typing:"$'\n'"$(cat "$log")"
+  [ "$(sed -n 2p "$inbox/.native-ring")" = "$doorbell" ] \
+    || fail "the native request must carry the doorbell line:"$'\n'"$(cat "$inbox/.native-ring")"
+
+  : > "$log"; rc=0; ring || rc=$?
+  [ "$rc" = 1 ] || fail "an endpoint naming a dead pid is not live, so the omp lane must skip, got rc $rc"
+  [ ! -s "$log" ] || fail "a dead endpoint led to typing into an unproven omp composer"
+  pass "inbox: a native-capable lane never receives keystrokes, and a silent endpoint fails the ring instead of typing"
+}
+
 test_idempotent_write_dedups_exact_body() {
   local state r1 r2 r3 r4 count text
   state="$TMP_ROOT/idem/state"; mkdir -p "$state"
@@ -1186,6 +1243,7 @@ test_doorbell_is_a_shell_noop
 test_doorbell_rejects_terminal_controls
 test_ring_skips_dead_agent
 test_ring_submits_its_own_stuck_doorbell
+test_ring_native_endpoint_and_unproven_composer
 test_idempotent_write_dedups_exact_body
 test_idempotent_write_follows_concurrent_ack
 test_handled_mv_dedups_by_sequence

@@ -5032,7 +5032,14 @@ EOF
 // would leave every completed turn recorded busy. "turn_end" fires at every
 // inner turn boundary and stays a wake NOTIFICATION touch for the watcher,
 // never current-state truth.
+// Native doorbell endpoint (contract owned by bin/fm-task-inbox-lib.sh): a
+// typed doorbell lands in omp's composer and was sent with whatever a person
+// had half-typed there, so the ring hands its line here instead and omp takes
+// it as a user message of its own, never touching the composer.
+// sendUserMessage with no deliverAs starts a turn when idle and queues a steer
+// while streaming, as a typed Enter did (verified, omp 18.9.1).
 import { execFile } from "node:child_process";
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 const notifyTurnEnd = $busy_notify_turnend;
 const busyEvent = (state: string, event: string) =>
   new Promise<void>((resolve) => {
@@ -5041,6 +5048,26 @@ const busyEvent = (state: string, event: string) =>
       "--gen", "$BUSY_GEN", "--source", "omp-ext", "--event", event,
     ], () => resolve());
   });
+const inbox = "$STATE_REAL/$ID.inbox";
+const endpoint = inbox + "/.native-doorbell";
+const writeAtomic = (path: string, text: string) => {
+  const tmp = path + "." + process.pid + ".tmp";
+  writeFileSync(tmp, text);
+  renameSync(tmp, path);
+};
+let doorbellTimer: any = null;
+let lastRang = "";
+const answerRing = (pi: any) => {
+  let request = "";
+  try { request = readFileSync(inbox + "/.native-ring", "utf8"); } catch { return; }
+  const cut = request.indexOf("\n");
+  const token = cut > 0 ? request.slice(0, cut) : "";
+  const line = cut > 0 ? request.slice(cut + 1) : "";
+  if (!token || !line || token === lastRang) return;
+  try { pi.sendUserMessage(line); } catch { return; }
+  lastRang = token;
+  try { writeAtomic(inbox + "/.native-rang", token); } catch {}
+};
 export default function (pi: any) {
   pi.on("agent_start", () => busyEvent("busy", "agent-start"));
   pi.on("agent_end", (event: any) => {
@@ -5048,6 +5075,21 @@ export default function (pi: any) {
     return busyEvent("idle", "agent-end");
   });
   pi.on("turn_end", () => { if (notifyTurnEnd) execFile("touch", ["$TURNEND"]); });
+  pi.on("session_start", () => {
+    if (doorbellTimer) return;
+    try { lastRang = readFileSync(inbox + "/.native-rang", "utf8"); } catch {}
+    try {
+      mkdirSync(inbox + "/handled", { recursive: true });
+      writeAtomic(endpoint, String(process.pid));
+    } catch { return; }
+    doorbellTimer = setInterval(() => answerRing(pi), 250);
+    doorbellTimer.unref?.();
+  });
+  pi.on("session_shutdown", () => {
+    if (doorbellTimer) clearInterval(doorbellTimer);
+    doorbellTimer = null;
+    try { if (readFileSync(endpoint, "utf8") === String(process.pid)) rmSync(endpoint); } catch {}
+  });
 }
 EOF
     ;;

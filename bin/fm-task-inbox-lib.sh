@@ -33,6 +33,12 @@
 #                              so later polls suppress another escalation
 #   <task>.inbox/.retry-ring   name of a fire-and-forget record still owed its
 #                              one retry ring (fm_task_inbox_mark_retry)
+#   <task>.inbox/.native-doorbell  native doorbell endpoint: "<pid>", written by
+#                              the worker's own harness extension while its
+#                              session can accept a message
+#   <task>.inbox/.native-ring  newest native ring request: "<token>\n<line>"
+#   <task>.inbox/.native-rang  token of the newest request the extension has
+#                              handed to its harness
 #
 # Record format (fm_task_inbox_write / fm_task_inbox_body):
 #   schema=fm-task-inbox.v1
@@ -80,6 +86,26 @@
 # acknowledged record drops its mark. The remote steer leg has no watcher
 # ladder and owes no retry.
 #
+# Native doorbell (task fm-inbox-doorbell-injects-into-composer): a typed
+# doorbell lands in the pane's composer, so on an interactive lane where a
+# person is typing it was appended to the half-typed draft and sent with it.
+# A harness whose per-task extension can submit a user message without
+# touching the composer serves a native endpoint instead: the extension writes
+# .native-doorbell when its session starts and removes it at shutdown, polls
+# .native-ring, hands each new request's line to the harness as its own user
+# message, and writes that request's token to .native-rang. A lane whose
+# recorded harness is in FM_TASK_INBOX_NATIVE_HARNESSES never receives a
+# keystroke from the ring, because a composer check followed by typing still
+# races a person who starts typing in between. While its endpoint names a live
+# process the ring writes a request and waits up to
+# FM_TASK_INBOX_NATIVE_ACK_SECS for its token; a missing token is a failed ring
+# the ladder retries. While its endpoint is not live (spawned before its
+# extension served one, still starting, or its extension failed) the ring is
+# skipped, so an unacknowledged record escalates through the ladder rather than
+# being typed. bin/fm-spawn.sh writes the omp extension that serves this
+# endpoint; `bin/fm-control.sh <id> relaunch` rewrites an older lane's
+# extension.
+#
 # Inbox names containing bytes outside printable ASCII are unsupported. The
 # doorbell refuses them rather than sending terminal control bytes to a pane.
 #
@@ -91,6 +117,7 @@
 #   FM_TASK_INBOX_GRACE_SECS   default 90; delivery-attempt grace and spacing
 #   FM_TASK_INBOX_RING_MAX     default 3; delivery attempts before escalation
 #   FM_TASK_INBOX_BUSY_MAX     default 2; consecutive busy-deferred due polls before escalation
+#   FM_TASK_INBOX_NATIVE_ACK_SECS  default 5; wait for a native ring's acknowledgement
 
 _FM_TASK_INBOX_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Both dependencies are canonical lint roots in their own right. Keep them as
@@ -106,6 +133,10 @@ FM_TASK_INBOX_GRACE_DEFAULT=90
 FM_TASK_INBOX_RING_MAX_DEFAULT=3
 FM_TASK_INBOX_BUSY_MAX_DEFAULT=2
 FM_TASK_INBOX_LOCK_WAIT_DEFAULT=5
+FM_TASK_INBOX_NATIVE_ACK_DEFAULT=5
+# Harnesses whose per-task extension serves the native doorbell endpoint (see
+# the header). Space-separated recorded `harness=` values.
+FM_TASK_INBOX_NATIVE_HARNESSES='omp'
 
 fm_task_inbox_grace_secs() {
   local g=${FM_TASK_INBOX_GRACE_SECS:-$FM_TASK_INBOX_GRACE_DEFAULT}
@@ -335,32 +366,44 @@ fm_task_inbox_doorbell_line() {  # <record-path>
     "$quoted"
 }
 
-# Ring the doorbell, best-effort: one endpoint-liveness pre-check, one advisory
-# composer pre-check, then the backend's submit machinery with a minimal retry
-# budget, verdict discarded.
-# Returns 0 rang, 1 skipped because the composer PROVENLY holds pending text
-# other than our own doorbell (the watcher re-rings later), 2 the backend send
-# failed, 3 skipped because the endpoint is positively dead or missing (nothing
-# typed; recovery owns the record). No return value is delivery proof; the
-# acknowledgement move is the only delivery signal.
-# The skip is deliberately narrow: only an exact `pending` verdict can defer,
-# because there our Enter could submit someone's real half-typed content.
+# Ring the doorbell, best-effort: one endpoint-liveness pre-check, then the
+# native endpoint when one is live (see the header), otherwise, on a lane whose
+# harness serves no native endpoint, one advisory composer pre-check and the
+# backend's submit machinery with a minimal retry budget, verdict discarded.
+# Returns 0 rang, 1 skipped to protect the composer (it PROVENLY holds pending
+# text other than our own doorbell, or the lane is native-capable but its
+# endpoint is not live; the watcher re-rings later), 2 the backend send or the
+# native hand-off failed, 3 skipped because the endpoint is positively dead or
+# missing (nothing typed; recovery owns the record). No return value is
+# delivery proof; the acknowledgement move is the only delivery signal.
+# On a typed lane the skip is deliberately narrow: only an exact `pending`
+# verdict can defer, because there our Enter could submit someone's real
+# half-typed content.
 # `pending-unproven` and `unknown` still ring - the worst outcome is a garbled
 # CONSTANT line the worker recovers semantically, while skipping on ambiguous
 # verdicts would starve a harness whose idle screen the classifier cannot
-# positively identify (that classifier is advisory here by design).
+# positively identify (that classifier is advisory here by design). Typing
+# still races a person who starts typing after the pre-check; only a native
+# endpoint removes that race.
 # A pending composer holding exactly our own doorbell line is a previous ring
 # whose Enter never landed, so on an agent not reported busy it is submitted
 # rather than skipped; skipping it would block every later ring. On both paths
 # a lost first Enter gets one confirmed retry.
 fm_task_inbox_ring() {  # <backend> <target> <record-path> [expected-label]
-  local backend=$1 target=$2 rec=$3 label=${4:-} line cstate verdict
+  local backend=$1 target=$2 rec=$3 label=${4:-} line cstate verdict dir
   case "$(fm_backend_agent_state "$backend" "$target" 2>/dev/null || true)" in
     dead|missing) return 3 ;;
   esac
   if ! line=$(fm_task_inbox_doorbell_line "$rec"); then
     return 2
   fi
+  dir=${rec%/*}
+  dir=${dir%/handled}
+  if fm_task_inbox_native_live "$dir"; then
+    fm_task_inbox_native_ring "$dir" "$line"
+    return
+  fi
+  ! fm_task_inbox_native_capable "$dir" || return 1
   cstate=$(fm_backend_composer_state "$backend" "$target" "$label" 2>/dev/null) || cstate=unknown
   case "$cstate" in
     pending)
@@ -385,6 +428,52 @@ fm_task_inbox_ring() {  # <backend> <target> <record-path> [expected-label]
   # (empty, pending, unknown, ...) is deliberately ignored, never proof.
   [ "$verdict" != send-failed ] || return 2
   return 0
+}
+
+# 0 when the inbox's native doorbell endpoint names a live process. A reused
+# pid reads live, which only fails the ring safely: no extension acknowledges.
+fm_task_inbox_native_live() {  # <inbox-dir>
+  local pid
+  pid=$(cat "$1/.native-doorbell" 2>/dev/null) || return 1
+  case "$pid" in ''|*[!0-9]*) return 1 ;; esac
+  kill -0 "$pid" 2>/dev/null
+}
+
+# 0 when the inbox's lane records a harness that serves a native endpoint.
+fm_task_inbox_native_capable() {  # <inbox-dir>
+  local harness h
+  harness=$(fm_meta_get "${1%.inbox}.meta" harness)
+  for h in $FM_TASK_INBOX_NATIVE_HARNESSES; do
+    [ "$harness" != "$h" ] || return 0
+  done
+  return 1
+}
+
+fm_task_inbox_native_ack_secs() {
+  local s=${FM_TASK_INBOX_NATIVE_ACK_SECS:-$FM_TASK_INBOX_NATIVE_ACK_DEFAULT}
+  case "$s" in ''|*[!0-9]*) s=$FM_TASK_INBOX_NATIVE_ACK_DEFAULT ;; esac
+  [ "${#s}" -le 4 ] || s=$FM_TASK_INBOX_NATIVE_ACK_DEFAULT
+  printf '%s' "$s"
+}
+
+# Publish one native ring request and wait for the extension to acknowledge
+# its token. Returns 0 acknowledged, 2 not written or not acknowledged in time
+# (the request stays, so a recovering extension still delivers it).
+fm_task_inbox_native_ring() {  # <inbox-dir> <line>
+  local dir=$1 line=$2 token tmp ticks
+  token="$(date +%s).$$.$RANDOM$RANDOM"
+  tmp=$(mktemp "$dir/.native-ring.XXXXXX" 2>/dev/null) || return 2
+  if ! { printf '%s\n%s' "$token" "$line" > "$tmp" && mv -f "$tmp" "$dir/.native-ring"; } 2>/dev/null; then
+    rm -f "$tmp" 2>/dev/null
+    return 2
+  fi
+  ticks=$(( $(fm_task_inbox_native_ack_secs) * 10 ))
+  while :; do
+    [ "$(cat "$dir/.native-rang" 2>/dev/null)" != "$token" ] || return 0
+    [ "$ticks" -gt 0 ] || return 2
+    ticks=$((ticks - 1))
+    sleep 0.1
+  done
 }
 
 # Whether the composer's content, ignoring line wrapping, is exactly <line>.

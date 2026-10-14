@@ -30,6 +30,8 @@
 #      stands down when the payload already carries stop_hook_active.
 #   7. The watch extension arms through fm_watch_arm_omp and delivers an
 #      actionable close as one follow-up.
+#   8. The per-task extension serves the native steering doorbell: rings reach
+#      omp as their own user message, and an omp lane is never typed into.
 set -u
 
 # shellcheck source=tests/fixtures.sh
@@ -346,6 +348,137 @@ test_busy_extension_lifecycle() {
   fm_busy_source_trusted omp pi-ext && fail "omp must not trust the Pi extension's records"
   fm_busy_source_trusted omp omp-ext || fail "omp must trust its own extension's records"
   pass "omp extension: agent_start busy, willContinue stays busy, plain agent_end idle, turn_end a notification"
+}
+
+# A fake tmux whose one pane draws omp's bordered composer the way a real omp
+# 18.9.1 pane does (its status in the top border, the draft on the closing
+# border row). The classifier cannot prove that shape either way, which is
+# exactly the pane the typed doorbell used to append itself to. Literal input
+# appends to FM_FAKE_COMPOSER, and Enter logs a SUBMIT of it to FM_SEND_LOG.
+make_omp_pane_stub() {  # <fakebin> <window>
+  cat > "$1/tmux" <<SH
+#!/usr/bin/env bash
+set -u
+case "\${1:-}" in
+  send-keys)
+    shift
+    literal=0
+    while [ \$# -gt 0 ]; do
+      case "\$1" in
+        -t) shift 2 ;;
+        -l) literal=1; shift ;;
+        *) break ;;
+      esac
+    done
+    if [ "\$literal" = 1 ]; then
+      printf '%s' "\$1" >> "\$FM_FAKE_COMPOSER"
+    elif [ "\${1:-}" = Enter ] && [ -s "\$FM_FAKE_COMPOSER" ]; then
+      printf 'SUBMIT: %s\n' "\$(cat "\$FM_FAKE_COMPOSER")" >> "\$FM_SEND_LOG"
+      : > "\$FM_FAKE_COMPOSER"
+    fi
+    exit 0 ;;
+  display-message)
+    case "\$*" in
+      *cursor_y*) printf '3\n' ;;
+      *pane_current_command*) printf 'omp\n' ;;
+      *) printf 'fakepane\n' ;;
+    esac
+    exit 0 ;;
+  capture-pane)
+    printf ' Connected to MCP servers: drive.\n'
+    printf '╭── π > ◑ GPT-6-Astra > 📁 ~/wt ──────────────────────────────────────╮\n'
+    printf '╰─ %-66s ─╯\n' "\$(cat "\$FM_FAKE_COMPOSER")"
+    exit 0 ;;
+  list-windows) printf '%s\n' '$2'; exit 0 ;;
+esac
+exit 0
+SH
+  chmod +x "$1/tmux"
+}
+
+# The interactive-lane regression: a person typing a draft into an omp
+# worker's composer had a steer's doorbell appended to it and sent with it.
+# With the generated extension serving the native endpoint, every ring reaches
+# omp as its own user message and the draft is never touched. Without a live
+# endpoint (an older lane, a stopped extension) the omp lane is not typed into
+# at all.
+test_native_doorbell_spares_the_composer() {
+  local rec id=omp-door-q7 out state inbox fakebin composer log sent host rc i doorbell
+  rec=$(make_spawn_case doorbell omp "$id")
+  read_case_record "$rec"
+  out=$(run_scout_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --harness omp)
+  expect_code 0 $? "omp spawn should succeed: $out"
+  state="$HOME_DIR/state"
+  assert_grep "harness=omp" "$state/$id.meta" "the lane must record its omp harness"
+  inbox="$state/$id.inbox"
+  fakebin="$CASE_DIR/panebin"
+  mkdir -p "$fakebin"
+  make_omp_pane_stub "$fakebin" "fm-$id"
+  composer="$CASE_DIR/composer"; log="$CASE_DIR/send.log"; sent="$CASE_DIR/sent.log"
+  rec=$(FM_STATE_OVERRIDE="$state" bash -c '. "$1"; fm_task_inbox_write "$2" "$3" "please rebase"' \
+    _ "$ROOT/bin/fm-task-inbox-lib.sh" "$state" "$id") || fail "could not enqueue the steer"
+  doorbell=$(bash -c '. "$1"; fm_task_inbox_doorbell_line "$2"' _ "$ROOT/bin/fm-task-inbox-lib.sh" "$rec")
+  ring() {
+    PATH="$fakebin:$PATH" FM_FAKE_COMPOSER="$composer" FM_SEND_LOG="$log" FM_TASK_INBOX_NATIVE_ACK_SECS=5 \
+      bash -c '. "$1"; fm_task_inbox_ring tmux "$2" "$3" "$4"' _ "$ROOT/bin/fm-task-inbox-lib.sh" "sess:fm-$id" "$rec" "fm-$id"
+  }
+  draft_intact() {  # <why>
+    [ "$(cat "$composer")" = "Is the des" ] || fail "$1: the draft was changed to '$(cat "$composer")'"
+    [ ! -s "$log" ] || fail "$1: the draft was submitted:"$'\n'"$(cat "$log")"
+  }
+
+  printf 'Is the des' > "$composer"; : > "$log"
+  rc=0; ring || rc=$?
+  [ "$rc" = 1 ] || fail "an omp lane with no live native endpoint must skip the ring to protect its composer, got rc $rc"
+  draft_intact "no endpoint"
+
+  : > "$sent"
+  EXT="$state/$id.omp-ext.ts" SENT="$sent" STOP="$CASE_DIR/stop" node --input-type=module <<'EOF' &
+import { appendFileSync, existsSync } from "node:fs";
+import { pathToFileURL } from "node:url";
+const handlers = new Map();
+const pi = {
+  on(e, h) { handlers.set(e, h); },
+  // omp's sendUserMessage returns synchronously, not a promise.
+  sendUserMessage(m, o) { appendFileSync(process.env.SENT, JSON.stringify({ m, o }) + "\n"); return undefined; },
+};
+const mod = await import(pathToFileURL(process.env.EXT).href);
+mod.default(pi);
+await handlers.get("session_start")({ type: "session_start" }, {});
+const alive = setInterval(async () => {
+  if (!existsSync(process.env.STOP)) return;
+  clearInterval(alive);
+  await handlers.get("session_shutdown")({}, {});
+}, 50);
+EOF
+  host=$!
+  for i in $(seq 100); do
+    [ -s "$inbox/.native-doorbell" ] && break
+    sleep 0.1
+  done
+  [ "$(cat "$inbox/.native-doorbell" 2>/dev/null)" = "$host" ] || { kill "$host" 2>/dev/null; fail "session_start did not publish the extension's pid as the native endpoint"; }
+
+  for i in 1 2; do
+    rc=0; ring || rc=$?
+    [ "$rc" = 0 ] || { kill "$host" 2>/dev/null; fail "ring $i through the live native endpoint should report rung, got rc $rc"; }
+    draft_intact "native ring $i"
+    [ "$(wc -l < "$sent" | tr -d ' ')" = "$i" ] || { kill "$host" 2>/dev/null; fail "ring $i should hand omp exactly one message each:"$'\n'"$(cat "$sent")"; }
+  done
+  out=$(DOORBELL="$doorbell" node -e '
+    const lines = require("node:fs").readFileSync(process.argv[1], "utf8").trim().split("\n").map((l) => JSON.parse(l));
+    for (const { m, o } of lines) {
+      if (m !== process.env.DOORBELL) throw new Error("unexpected message: " + m);
+      if (o !== undefined) throw new Error("the doorbell must use omp default delivery (turn when idle, steer while streaming): " + JSON.stringify(o));
+    }' "$sent" 2>&1) || { kill "$host" 2>/dev/null; fail "native delivery was not the exact doorbell line: $out"; }
+
+  touch "$CASE_DIR/stop"
+  wait "$host" 2>/dev/null
+  assert_absent "$inbox/.native-doorbell" "session_shutdown must withdraw the native endpoint"
+  rc=0; ring || rc=$?
+  [ "$rc" = 1 ] || fail "after shutdown the omp lane must skip the ring again, got rc $rc"
+  draft_intact "after shutdown"
+  [ "$(wc -l < "$sent" | tr -d ' ')" = 2 ] || fail "a withdrawn endpoint must not deliver"
+  pass "omp native doorbell: rings reach omp as their own message, and an omp lane never receives keystrokes"
 }
 
 # --- 4. Control, composer, supervision model -----------------------------------
@@ -868,6 +1001,7 @@ test_spawn_model_validation_scoped_to_listed_providers
 test_secondmate_launch_relies_on_discovery
 test_secondmate_config_pinned_model_is_validated
 test_busy_extension_lifecycle
+test_native_doorbell_spares_the_composer
 test_control_composer_and_model_tables
 test_ownership_proof_is_omp_keyed
 test_turnend_guard_extension_compels_one_continuation

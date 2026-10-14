@@ -13,6 +13,7 @@ Cross-harness provider and credential identity is owned by `references/common/mo
 | Busy state | `../../../bin/fm-busy-lib.sh` source `omp-ext`: the per-task extension marks busy at `agent_start` and idle at `agent_end` only when `willContinue` is not true; `ctx.isIdle()` is deliberately not consulted because it reads false at a natural TUI `agent_end` (`session_stop` is awaited before settle). |
 | Exit command | `/quit` (`/exit` and `/q` are aliases). |
 | Interrupt | Single Escape; the composer is left empty, no clear key. |
+| Steering doorbell | Native, never typed: the per-task extension publishes the inbox's `.native-doorbell` endpoint at `session_start` and hands each ring's line to `pi.sendUserMessage` with omp's default delivery (a turn when idle, a steer while streaming), so a draft in the composer is never touched (verified, omp 18.9.1). `../../../bin/fm-task-inbox-lib.sh` owns the protocol; without a live endpoint the ring is skipped rather than typed, and `../../../bin/fm-control.sh <id> relaunch` gives a lane spawned before the endpoint existed the current extension. |
 | Skill invocation | No separate verified form beyond normal command behavior; use natural language when the exact command is uncertain. |
 | Model flag | `--model <provider>/<id>` (fuzzy patterns are accepted by omp but bypass Firstmate's pre-launch check). |
 | Effort flag | `--thinking <off\|minimal\|low\|medium\|high\|xhigh\|max\|auto>`, a superset of the shared vocabulary, so every level including `max` maps straight across. |

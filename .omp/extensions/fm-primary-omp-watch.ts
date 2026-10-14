@@ -1246,7 +1246,7 @@ export default function (pi: ExtensionAPI) {
     const binding = homeBinding;
     if (!binding || binding.status === "ineligible") return "";
     let text = "";
-    if (binding.status === "refused") {
+    if (binding.status === "refused" || binding.status === "home-mismatch") {
       text = `WATCHER DOWN - this omp process serves no Firstmate home, so no watcher runs for it: ${binding.message}`;
     } else if (sessionHomeConflict) {
       text = `WATCHER DOWN - ${sessionHomeConflict}`;
@@ -1332,7 +1332,9 @@ export default function (pi: ExtensionAPI) {
     activateGeneration(generation);
     const binding = bindHome(ctx?.sessionManager);
     reconcileSessionHome(ctx?.sessionManager, ctx?.ui?.notify?.bind(ctx.ui));
-    if (binding.status === "refused") ctx?.ui?.notify?.(`watcher: not armed - ${binding.message}`, "warning");
+    if (binding.status === "refused" || binding.status === "home-mismatch") {
+      ctx?.ui?.notify?.(`watcher: not armed - ${binding.message}`, "warning");
+    }
     if (sessionHomeConflict) return;
     markLoaded();
     if (lockOwnership() !== "owned") return;

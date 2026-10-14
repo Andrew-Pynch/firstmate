@@ -27,14 +27,16 @@
 # Step 4 is refused when the code root's served-homes record names any other
 # existing home: that launch is ambiguous, and no shared default may choose.
 # With <primary-only>=1 (the extensions), step 4 on a code root that is not a
-# primary checkout (bin/fm-primary-scope-lib.sh, so a linked task worktree) is
-# "ineligible": the extension stands down silently, as every primary hook does
-# inside a child worktree. An explicit FM_HOME is taken exactly as every shell
-# script takes it (a relative one anchored to the caller's working directory);
-# a recorded home that no longer exists is refused, never replaced by a
-# fallback.
-# Results: FM_HOME_BINDING_STATUS=ok|ineligible|refused, FM_HOME_BINDING_HOME,
-# FM_HOME_BINDING_SOURCE, FM_HOME_BINDING_MESSAGE.
+# primary checkout (bin/fm-primary-scope-lib.sh, so a linked worktree) is
+# "ineligible" for a task worker. An unmarked linked checkout whose repository
+# primary checkout is a Firstmate home with state/ is "home-mismatch": this is
+# the farm restore shape, so the extensions warn instead of standing down.
+# Other linked checkouts remain ineligible. An explicit FM_HOME is taken exactly
+# as every shell script takes it (a relative one anchored to the caller's
+# working directory); a recorded home that no longer exists is refused, never
+# replaced by a fallback.
+# Results: FM_HOME_BINDING_STATUS=ok|ineligible|home-mismatch|refused,
+# FM_HOME_BINDING_HOME, FM_HOME_BINDING_SOURCE, FM_HOME_BINDING_MESSAGE.
 #
 # SERVED-HOMES RECORD (<code-root>/state/.code-root-served-homes). One absolute
 # home path per line, appended by fm_home_binding_note_served whenever a
@@ -192,8 +194,22 @@ fm_home_binding_set() {  # <status> <home> <source> <message>
   FM_HOME_BINDING_MESSAGE=$4
 }
 
+# Print the primary checkout of <code-root>'s repository when <code-root> is a
+# linked checkout and that primary checkout is a Firstmate home with state/.
+fm_home_binding_linked_primary_home() {  # <code-root>
+  local root=$1 git_dir git_common_dir primary
+  git_dir=$(git -C "$root" rev-parse --path-format=absolute --git-dir 2>/dev/null) || return 1
+  git_common_dir=$(git -C "$root" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
+  [ "$(fm_home_binding_canonical "$git_dir")" != "$(fm_home_binding_canonical "$git_common_dir")" ] || return 1
+  [ "${git_common_dir##*/}" = .git ] || return 1
+  primary=${git_common_dir%/.git}
+  fm_primary_root_matches "$primary" || return 1
+  [ -d "$primary/state" ] || return 1
+  fm_home_binding_canonical "$primary"
+}
+
 fm_home_binding_resolve() {  # <code-root> <recorded-home> <primary-only 0|1>
-  local root=$1 recorded=$2 primary_only=${3:-0} others list
+  local root=$1 recorded=$2 primary_only=${3:-0} others list primary_home
   if [ -n "${FM_HOME:-}" ]; then
     # An explicit home is taken as every shell script takes it; a relative one
     # is anchored to the caller's working directory, never validated away.
@@ -216,6 +232,10 @@ fm_home_binding_resolve() {  # <code-root> <recorded-home> <primary-only 0|1>
     return 0
   fi
   if [ "$primary_only" = 1 ] && ! fm_primary_root_matches "$root"; then
+    if [ -z "${FM_TASK_ID:-}" ] && primary_home=$(fm_home_binding_linked_primary_home "$root"); then
+      fm_home_binding_set home-mismatch "" "" "code root $root is a linked checkout of Firstmate home $primary_home but this process names no home; relaunch with FM_HOME=$primary_home omp --resume=<session>"
+      return 0
+    fi
     fm_home_binding_set ineligible "" "" "code root $root is not a primary Firstmate checkout and this process names no home"
     return 0
   fi
@@ -335,6 +355,7 @@ fm_home_binding_report() {  # <shell-home> <shell-state> <harness-pid>
   case "$ext_status" in
     ok) ext_desc="resolved $ext_state (source=$ext_source)" ;;
     refused) ext_desc="refused to bind a home" ;;
+    home-mismatch) ext_desc="found an unbound linked checkout of a Firstmate home" ;;
     ineligible) ext_desc="stood down (not a primary checkout)" ;;
     *) ext_desc="no record" ;;
   esac
@@ -347,7 +368,7 @@ fm_home_binding_report() {  # <shell-home> <shell-state> <harness-pid>
   elif [ "$ext_status" = refused ]; then
     printf 'HOME_MISMATCH: the harness extensions in pid %s refused to act on any home (%s), so nothing watches %s; %s\n' \
       "$pid" "$ext_message" "$state" "$remedy"
-  elif [ "$ext_status" = ineligible ] && [ -z "${FM_TASK_ID:-}" ]; then
+  elif [ "$ext_status" = home-mismatch ]; then
     printf 'HOME_MISMATCH: the harness extensions in pid %s stood down because their code root is a linked checkout and the process names no home (%s), so nothing watches %s; %s\n' \
       "$pid" "$ext_message" "$state" "$remedy"
   fi
@@ -412,6 +433,7 @@ fm_home_binding_main() {
       case "$FM_HOME_BINDING_STATUS" in
         ok) return 0 ;;
         ineligible) return 3 ;;
+        home-mismatch) return 4 ;;
         *) return 4 ;;
       esac
       ;;

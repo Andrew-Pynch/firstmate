@@ -10,7 +10,8 @@
 #      explicitly named home, a launch naming no home and carrying no recorded
 #      home is refused, and a recorded home still binds its own home.
 #   3. A linked task worktree is never noted as serving a home and stands the
-#      extensions down instead of binding.
+#      extensions down instead of binding, while an unmarked farm checkout
+#      points back to its primary Firstmate home and warns.
 #   4. Session start refuses an ambiguous launch before it locks or digests,
 #      and names both state directories when the harness serves another home.
 #   5. The watcher-down banner fires only for a held lock, supervision need,
@@ -135,6 +136,33 @@ test_linked_worktree_stands_down_and_is_never_noted() {
   env -u STATE FM_HOME="$h1" bash "$lib" resolve --record-pid "$$" >/dev/null
   assert_absent "$wt/state" "resolving from a linked worktree must never create its state directory or a served record"
   pass "fm-home-binding: a linked task worktree stands down and never records a served home"
+}
+
+test_unbound_farm_checkout_warns_but_worker_stands_down() {
+  local home="$TMP_ROOT/farm-binding/home" code="$TMP_ROOT/farm-binding/code" out lib f
+  fm_git_init_commit "$home"
+  mkdir -p "$home/bin" "$home/state"
+  : > "$home/AGENTS.md"
+  git -C "$home" add AGENTS.md
+  git -C "$home" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' commit -qm "make primary home"
+  git -C "$home" worktree add --quiet -b farm-binding "$code"
+  mkdir -p "$code/bin"
+  for f in fm-home-binding-lib.sh fm-primary-scope-lib.sh fm-wake-lib.sh fm-classify-lib.sh fm-timeout-lib.sh; do
+    cp "$ROOT/bin/$f" "$code/bin/$f"
+  done
+  lib="$code/bin/fm-home-binding-lib.sh"
+
+  out=$(env -u FM_HOME -u FM_ROOT_OVERRIDE -u FM_TASK_ID -u STATE bash "$lib" resolve --primary-only; printf 'rc=%s\n' "$?")
+  assert_contains "$out" "status=home-mismatch" "an unmarked farm checkout must be classified as a home mismatch"
+  assert_contains "$out" "code root $code" "the farm mismatch must name the linked code root"
+  assert_contains "$out" "FM_HOME=$home omp --resume=<session>" "the farm mismatch must name the primary home relaunch"
+  assert_contains "$out" "rc=4" "the farm mismatch must not use the silent stand-down exit"
+
+  out=$(env -u FM_HOME -u FM_ROOT_OVERRIDE -u STATE FM_TASK_ID=worker bash "$lib" resolve --primary-only; printf 'rc=%s\n' "$?")
+  assert_contains "$out" "status=ineligible" "a task worker in the same farm checkout must stand down"
+  assert_contains "$out" "rc=3" "a task worker must keep the silent stand-down exit"
+  assert_not_contains "$out" "FM_HOME=$home" "a task worker must not receive the primary relaunch warning"
+  pass "fm-home-binding: an unmarked farm checkout warns while a task worker stays silent"
 }
 
 test_linked_code_root_serving_a_primary_home_is_in_scope() {
@@ -272,6 +300,7 @@ test_two_homes_one_code_root
 test_concurrent_served_updates_keep_every_home
 test_unrecordable_served_home_is_reported
 test_linked_worktree_stands_down_and_is_never_noted
+test_unbound_farm_checkout_warns_but_worker_stands_down
 test_linked_code_root_serving_a_primary_home_is_in_scope
 test_report_names_both_state_directories
 test_session_start_refuses_an_ambiguous_launch

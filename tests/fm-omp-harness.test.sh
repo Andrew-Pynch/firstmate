@@ -1432,6 +1432,97 @@ EOF
   pass ".omp turn-end guard: an unbound home refuses at session start instead of digesting the code root, and compels one continuation"
 }
 
+test_unbound_farm_checkout_warns_without_compelling_workers() {
+  local base="$TMP_ROOT/farm-unbound" home="$TMP_ROOT/farm-unbound/home" code="$TMP_ROOT/farm-unbound/code" out status
+  fm_git_init_commit "$home"
+  mkdir -p "$home/bin" "$home/state"
+  : > "$home/AGENTS.md"
+  git -C "$home" add AGENTS.md
+  git -C "$home" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' commit -qm "make primary home"
+  git -C "$home" worktree add --quiet -b farm-unbound "$code"
+  install_omp_extension_fixture "$code"
+  printf '#!/usr/bin/env bash\nprintf "OMP DIGEST\\n"\n' > "$code/bin/fm-sessionstart-run.sh"
+  printf '#!/usr/bin/env bash\nexit 2\n' > "$code/bin/fm-turnend-guard.sh"
+  chmod +x "$code/bin/fm-sessionstart-run.sh" "$code/bin/fm-turnend-guard.sh"
+
+  out=$(env -u FM_HOME -u FM_ROOT_OVERRIDE -u FM_STATE_OVERRIDE -u FM_CONFIG_OVERRIDE -u FM_TASK_ID \
+    FM_HOME_BINDING_RUNTIME_DIR="$base/runtime-watch" HOME_ROOT="$home" CODE_ROOT="$code" \
+    EXT="$code/.omp/extensions/fm-primary-omp-watch.ts" node --input-type=module 2>&1 <<'EOF'
+import { pathToFileURL } from "node:url";
+const handlers = new Map(); let tool = null; const notices = [];
+const pi = {
+  on(e, h) { handlers.set(e, h); }, registerCommand() {}, registerTool(t) { tool = t; }, sendMessage() {},
+  ui: { notify(m, level) { notices.push({ m, level }); } },
+};
+const mod = await import(pathToFileURL(process.env.EXT).href);
+mod.default(pi);
+const ctx = { sessionManager: { getSessionId: () => "farm", getEntries: () => [] }, ui: pi.ui };
+await handlers.get("session_start")({ type: "session_start" }, ctx);
+const turn = await handlers.get("before_agent_start")({ type: "before_agent_start", prompt: "resume" }, ctx);
+const content = turn?.message?.content ?? "";
+for (const needle of ["WATCHER DOWN", `code root ${process.env.CODE_ROOT}`, `FM_HOME=${process.env.HOME_ROOT} omp --resume=<session>`]) {
+  if (!content.includes(needle)) throw new Error(`the farm warning does not name ${needle}: ${JSON.stringify(turn)}`);
+}
+const arm = await tool.execute();
+if (!arm.content[0].text.includes("watcher: not armed")) throw new Error(`the unbound farm checkout could arm: ${arm.content[0].text}`);
+if (notices.length !== 1 || notices[0].level !== "warning") throw new Error(`the unbound farm session_start warning was missing: ${JSON.stringify(notices)}`);
+process.exit(0);
+EOF
+)
+  status=$?
+  expect_code 0 "$status" "omp watch extension unbound farm warning: $out"
+  [ -z "$out" ] || fail "omp watch extension unbound farm test printed output: $out"
+
+  out=$(env -u FM_HOME -u FM_ROOT_OVERRIDE -u FM_STATE_OVERRIDE -u FM_CONFIG_OVERRIDE \
+    FM_TASK_ID=worker FM_HOME_BINDING_RUNTIME_DIR="$base/runtime-worker" \
+    EXT="$code/.omp/extensions/fm-primary-omp-watch.ts" node --input-type=module 2>&1 <<'EOF'
+import { pathToFileURL } from "node:url";
+const handlers = new Map(); const notices = [];
+const pi = {
+  on(e, h) { handlers.set(e, h); }, registerCommand() {}, registerTool() {}, sendMessage() {},
+};
+const mod = await import(pathToFileURL(process.env.EXT).href);
+mod.default(pi);
+const ctx = { sessionManager: { getSessionId: () => "worker", getEntries: () => [] }, ui: { notify(m, level) { notices.push({ m, level }); } } };
+await handlers.get("session_start")({ type: "session_start" }, ctx);
+const turn = await handlers.get("before_agent_start")({ type: "before_agent_start", prompt: "work" }, ctx);
+if (turn !== undefined) throw new Error(`a task worker received an automatic warning: ${JSON.stringify(turn)}`);
+if (notices.length !== 0) throw new Error(`a task worker received a session warning: ${JSON.stringify(notices)}`);
+process.exit(0);
+EOF
+)
+  status=$?
+  expect_code 0 "$status" "omp watch extension task-worker stand-down: $out"
+  [ -z "$out" ] || fail "omp watch extension task-worker test printed output: $out"
+
+  out=$(env -u FM_HOME -u FM_ROOT_OVERRIDE -u FM_STATE_OVERRIDE -u FM_TASK_ID \
+    FM_HOME_BINDING_RUNTIME_DIR="$base/runtime-guard" HOME_ROOT="$home" CODE_ROOT="$code" \
+    EXT="$code/.omp/extensions/fm-primary-turnend-guard.ts" node --input-type=module 2>&1 <<'EOF'
+import { pathToFileURL } from "node:url";
+const handlers = new Map();
+const pi = { on(e, h) { handlers.set(e, h); }, sendMessage() {} };
+const mod = await import(pathToFileURL(process.env.EXT).href);
+mod.default(pi);
+const ctx = { sessionManager: { getSessionId: () => "farm", getEntries: () => [] } };
+handlers.get("session_start")({ type: "session_start" }, ctx);
+const first = await handlers.get("before_agent_start")({ type: "before_agent_start", prompt: "resume" }, ctx);
+const content = first?.message?.content ?? "";
+for (const needle of ["HOME_MISMATCH", `code root ${process.env.CODE_ROOT}`, `FM_HOME=${process.env.HOME_ROOT} omp --resume=<session>`]) {
+  if (!content.includes(needle)) throw new Error(`the session-start mismatch does not name ${needle}: ${JSON.stringify(first)}`);
+}
+if (content.includes("OMP DIGEST")) throw new Error(`the farm mismatch delivered a digest: ${content}`);
+const stop = await handlers.get("session_stop")({ type: "session_stop", stop_hook_active: false }, {});
+if (stop !== undefined) throw new Error(`the farm mismatch compelled a continuation: ${JSON.stringify(stop)}`);
+await handlers.get("session_shutdown")({}, {});
+process.exit(0);
+EOF
+)
+  status=$?
+  expect_code 0 "$status" "omp turn-end guard unbound farm warning: $out"
+  [ -z "$out" ] || fail "omp turn-end guard unbound farm test printed output: $out"
+  pass ".omp extensions: an unbound farm checkout warns every turn while task workers stay silent"
+}
+
 test_detection_anchored_name_and_marker_precedence
 test_lock_identity_and_liveness_classification
 test_bun_run_omp_session_owns_its_lock
@@ -1452,6 +1543,7 @@ test_watch_extension_heals_shutdown_without_start
 test_watch_extension_restart_never_replays_a_cleaned_up_task
 test_watch_extension_binds_the_recorded_home_on_a_shared_code_root
 test_turnend_guard_refuses_an_unbound_home_loudly
+test_unbound_farm_checkout_warns_without_compelling_workers
 test_extension_markers_name_only_the_lock_holder
 test_remote_host_leg_accepts_omp
 test_remote_parent_leg_accepts_omp

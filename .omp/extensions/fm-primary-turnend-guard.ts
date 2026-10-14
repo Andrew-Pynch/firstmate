@@ -31,8 +31,9 @@
 // the watch extension (bin/fm-home-binding-lib.sh, docs/configuration.md
 // "Home binding") and hands it to every child explicitly. A refused home is
 // delivered as the session-start context instead of a digest for some other
-// home's state, and a stop compels one continuation naming it; a linked task
-// worktree stands down without starting the wrapper at all.
+// home's state, and a stop compels one continuation naming it. An unbound farm
+// checkout also delivers a mismatch but does not compel a continuation; a
+// linked task worktree stands down without starting the wrapper at all.
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
@@ -293,6 +294,10 @@ function runSessionstartHook(generation: SessionstartGeneration): Promise<Sessio
       settle({ kind: "ineligible" });
       return;
     }
+    if (binding?.status === "home-mismatch") {
+      settle({ kind: "ready", raw: `HOME_MISMATCH: ${binding.message}` });
+      return;
+    }
     if (binding?.status === "refused") {
       settle({
         kind: "ready",
@@ -496,7 +501,9 @@ async function claimSessionstartMessage(
 // forced continuation per turn.
 function runGuard(stopHookActive: boolean): Promise<{ code: number; stderr: string }> {
   const binding = homeBinding;
-  if (binding?.status === "ineligible") return Promise.resolve({ code: 0, stderr: "" });
+  if (binding?.status === "ineligible" || binding?.status === "home-mismatch") {
+    return Promise.resolve({ code: 0, stderr: "" });
+  }
   if (binding?.status === "refused") {
     return Promise.resolve(stopHookActive
       ? { code: 0, stderr: "" }

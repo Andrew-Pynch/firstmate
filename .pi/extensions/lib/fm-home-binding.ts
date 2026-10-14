@@ -10,7 +10,7 @@ import { firstmateShellInvocation } from "./fm-operational-input.ts";
 export type FirstmateHomeBinding =
   // warning: a bound home whose ambiguity protection could not be recorded.
   | { status: "ok"; home: string; source: "env" | "override" | "session" | "code-root"; warning: string }
-  | { status: "ineligible" | "refused"; message: string };
+  | { status: "ineligible" | "home-mismatch" | "refused"; message: string };
 
 // The session custom entry that carries the home a session was launched for.
 // It is written from an explicit FM_HOME (and carried into a new session the
@@ -99,7 +99,9 @@ export function bindFirstmateHome(
     processBindings.set(codeRoot, binding);
     return binding;
   }
-  if (status === "ineligible" || status === "refused") return { status, message: fields.get("message") ?? "" };
+  if (status === "ineligible" || status === "home-mismatch" || status === "refused") {
+    return { status, message: fields.get("message") ?? "" };
+  }
   return {
     status: "refused",
     message: `could not resolve this process's Firstmate home through ${codeRoot}/bin/fm-home-binding-lib.sh${failure ? `: ${failure}` : ""}`,

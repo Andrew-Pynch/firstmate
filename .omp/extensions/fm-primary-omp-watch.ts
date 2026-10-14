@@ -26,6 +26,15 @@
 //     hooks exist.
 //   - The arming tool is fm_watch_arm_omp and its human fallback
 //     /fm-watch-arm-omp; the loaded-build marker is state/.omp-watch-extension-loaded.
+//   - Home binding: the home is resolved through bin/fm-home-binding-lib.sh
+//     (docs/configuration.md "Home binding"), never as "the code root". An
+//     explicit FM_HOME is recorded into the omp session as a firstmate-home
+//     custom entry; a resumed session with no FM_HOME (Herdr's
+//     resume_agents_on_restore reruns `omp --resume=<file>` in the pane's cwd
+//     with none of the launch environment) reads it back at session_start and
+//     exports it into process.env, which omp captures into every later shell
+//     spawn. A launch the owner refuses never arms; its refusal is the tool's
+//     answer, so nothing silently watches another home's state.
 //
 // Session-generation ownership (stated once here):
 // Verified on omp 18.2.10: session_shutdown is emitted only when a session is
@@ -41,7 +50,7 @@
 // actionable closes that were still pending delivery; its durable state lives at
 // state/extensions/omp-primary-watch/session-replacement-actionable.json.
 // Stale callbacks from a prior generation are no-ops against the active replacement.
-// The active generation is process-global per home, not module state: omp
+// The active generation is process-global, not module state: omp
 // rebinds this factory for every in-process child session (the task tool, eval
 // agent(), /tan), sometimes from a re-evaluated module, and a child shares the
 // primary's pid and so passes the session-lock check. A binding whose
@@ -73,7 +82,15 @@ import { Type } from "typebox";
 // The operational-input encoder is shared with the omp extensions; its owner
 // resolves bin/fm-operational-input.sh relative to its own location, which is
 // the same repository root this file lives in.
-import { encodeFirstmateOperationalInput } from "../../.pi/extensions/lib/fm-operational-input.ts";
+import { encodeFirstmateOperationalInput, firstmateShellInvocation } from "../../.pi/extensions/lib/fm-operational-input.ts";
+import { runCommandAsync } from "../../.pi/extensions/lib/fm-async-exec.ts";
+import {
+  bindFirstmateHome,
+  FIRSTMATE_HOME_ENTRY,
+  launchFmHome,
+  recordedFirstmateHome,
+  type FirstmateHomeBinding,
+} from "../../.pi/extensions/lib/fm-home-binding.ts";
 
 // The omp extension API surface this file uses. omp is a Pi fork and ships no
 // separately installable type package, so the contract is declared locally
@@ -86,6 +103,7 @@ type ExtensionAPI = {
   ) => unknown;
   registerCommand?: (name: string, command: { description: string; handler: (args: string, ctx: any) => Promise<void> | void }) => void;
   registerTool?: (tool: Record<string, unknown>) => void;
+  appendEntry?: (customType: string, data?: unknown) => void;
 };
 
 type ArmResult = {
@@ -144,15 +162,17 @@ type SessionGeneration = {
 const extensionFile = fileURLToPath(import.meta.url);
 const extensionDir = dirname(extensionFile);
 const root = resolve(extensionDir, "../..");
-const fmHome = process.env.FM_HOME || process.env.FM_ROOT_OVERRIDE || root;
 const fmRoot = process.env.FM_ROOT_OVERRIDE || root;
-const state = process.env.FM_STATE_OVERRIDE || `${fmHome}/state`;
-const config = process.env.FM_CONFIG_OVERRIDE || `${fmHome}/config`;
 const armScript = `${fmRoot}/bin/fm-watch-arm.sh`;
 const notifyScript = `${fmRoot}/bin/fm-wake-notify.sh`;
-const marker = `${state}/.omp-watch-extension-loaded`;
-const handoffDir = `${state}/extensions/omp-primary-watch`;
-const actionableHandoff = `${handoffDir}/session-replacement-actionable.json`;
+// Home-dependent paths stay empty until bindHome resolves this process's home.
+let homeBinding: FirstmateHomeBinding | null = null;
+let fmHome = "";
+let state = "";
+let config = "";
+let marker = "";
+let handoffDir = "";
+let actionableHandoff = "";
 const extensionVersion = `sha256:${createHash("sha256").update(readFileSync(extensionFile)).digest("hex")}`;
 const retryBaseMs = positiveInteger("FM_WATCH_REARM_RETRY_BASE_MS", 250);
 const retryMaxMs = positiveInteger("FM_WATCH_REARM_RETRY_MAX_MS", 4000);
@@ -203,7 +223,26 @@ function replacementCoordinatorFor(handoff: string): ReplacementCoordinator {
   replacementCoordinators.set(handoff, created);
   return created;
 }
-const replacementCoordinator = replacementCoordinatorFor(actionableHandoff);
+// One coordinator per process: a process serves the one home it is bound to,
+// and binding can wait for session_start, after this factory created its
+// first generation.
+const replacementCoordinator = replacementCoordinatorFor("omp-primary-watch");
+
+// Bind this process to its home once; an unresolved answer is retried at the
+// next call, because session_start may supply the session's recorded home.
+function bindHome(sessionManager?: { getEntries?: () => unknown[] }): FirstmateHomeBinding {
+  if (homeBinding?.status === "ok") return homeBinding;
+  const binding = bindFirstmateHome(fmRoot, sessionManager);
+  homeBinding = binding;
+  if (binding.status !== "ok") return binding;
+  fmHome = binding.home;
+  state = process.env.FM_STATE_OVERRIDE || `${fmHome}/state`;
+  config = process.env.FM_CONFIG_OVERRIDE || `${fmHome}/config`;
+  marker = `${state}/.omp-watch-extension-loaded`;
+  handoffDir = `${state}/extensions/omp-primary-watch`;
+  actionableHandoff = `${handoffDir}/session-replacement-actionable.json`;
+  return binding;
+}
 const armReadiness = new WeakMap<ChildProcess, Promise<boolean>>();
 const armClose = new WeakMap<ChildProcess, Promise<void>>();
 // Children the extension itself asked to exit; their close is not a failure
@@ -234,6 +273,7 @@ function pidAlive(pid: string): boolean {
 }
 
 function lockOwnership(): LockOwnership {
+  if (!state) return "missing";
   let lockPid = "";
   try {
     lockPid = readFileSync(`${state}/.lock`, "utf8").trim();
@@ -257,6 +297,7 @@ function lockOwnership(): LockOwnership {
 // (the `omp models` listing bin/fm-spawn.sh runs from the primary's own shell)
 // would otherwise record its own short-lived pid over the live primary's.
 function markLoaded(): void {
+  if (!state) return;
   let lockPid = "";
   try {
     lockPid = readFileSync(`${state}/.lock`, "utf8").trim();
@@ -968,12 +1009,14 @@ export default function (pi: ExtensionAPI) {
 
   function startArm(owner: SessionGeneration, predecessorArmPid = ""): ArmResult {
     if (!generationIsLive(owner)) return { ok: false, message: shuttingDownMessage };
+    const binding = bindHome();
+    if (binding.status !== "ok") return { ok: false, message: `watcher: not armed - ${binding.message}` };
     const ownership = lockOwnership();
     if (ownership === "other") return { ok: false, message: "watcher: read-only - session lock is held by another firstmate session" };
     if (ownership === "missing") {
       return {
         ok: false,
-        message: "watcher: not armed - no live session holds the lock; run bin/fm-session-start.sh to reclaim it, then call fm_watch_arm_omp to re-arm",
+        message: `watcher: not armed - no live session holds the lock in ${state}; run bin/fm-session-start.sh to reclaim it, then call fm_watch_arm_omp to re-arm`,
       };
     }
     markLoaded();
@@ -1171,6 +1214,8 @@ export default function (pi: ExtensionAPI) {
         message: `watcher: not armed - this omp session is a child session of the primary session in process ${process.pid}, whose generation ${replacementCoordinator.activeGeneration?.id ?? "none"} owns this home's watcher; pending handoff token(s): ${pendingHandoffTokens()}; recovery attempted: none, because a child session never owns the watcher - call fm_watch_arm_omp from the primary session`,
       };
     }
+    const binding = bindHome();
+    if (binding.status !== "ok") return { ok: false, message: `watcher: not armed - ${binding.message}` };
     markLoaded();
     if (generationIsLive(generation)) return activateOwnedWatch(generation);
     const recovery = recoverOrphanedGeneration(trigger);
@@ -1179,8 +1224,7 @@ export default function (pi: ExtensionAPI) {
     return { ok: result.ok, message: `${result.message}\n${recovery.message}` };
   }
 
-  pi.on?.("before_agent_start", (event) => {
-    consumeWake(generation, String((event as { prompt?: unknown })?.prompt ?? ""));
+  function recoverOrphanOnAgentStart(): void {
     // A session still starting turns after a session_shutdown that no
     // session_start followed is orphaned, not ending: re-arm without waiting
     // for a model to notice the silence.
@@ -1191,6 +1235,40 @@ export default function (pi: ExtensionAPI) {
     if (lockOwnership() !== "owned") return;
     const result = activateOwnedWatch(generation);
     if (!result.ok) surfaceFailure(generation, `${result.message}\n${recovery.message}`);
+  }
+
+  // WATCHER DOWN banner (docs/turnend-guard.md "Watcher-down banner"): every
+  // agent start asks bin/fm-watcher-down.sh, the owner of the threshold and
+  // the wording, so a watcher that died while main sat idle surfaces on the
+  // very next turn even when no wake ever arrived to drain.
+  async function watcherDownBanner(): Promise<string> {
+    const binding = homeBinding;
+    if (!binding || binding.status === "ineligible") return "";
+    let text = "";
+    if (binding.status === "refused") {
+      text = `WATCHER DOWN - this omp process serves no Firstmate home, so no watcher runs for it: ${binding.message}`;
+    } else {
+      const invocation = firstmateShellInvocation(`${fmRoot}/bin/fm-watcher-down.sh`, []);
+      const result = await runCommandAsync(invocation.command, invocation.args, {
+        env: { ...process.env, FM_HOME: fmHome, FM_STATE_OVERRIDE: state, FM_CONFIG_OVERRIDE: config },
+      });
+      if (result.status !== 0) return "";
+      text = result.stdout.trim();
+    }
+    if (!text) return "";
+    try {
+      return encodeFirstmateOperationalInput("turn-end-guard", text);
+    } catch {
+      return text;
+    }
+  }
+
+  pi.on?.("before_agent_start", async (event) => {
+    consumeWake(generation, String((event as { prompt?: unknown })?.prompt ?? ""));
+    recoverOrphanOnAgentStart();
+    if (childSession) return undefined;
+    const banner = await watcherDownBanner();
+    return banner ? { message: { customType: "firstmate-watcher-down", content: banner, display: true } } : undefined;
   });
   pi.on?.("message_start", (event) => {
     const message: unknown = event?.message;
@@ -1207,11 +1285,19 @@ export default function (pi: ExtensionAPI) {
     consumeWake(generation, message.content);
   });
 
-  pi.on?.("session_start", async () => {
+  pi.on?.("session_start", async (_event, ctx) => {
     childSession = liveGenerationElsewhere(generation) !== null;
     if (childSession) return;
     if (generation.stopping) generation = createGeneration();
     activateGeneration(generation);
+    const binding = bindHome(ctx?.sessionManager);
+    if (binding.status === "ok" && launchFmHome && recordedFirstmateHome(ctx?.sessionManager) !== binding.home) {
+      try {
+        pi.appendEntry?.(FIRSTMATE_HOME_ENTRY, { home: binding.home });
+      } catch {
+      }
+    }
+    if (binding.status === "refused") ctx?.ui?.notify?.(`watcher: not armed - ${binding.message}`, "warning");
     markLoaded();
     if (lockOwnership() !== "owned") return;
     activateOwnedWatch(generation);
@@ -1252,5 +1338,8 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
+  // An explicit launch home binds now; anything else waits for session_start,
+  // the first point the session's recorded home can be read.
+  if (launchFmHome || process.env.FM_ROOT_OVERRIDE) bindHome();
   if (!childSession) markLoaded();
 }

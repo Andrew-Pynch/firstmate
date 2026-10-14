@@ -42,13 +42,16 @@
 // reimplement it to save one bounded read per refresh.
 //
 // Environment:
-//   FM_HOME                    home to read (default: the root this file loaded from).
+//   FM_HOME                    home to read; unset, the home binding decides
+//                              (docs/configuration.md "Home binding"), and an
+//                              unbound process renders no line.
 //   FM_ROOT_OVERRIDE           code root that holds bin/ (default: this file's root).
 //   FM_QUEUE_LINE_CMD          program to run (default <root>/bin/fm-queue-line.sh).
 //                              A test or a host with an unusual layout overrides it.
 //   FM_QUEUE_LINE_MIN_INTERVAL_MS  shortest gap between two reads (default 60000).
 //   FM_QUEUE_LINE_POLL_MS      idle re-read cadence (default 120000).
 import { runCommandAsync, type AsyncExecResult } from "../../.pi/extensions/lib/fm-async-exec.ts";
+import { bindFirstmateHome } from "../../.pi/extensions/lib/fm-home-binding.ts";
 import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -57,7 +60,6 @@ const WIDGET_KEY = "firstmate-queue-line";
 
 const extensionFile = fileURLToPath(import.meta.url);
 const root = process.env.FM_ROOT_OVERRIDE || resolve(dirname(extensionFile), "../..");
-const fmHome = process.env.FM_HOME || root;
 const command = process.env.FM_QUEUE_LINE_CMD || `${root}/bin/fm-queue-line.sh`;
 
 function positiveInteger(name: string, fallback: number): number {
@@ -99,7 +101,12 @@ export interface QueueLineRead {
 /** Run the line program once. A non-zero exit or a missing program is a failure. */
 export async function readLine(run?: () => Promise<AsyncExecResult>): Promise<QueueLineRead> {
   if (!run && !existsSync(command)) return { ok: false, line: "" };
-  const exec = run ?? (() => runCommandAsync(command, [], { cwd: fmHome, env: { ...process.env, FM_HOME: fmHome } }));
+  let exec = run;
+  if (!exec) {
+    const binding = bindFirstmateHome(root);
+    if (binding.status !== "ok") return { ok: false, line: "" };
+    exec = () => runCommandAsync(command, [], { cwd: binding.home, env: { ...process.env, FM_HOME: binding.home } });
+  }
   const result = await exec();
   if (result.status !== 0) return { ok: false, line: "" };
   return { ok: true, line: result.stdout.trim() };
@@ -171,6 +178,9 @@ export default function firstmateQueueLine(pi: any): void {
   // whole-fleet read instead of only delaying this line.
   pi.on?.("session_start", (_event: unknown, ctx: any) => {
     stopTimers(state);
+    // Bind before the first read: a resumed session's recorded home is only
+    // readable from its session manager.
+    bindFirstmateHome(root, ctx?.sessionManager);
     state.interval = setInterval(() => void trigger(ctx, state), pollMs);
     state.interval.unref?.();
     void trigger(ctx, state);

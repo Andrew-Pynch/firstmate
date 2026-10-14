@@ -74,6 +74,13 @@ The auto-arm hook additionally exports its resolved `FM_GUARD_GRACE` when it for
 `bin/fm-turnend-guard.sh`'s daemon-ownership branch (`fm_afk_daemon_owns_supervision`, above, covering both away and quiet mode) also derives its beacon grace from `fm_poll_derived_grace` rather than falling back to the bare 300-second default, for the same reason: the daemon's watcher-restart cadence there is not a fixed poll loop, so a flat grace misreads a daemon that is genuinely still cycling as down.
 Every other direct `FM_GUARD_GRACE` reader (`bin/fm-guard.sh`, the strict-watcher checks in `bin/fm-turnend-guard.sh` and its harness-specific wrappers, `bin/fm-wake-lib.sh`) still falls back to the bare 300-second default unless `FM_GUARD_GRACE` is set explicitly in the environment.
 
+### Watcher-down banner
+
+The turn-end guard fires only when a turn ends, so a primary that sits idle while its watcher is dead stays silent until someone happens to look.
+The omp watch extension therefore runs `bin/fm-watcher-down.sh` at every agent start and shows its line, a `WATCHER DOWN` banner, at the top of that turn.
+The script prints only while a live harness holds the session lock, the home needs supervision, and no watcher has beaten for `FM_WATCHER_DOWN_BANNER_MINUTES` (default 10) minutes or the poll-derived grace when that is longer; its header owns the exact predicate and wording.
+An omp process whose home binding was refused shows the refusal as the banner instead (`docs/configuration.md` "Home binding").
+
 ## Harness integrations
 
 - Claude registers two `Stop` hooks in `.claude/settings.json`, both anchored through `CLAUDE_PROJECT_DIR`: `bin/fm-turnend-guard.sh --claude`, and `bin/fm-claude-stop-autoarm.sh` with `asyncRewake: true` and `timeout: 28800`.

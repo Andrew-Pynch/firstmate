@@ -106,6 +106,14 @@
 # tracked primary extensions are loaded and prints a PI_WATCH_EXTENSION
 # reminder line when one is missing.
 #
+# HOME BINDING: a launch with neither FM_HOME nor FM_ROOT_OVERRIDE resolves its
+# home through bin/fm-home-binding-lib.sh first and, when that is refused (the
+# code root serves another home), prints one HOME_MISMATCH line and exits 0
+# before locking anything. A locked full start notes an explicit FM_HOME as
+# served from this code root, and the BOOTSTRAP section opens with that lib's
+# comparison of this session's home with the harness process's (one
+# BOOTSTRAP_INFO line, plus HOME_MISMATCH on a disagreement).
+#
 # Why lock first: the old documented order (bootstrap, THEN lock) let a
 # SECOND concurrent session run bootstrap's mutating sweeps - converging
 # secondmate homes, retrying pending handoff outboxes and receiver wakes, writing
@@ -225,6 +233,21 @@ set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
+# A launch that names no home resolves through the one owner of home binding
+# (bin/fm-home-binding-lib.sh): the code root is the home only when no other
+# home is known to be served from it, so an environment-less restore refuses
+# here instead of digesting, locking, and draining another home's state.
+FM_HOME_LAUNCH=${FM_HOME:-}
+# shellcheck source=bin/fm-home-binding-lib.sh
+. "$SCRIPT_DIR/fm-home-binding-lib.sh"
+if [ -z "${FM_HOME:-}" ] && [ -z "${FM_ROOT_OVERRIDE:-}" ]; then
+  fm_home_binding_resolve "$FM_ROOT" "" 0
+  if [ "$FM_HOME_BINDING_STATUS" != ok ]; then
+    printf '=== SESSION START - NO FIRSTMATE HOME ===\n'
+    printf 'HOME_MISMATCH: session start did not run: %s\n' "$FM_HOME_BINDING_MESSAGE"
+    exit 0
+  fi
+fi
 FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
@@ -664,6 +687,12 @@ if [ "$READ_ONLY" -eq 0 ]; then
   if [ "$REEMIT" -eq 0 ]; then
     "$SCRIPT_DIR/fm-home-summary-refresh.sh" --best-effort || true
   fi
+  # Record that this code root serves an explicitly named home, so a later
+  # launch from here that names no home is refused as ambiguous rather than
+  # handed this code root's own state (bin/fm-home-binding-lib.sh).
+  if [ "$REEMIT" -eq 0 ] && [ -n "$FM_HOME_LAUNCH" ] && [ -z "${FM_ROOT_OVERRIDE:-}" ]; then
+    fm_home_binding_note_served "$FM_ROOT" "$FM_HOME" || true
+  fi
   # Every network call and the potentially slow inactive-outcome startup scan
   # are launched HERE, detached and bounded, so they run concurrently with the
   # whole digest below instead of in front of it. Step 7 harvests whatever has
@@ -710,6 +739,9 @@ else
       "$SCRIPT_DIR/fm-bootstrap.sh" 2>&1
   )
 fi
+HOME_BINDING_OUT=$(fm_home_binding_report "$FM_HOME" "$STATE" "$REBUILDING_SESSION_PID" 2>/dev/null || true)
+[ -z "$HOME_BINDING_OUT" ] || BOOT_OUT=$(printf '%s\n%s' "$HOME_BINDING_OUT" "$BOOT_OUT")
+BOOT_OUT=${BOOT_OUT%$'\n'}
 if [ -n "$BOOT_OUT" ]; then
   printf '%s\n' "$BOOT_OUT"
 else

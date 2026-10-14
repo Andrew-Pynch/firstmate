@@ -365,7 +365,7 @@ A secondmate row resolves through the projects it serves (`projects=` in its met
 ## FM_HOME
 
 `FM_HOME` selects the operational home for one firstmate instance.
-When it is unset, most scripts use the repo root as the home; when it is set, scripts still run from this repo's `bin/`, but `state/`, `data/`, `config/`, and `projects/` come from `$FM_HOME`.
+When it is unset, most scripts use the repo root as the home ([Home binding](#home-binding) owns when a launch is refused instead); when it is set, scripts still run from this repo's `bin/`, but `state/`, `data/`, `config/`, and `projects/` come from `$FM_HOME`.
 `FM_ROOT_OVERRIDE` overrides the firstmate repo root used by scripts, including the primary checkout watched by the worktree-tangle guard.
 When `FM_HOME` is unset, it also behaves as the old whole-root override.
 `bin/fm-send.sh` is intentionally stricter than that general fallback: it requires `FM_HOME` to be set before resolving a target, so operator steers cannot silently resolve against the wrong home.
@@ -379,6 +379,23 @@ For the zellij backend, `FM_HOME` does not split containers, but it determines t
 The full zellij home label also includes a short hash of the resolved `FM_ROOT` path.
 For the cmux backend, `FM_CONFIG_OVERRIDE` overrides where `config/cmux-socket-password` is read from, while `FM_HOME` determines the default config path and readable home prefix embedded in workspace titles.
 The full cmux home label also includes a short hash of the resolved `FM_ROOT` path, and there is no per-home container split.
+
+## Home binding
+
+Several homes can share one code root: a primary whose code root is not its home, and secondmate homes that run the same scripts.
+A harness restore can relaunch a primary with its working directory and none of its environment; Herdr's `resume_agents_on_restore` reruns `omp --resume=<session>` in the pane's cwd that way.
+A process that then falls back to "the code root is the home" serves the wrong state directory without any error, so the home is bound to the harness session that was launched for it instead of to a shared per-code-root default.
+[`bin/fm-home-binding-lib.sh`](../bin/fm-home-binding-lib.sh) owns the resolution order and every record below; its header owns the exact mechanics.
+
+- **Order.** `FM_HOME`, then `FM_ROOT_OVERRIDE`, then the home the harness session recorded, then the code root.
+- **Session record.** An omp primary launched with an explicit `FM_HOME` records it in its session as a `firstmate-home` entry; a resume with no `FM_HOME` reads it back, binds that home, and exports it, so the agent's own shell commands and every extension child name it explicitly.
+- **Served homes.** `state/.code-root-served-homes` in a primary code root lists the other homes explicitly served from it, appended by the omp extension at an explicit launch and by a locked `bin/fm-session-start.sh`; a linked task worktree is never recorded.
+- **Refusal.** When a launch names no home and carries no session record, the code-root fallback is refused whenever the served-homes record names another existing home: the omp extensions do not arm, the turn-end guard delivers the refusal instead of a digest, and `bin/fm-session-start.sh` prints a `HOME_MISMATCH` line and stops before locking.
+  Relaunch with `FM_HOME=<home>`, for omp `FM_HOME=<home> omp --resume=<session>`, or remove a home that is no longer served with `bin/fm-home-binding-lib.sh forget <home>`.
+- **Comparison.** Every session start prints one `BOOTSTRAP_INFO: home binding:` line comparing its own `FM_HOME` and state directory with the harness process's launch `FM_HOME` and `FM_STATE_OVERRIDE` and with the state directory the omp extensions resolved, and a `HOME_MISMATCH` line naming both state directories when they disagree.
+
+A code root that has never served another home keeps the plain fallback, so a single-checkout home needs no setup.
+Only the omp primary records and reads a session home today; other harnesses still rely on their launch environment, and the session-start comparison is what makes their mismatch visible.
 
 ## Harness support
 

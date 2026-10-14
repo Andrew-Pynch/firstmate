@@ -230,7 +230,10 @@ install_extension_fixture() {  # <repo>
   local repo=$1
   mkdir -p "$repo/.omp/extensions" "$repo/.pi/extensions/lib" "$repo/bin"
   cp "$ROOT/.omp/extensions/fm-primary-queue-line.ts" "$repo/.omp/extensions/"
-  cp "$ROOT/.pi/extensions/lib/fm-async-exec.ts" "$repo/.pi/extensions/lib/"
+  cp "$ROOT/.pi/extensions/lib/fm-async-exec.ts" "$ROOT/.pi/extensions/lib/fm-home-binding.ts" \
+    "$ROOT/.pi/extensions/lib/fm-operational-input.ts" "$repo/.pi/extensions/lib/"
+  cp "$ROOT/bin/fm-home-binding-lib.sh" "$ROOT/bin/fm-primary-scope-lib.sh" "$ROOT/bin/fm-wake-lib.sh" \
+    "$ROOT/bin/fm-classify-lib.sh" "$ROOT/bin/fm-timeout-lib.sh" "$repo/bin/"
   cat > "$repo/bin/fm-queue-line.sh" <<'SH'
 #!/usr/bin/env bash
 printf 'run\n' >> "${FM_LINE_LOG:?}"
@@ -251,8 +254,8 @@ SH
 # worker pane, and each case that wants it sets it in its own program.
 run_extension() {  # <repo> <program>
   local repo=$1 program=$2
-  env -u FM_TASK_ID EXT="$repo/.omp/extensions/fm-primary-queue-line.ts" \
-    FM_LINE_LOG="${FM_LINE_LOG:-}" node --input-type=module -e "$program" 2>&1
+  env -u FM_TASK_ID -u FM_ROOT_OVERRIDE FM_HOME="$repo" EXT="$repo/.omp/extensions/fm-primary-queue-line.ts" \
+    FM_HOME_BINDING_RUNTIME_DIR="$TMP_ROOT/runtime" FM_LINE_LOG="${FM_LINE_LOG:-}" node --input-type=module -e "$program" 2>&1
 }
 
 test_extension_pins_and_clears_the_line() {

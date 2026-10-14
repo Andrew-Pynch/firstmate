@@ -2441,9 +2441,18 @@ esac
 # A raw omp command loads no per-task extension, and that extension is the only
 # path a steer takes into an omp lane without typing into its composer, where a
 # person may be writing a draft (bin/fm-task-inbox-lib.sh, "Native doorbell").
-if [ "$RAW_LAUNCH" -ne 0 ] && [ "$HARNESS" = omp ]; then
-  echo "error: a raw omp launch command cannot load the per-task extension that steers omp without typing into its composer; pass the harness as plain 'omp' (with --model and --effort) instead" >&2
-  exit 1
+if [ "$RAW_LAUNCH" -ne 0 ]; then
+  for word in $LAUNCH; do
+    raw_program=$(basename "$word")
+    raw_program=${raw_program#\"}
+    raw_program=${raw_program#\'}
+    raw_program=${raw_program%\"}
+    raw_program=${raw_program%\'}
+    if [ "$raw_program" = omp ]; then
+      echo "error: a raw omp launch command cannot load the per-task extension that steers omp without typing into its composer; pass the harness as plain 'omp' (with --model and --effort) instead" >&2
+      exit 1
+    fi
+  done
 fi
 
 # muse, gemini, agy, and devin are verified as CREWMATE/SCOUT adapters only. A secondmate is

@@ -514,6 +514,16 @@ test_raw_omp_launch_is_refused() {
   assert_contains "$out" "pass the harness as plain 'omp'" "the refusal must name the supported launch form: $out"
   assert_absent "$HOME_DIR/state/$id.meta" "a refused raw omp spawn must publish no task record"
   [ ! -s "$LAUNCH_LOG" ] || fail "a refused raw omp spawn must launch nothing: $(cat "$LAUNCH_LOG")"
+
+  id=omp-env-raw-q8
+  rec=$(make_spawn_case rawdoor-env omp "$id")
+  read_case_record "$rec"
+  out=$(run_scout_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" 'env FOO=1 omp --fm-raw-flag')
+  status=$?
+  expect_code 1 "$status" "a wrapped raw omp launch command must be refused: $out"
+  assert_contains "$out" "pass the harness as plain 'omp'" "the wrapped refusal must name the supported launch form: $out"
+  assert_absent "$HOME_DIR/state/$id.meta" "a refused wrapped raw omp spawn must publish no task record"
+  [ ! -s "$LAUNCH_LOG" ] || fail "a refused wrapped raw omp spawn must launch nothing: $(cat "$LAUNCH_LOG")"
   pass "omp raw launch: refused before launch, so no omp lane is ever steered by typing"
 }
 

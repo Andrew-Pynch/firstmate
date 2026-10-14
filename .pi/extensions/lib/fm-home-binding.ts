@@ -26,6 +26,7 @@ type HomeEntrySessionManager = {
 type HomeBindingGlobal = typeof globalThis & {
   __firstmateLaunchFmHome?: string;
   __firstmateHomeBindings?: Map<string, FirstmateHomeBinding>;
+  __firstmateLaunchOverrideConsumed?: boolean;
 };
 const homeBindingGlobal = globalThis as HomeBindingGlobal;
 
@@ -38,6 +39,12 @@ export const launchFmHome: string = (homeBindingGlobal.__firstmateLaunchFmHome ?
 // process-wide, so an in-process child session (whose own session carries no
 // recorded home) and a re-evaluated module bind exactly what the primary did.
 const processBindings = (homeBindingGlobal.__firstmateHomeBindings ??= new Map<string, FirstmateHomeBinding>());
+
+export function consumeFirstmateLaunchOverride(): boolean {
+  if (homeBindingGlobal.__firstmateLaunchOverrideConsumed) return false;
+  homeBindingGlobal.__firstmateLaunchOverrideConsumed = true;
+  return true;
+}
 
 export function recordedFirstmateHome(sessionManager: HomeEntrySessionManager | undefined): string {
   let entries: unknown[] = [];

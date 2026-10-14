@@ -1464,6 +1464,26 @@ if (!switched.content[0].text.includes(`not armed - this conversation belongs to
   throw new Error(`the explicit-source switch conflict retained its watch: ${switched.content[0].text}`);
 }
 await handlers.get("session_shutdown")({}, {});
+const reboundHandlers = new Map(); let reboundTool = null; const reboundAppended = []; const reboundNotices = [];
+mod.default({
+  on(e, h) { reboundHandlers.set(e, h); }, registerCommand() {}, registerTool(t) { reboundTool = t; }, sendMessage() {},
+  appendEntry(type, data) { reboundAppended.push({ type, data }); },
+});
+await reboundHandlers.get("session_start")({ type: "session_start" }, {
+  sessionManager: { getSessionId: () => "factory-rebind", getEntries: () => [
+    { type: "custom", customType: "firstmate-home", data: { home: process.env.HOME_B } },
+  ] },
+  ui: { notify(m, level) { reboundNotices.push({ m, level }); } },
+});
+if (reboundAppended.length !== 0) throw new Error(`a rebound factory overwrote the resumed session's home: ${JSON.stringify(reboundAppended)}`);
+if (reboundNotices.length !== 1 || !reboundNotices[0].m.includes(process.env.HOME_B)) {
+  throw new Error(`the rebound factory did not preserve and warn for the resumed home: ${JSON.stringify(reboundNotices)}`);
+}
+const rebound = await reboundTool.execute();
+if (!rebound.content[0].text.includes(`not armed - this conversation belongs to Firstmate home ${process.env.HOME_B}`)) {
+  throw new Error(`the rebound factory re-enabled the launch override: ${rebound.content[0].text}`);
+}
+await reboundHandlers.get("session_shutdown")({}, {});
 process.exit(0);
 EOF
 )
@@ -1526,7 +1546,7 @@ EOF
   status=$?
   expect_code 0 "$status" "omp watch extension code-root cross-home switch: $out"
   [ -z "$out" ] || fail "omp watch extension code-root cross-home test printed output: $out"
-  pass ".omp watch extension: canonical homes stay supervised and later activations preserve cross-home records"
+  pass ".omp watch extension: canonical homes stay supervised and later activations or factory binds preserve cross-home records"
 }
 
 test_turnend_guard_refuses_an_unbound_home_loudly() {

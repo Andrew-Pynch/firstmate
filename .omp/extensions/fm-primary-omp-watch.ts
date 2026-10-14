@@ -86,6 +86,7 @@ import { encodeFirstmateOperationalInput, firstmateShellInvocation } from "../..
 import { runCommandAsync } from "../../.pi/extensions/lib/fm-async-exec.ts";
 import {
   bindFirstmateHome,
+  consumeFirstmateLaunchOverride,
   FIRSTMATE_HOME_ENTRY,
   launchFmHome,
   recordedFirstmateHome,
@@ -1297,7 +1298,6 @@ export default function (pi: ExtensionAPI) {
   // serve: one process serves one home, so that is surfaced on every turn
   // instead of silently supervising the wrong state.
   let sessionHomeConflict = "";
-  let sessionActivated = false;
   function canonicalHome(home: string): string {
     try {
       return realpathSync(home);
@@ -1340,8 +1340,7 @@ export default function (pi: ExtensionAPI) {
     if (generation.stopping) generation = createGeneration();
     activateGeneration(generation);
     const binding = bindHome(ctx?.sessionManager);
-    const allowExplicitLaunchOverride = !sessionActivated;
-    sessionActivated = true;
+    const allowExplicitLaunchOverride = consumeFirstmateLaunchOverride();
     reconcileSessionHome(ctx?.sessionManager, ctx?.ui?.notify?.bind(ctx.ui), allowExplicitLaunchOverride);
     if (binding.status === "refused" || binding.status === "home-mismatch") {
       ctx?.ui?.notify?.(`watcher: not armed - ${binding.message}`, "warning");

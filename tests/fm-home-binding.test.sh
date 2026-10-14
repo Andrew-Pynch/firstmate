@@ -50,9 +50,8 @@ test_resolution_order() {
   assert_contains "$out" "home=$h2"$'\n'"source=session" "with no environment the session's recorded home must bind"
   out=$(env -u FM_HOME -u FM_ROOT_OVERRIDE bash "$LIB" resolve --code-root "$root")
   assert_contains "$out" "home=$root"$'\n'"source=code-root" "a code root that serves no other home is its own home"
-  out=$(FM_HOME=relative/home resolve "$root")
-  assert_contains "$out" "status=refused" "a relative FM_HOME must be refused, never replaced by a fallback"
-  assert_contains "$out" "rc=4" "a refusal must exit 4"
+  out=$(cd "$TMP_ROOT/order" && FM_HOME=h1 bash "$LIB" resolve --code-root "$root")
+  assert_contains "$out" "home=$TMP_ROOT/order/h1"$'\n'"source=env" "a relative FM_HOME must be anchored to the caller, as every shell script takes it"
   out=$(env -u FM_HOME -u FM_ROOT_OVERRIDE bash "$LIB" resolve --code-root "$root" --recorded "$TMP_ROOT/order/gone"; printf 'rc=%s\n' "$?")
   assert_contains "$out" "status=refused" "a recorded home that no longer exists must be refused"
   assert_contains "$out" "$TMP_ROOT/order/gone" "the refusal must name the vanished recorded home"
@@ -88,6 +87,24 @@ test_two_homes_one_code_root() {
   out=$(env -u FM_HOME -u FM_ROOT_OVERRIDE bash "$LIB" resolve --code-root "$root")
   assert_contains "$out" "source=code-root" "forgotten and vanished homes must no longer make the code root ambiguous"
   pass "fm-home-binding: two homes on one code root bind by recorded home or refuse, never by a shared default"
+}
+
+test_concurrent_served_updates_keep_every_home() {
+  local root="$TMP_ROOT/race/root" i pids=() count
+  make_primary_root "$root"
+  for i in 1 2 3 4 5 6 7 8; do mkdir -p "$TMP_ROOT/race/h$i"; done
+  bash "$LIB" note-served --code-root "$root" "$TMP_ROOT/race/h8" || fail "fixture: could not note h8"
+  for i in 1 2 3 4 5 6 7; do
+    bash "$LIB" note-served --code-root "$root" "$TMP_ROOT/race/h$i" &
+    pids+=("$!")
+  done
+  bash "$LIB" forget --code-root "$root" "$TMP_ROOT/race/h8" &
+  pids+=("$!")
+  for i in "${pids[@]}"; do wait "$i" || fail "a concurrent served-homes update failed"; done
+  count=$(bash "$LIB" served --code-root "$root" | grep -c .)
+  assert_equals 7 "$count" "concurrent additions must all survive"
+  assert_not_contains "$(bash "$LIB" served --code-root "$root")" "$TMP_ROOT/race/h8" "a concurrent forget must still take effect"
+  pass "fm-home-binding: concurrent served-homes additions and a forget never drop an unrelated entry"
 }
 
 test_linked_worktree_stands_down_and_is_never_noted() {
@@ -140,7 +157,7 @@ test_session_start_refuses_an_ambiguous_launch() {
   local root="$TMP_ROOT/start/root" h1="$TMP_ROOT/start/h1" out status f
   make_primary_root "$root"
   mkdir -p "$h1"
-  for f in fm-session-start.sh fm-home-binding-lib.sh fm-primary-scope-lib.sh; do
+  for f in fm-session-start.sh fm-home-binding-lib.sh fm-primary-scope-lib.sh fm-wake-lib.sh fm-classify-lib.sh fm-timeout-lib.sh; do
     cp "$ROOT/bin/$f" "$root/bin/$f"
   done
   FM_HOME="$h1" bash "$root/bin/fm-home-binding-lib.sh" note-served "$h1" || fail "fixture: could not note the served home"
@@ -188,6 +205,7 @@ test_watcher_down_banner() {
 
 test_resolution_order
 test_two_homes_one_code_root
+test_concurrent_served_updates_keep_every_home
 test_linked_worktree_stands_down_and_is_never_noted
 test_report_names_both_state_directories
 test_session_start_refuses_an_ambiguous_launch

@@ -29,8 +29,10 @@
 # With <primary-only>=1 (the extensions), step 4 on a code root that is not a
 # primary checkout (bin/fm-primary-scope-lib.sh, so a linked task worktree) is
 # "ineligible": the extension stands down silently, as every primary hook does
-# inside a child worktree. An explicit FM_HOME or recorded home that is not an
-# existing absolute directory is refused, never replaced by a fallback.
+# inside a child worktree. An explicit FM_HOME is taken exactly as every shell
+# script takes it (a relative one anchored to the caller's working directory);
+# a recorded home that no longer exists is refused, never replaced by a
+# fallback.
 # Results: FM_HOME_BINDING_STATUS=ok|ineligible|refused, FM_HOME_BINDING_HOME,
 # FM_HOME_BINDING_SOURCE, FM_HOME_BINDING_MESSAGE.
 #
@@ -38,8 +40,9 @@
 # home path per line, appended by fm_home_binding_note_served whenever a
 # process on a primary code root resolves an explicit FM_HOME other than the
 # code root (the omp extension at launch, bin/fm-session-start.sh when it holds
-# the lock). Entries whose directory no longer exists are ignored; `forget`
-# removes one deliberately.
+# the lock), under state/.code-root-served-homes.lock for the whole
+# read-modify-write. Entries whose directory no longer exists are ignored;
+# `forget` removes one deliberately.
 #
 # PER-PROCESS RECORD (<runtime-dir>/<pid>, runtime dir
 # ${FM_HOME_BINDING_RUNTIME_DIR:-${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/firstmate-home-binding-<uid>}).
@@ -108,8 +111,25 @@ fm_home_binding_served_others() {  # <code-root>
 }
 
 # Rewrite <code-root>'s served record atomically with <home> added (add) or
-# removed (forget). Returns 1 when the record cannot be written.
+# removed (forget), holding the record's lock for the whole read-modify-write
+# so two homes starting from one code root never drop each other's entry.
+# Returns 1 when the lock or the record cannot be taken or written.
 fm_home_binding_served_edit() {  # <add|forget> <code-root> <home>
+  local lock="$2/state/.code-root-served-homes.lock" attempt=0 rc
+  mkdir -p "$2/state" 2>/dev/null || return 1
+  fm_home_binding_load_wake_lib || return 1
+  while ! fm_lock_try_acquire "$lock"; do
+    attempt=$((attempt + 1))
+    [ "$attempt" -lt 100 ] || return 1
+    sleep 0.05
+  done
+  fm_home_binding_served_edit_locked "$@"
+  rc=$?
+  fm_lock_release "$lock"
+  return "$rc"
+}
+
+fm_home_binding_served_edit_locked() {  # <add|forget> <code-root> <home>
   local action=$1 root=$2 home=$3 file tmp line canonical found=0
   file=$(fm_home_binding_served_file "$root")
   [ ! -L "$file" ] || return 1
@@ -120,7 +140,6 @@ fm_home_binding_served_edit() {  # <add|forget> <code-root> <home>
     done < "$file"
   fi
   [ "$action" = forget ] && [ ! -f "$file" ] && return 0
-  mkdir -p "$root/state" 2>/dev/null || return 1
   tmp=$(mktemp "$root/state/.code-root-served-homes.XXXXXX" 2>/dev/null) || return 1
   if [ -f "$file" ]; then
     while IFS= read -r line || [ -n "$line" ]; do
@@ -161,11 +180,12 @@ fm_home_binding_set() {  # <status> <home> <source> <message>
 fm_home_binding_resolve() {  # <code-root> <recorded-home> <primary-only 0|1>
   local root=$1 recorded=$2 primary_only=${3:-0} others list
   if [ -n "${FM_HOME:-}" ]; then
-    if fm_home_binding_is_home_dir "$FM_HOME"; then
-      fm_home_binding_set ok "$FM_HOME" env ""
-    else
-      fm_home_binding_set refused "" "" "FM_HOME '$FM_HOME' is not an existing absolute directory; set FM_HOME to this session's Firstmate home"
-    fi
+    # An explicit home is taken as every shell script takes it; a relative one
+    # is anchored to the caller's working directory, never validated away.
+    case "$FM_HOME" in
+      /*) fm_home_binding_set ok "$FM_HOME" env "" ;;
+      *) fm_home_binding_set ok "$PWD/$FM_HOME" env "" ;;
+    esac
     return 0
   fi
   if [ -n "${FM_ROOT_OVERRIDE:-}" ]; then
@@ -197,11 +217,14 @@ fm_home_binding_runtime_dir() {
   printf '%s\n' "${FM_HOME_BINDING_RUNTIME_DIR:-${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/firstmate-home-binding-$(id -u)}"
 }
 
+fm_home_binding_load_wake_lib() {
+  command -v fm_pid_identity >/dev/null 2>&1 && return 0
+  # shellcheck source=bin/fm-wake-lib.sh
+  . "$FM_HOME_BINDING_LIB_DIR/fm-wake-lib.sh"
+}
+
 fm_home_binding_identity() {  # <pid>
-  if ! command -v fm_pid_identity >/dev/null 2>&1; then
-    # shellcheck source=bin/fm-wake-lib.sh
-    . "$FM_HOME_BINDING_LIB_DIR/fm-wake-lib.sh" || return 1
-  fi
+  fm_home_binding_load_wake_lib || return 1
   fm_pid_identity "$1"
 }
 

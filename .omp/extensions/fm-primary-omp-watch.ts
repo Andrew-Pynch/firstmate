@@ -1285,22 +1285,37 @@ export default function (pi: ExtensionAPI) {
     consumeWake(generation, message.content);
   });
 
+  // Record the bound home in the session this process now serves, so the next
+  // environment-less resume of THAT session binds it too: an explicit launch
+  // home always wins, and a home recovered from a record is carried into a
+  // new session (/new, /fork) that has none of its own.
+  function recordSessionHome(sessionManager?: { getEntries?: () => unknown[] }): void {
+    const binding = homeBinding;
+    if (binding?.status !== "ok" || (binding.source !== "env" && binding.source !== "session")) return;
+    const recorded = recordedFirstmateHome(sessionManager);
+    if (recorded === binding.home || (binding.source === "session" && recorded)) return;
+    try {
+      pi.appendEntry?.(FIRSTMATE_HOME_ENTRY, { home: binding.home });
+    } catch {
+    }
+  }
+
   pi.on?.("session_start", async (_event, ctx) => {
     childSession = liveGenerationElsewhere(generation) !== null;
     if (childSession) return;
     if (generation.stopping) generation = createGeneration();
     activateGeneration(generation);
     const binding = bindHome(ctx?.sessionManager);
-    if (binding.status === "ok" && launchFmHome && recordedFirstmateHome(ctx?.sessionManager) !== binding.home) {
-      try {
-        pi.appendEntry?.(FIRSTMATE_HOME_ENTRY, { home: binding.home });
-      } catch {
-      }
-    }
+    recordSessionHome(ctx?.sessionManager);
     if (binding.status === "refused") ctx?.ui?.notify?.(`watcher: not armed - ${binding.message}`, "warning");
     markLoaded();
     if (lockOwnership() !== "owned") return;
     activateOwnedWatch(generation);
+  });
+  // omp 18.2.10+ keeps the process across /new, /resume and /fork and emits
+  // session_switch instead of session_start, so the record follows it there.
+  pi.on?.("session_switch", (_event, ctx) => {
+    if (!childSession) recordSessionHome(ctx?.sessionManager);
   });
   pi.on?.("session_shutdown", async () => {
     // A child session's end leaves the primary serving; it holds no generation.

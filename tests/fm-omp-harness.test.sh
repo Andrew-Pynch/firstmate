@@ -1295,6 +1295,17 @@ for (const other of [process.env.HOME_A, process.env.REPO]) {
   if (existsSync(`${other}/state/.omp-watch-extension-loaded`)) throw new Error(`a loaded marker leaked into ${other}`);
 }
 if (appended.length !== 0) throw new Error(`a recorded-home resume must not re-record its home: ${JSON.stringify(appended)}`);
+// /new from the resumed process: the fresh session has no record of its own,
+// so the recovered home is carried into it for that session's next resume.
+await handlers.get("session_switch")({ type: "session_switch", reason: "new" }, { sessionManager: { getEntries: () => [] } });
+if (JSON.stringify(appended) !== JSON.stringify([{ type: "firstmate-home", data: { home: process.env.HOME_B } }])) {
+  throw new Error(`a new session after an environment-less resume did not record the recovered home: ${JSON.stringify(appended)}`);
+}
+// A resumed session that already names a home keeps its own record.
+await handlers.get("session_switch")({ type: "session_switch", reason: "resume" }, { sessionManager: { getEntries: () => [
+  { type: "custom", customType: "firstmate-home", data: { home: process.env.HOME_A } },
+] } });
+if (appended.length !== 1) throw new Error(`a recovered home overwrote another session's own record: ${JSON.stringify(appended)}`);
 await handlers.get("session_shutdown")({}, {});
 process.exit(0);
 EOF

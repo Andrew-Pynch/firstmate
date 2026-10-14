@@ -82,7 +82,8 @@ A lock another session holds and a truncated digest therefore surface as digest 
 
 Cursor's `sessionStart` fires at every session open with no source distinction, including a resumed session, so a resume re-runs the full digest; that is redundant and idempotent rather than a lost helm.
 
-An omp process whose home binding is refused never starts the wrapper: its session-start context is the `HOME_MISMATCH` refusal instead, and a linked task worktree stands down without one ([configuration](configuration.md#home-binding) "Home binding").
+An omp process whose home binding is refused never starts the wrapper: its session-start context is the `HOME_MISMATCH` refusal instead, and a linked task worktree stands down without one.
+While an active conversation belongs to another home, the extension retires any live generation and suppresses both session-start and compaction delivery ([configuration](configuration.md#home-binding) "Home binding").
 
 Cursor's compaction surface is uncovered in the same sense as Codex's interactive TUI above: Firstmate registers nothing for `preCompact`, so a compacted Cursor session keeps whatever context survived rather than receiving a fresh digest.
 

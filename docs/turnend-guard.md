@@ -80,7 +80,7 @@ Every other direct `FM_GUARD_GRACE` reader (`bin/fm-guard.sh`, the strict-watche
 The turn-end guard fires only when a turn ends, so a primary that sits idle while its watcher is dead stays silent until someone happens to look.
 The omp watch extension therefore runs `bin/fm-watcher-down.sh` at every agent start and shows its line, a `WATCHER DOWN` banner, at the top of that turn.
 The script prints only while a live harness holds the session lock, the home needs supervision, and no watcher has beaten for `FM_WATCHER_DOWN_BANNER_MINUTES` (default 10) minutes or the poll-derived grace when that is longer; its header owns the exact predicate and wording.
-An omp process whose home binding was refused shows the refusal as the banner instead (`docs/configuration.md` "Home binding").
+An omp process that serves no home or whose active conversation belongs to another home shows its home-binding diagnostic as the banner instead (`docs/configuration.md` "Home binding").
 
 ## Harness integrations
 

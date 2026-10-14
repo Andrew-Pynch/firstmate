@@ -1,0 +1,26 @@
+ok - fm-harness: omp detects by its anchored name; the marker is a precedence override that needs real omp ancestry
+ok - session lock and tmux liveness: omp is anchored, decoys stay out
+ok - session lock and fm-harness: a bun-run omp session (the macOS shape) identifies itself
+ok - fm-spawn: the omp launch line clears markers, pins posture, and wires the state-resident extension
+ok - fm-spawn: omp model validation is scoped to providers the listing can prove
+ok - fm-spawn: a real omp secondmate launch relies on auto-discovery while crewmates load one -e
+ok - fm-spawn: the config/secondmate-harness model pin is validated against the omp catalog before launch
+ok - fm-spawn: an omp secondmate refuses a home whose supervision extensions cannot be auto-discovered
+ok - fm-spawn: an omp secondmate refuses an old or unreadable runtime before endpoint creation
+ok - omp extension: agent_start busy, willContinue stays busy, plain agent_end idle, turn_end a notification
+ok - control, composer, and supervision-model tables carry omp's verified values
+ok - fm-wake-lib: the omp ownership proof is keyed on its own extensions and gates the hand-off tolerance
+ok - .omp turn-end guard: digest delivery, seatbelt block, one compelled continuation, flagged stop stands down
+ok - .omp watch extension: fm_watch_arm_omp arms once, repeats as a no-op, and delivers an actionable close as one hidden custom follow-up
+ok - .omp watch extension: one follow-up while the queue stays unacknowledged, successor and handshake preserved, delivery reopens after acknowledgement
+ok - .omp watch extension: an in-process child session never arms or receives wakes, and its end leaves the primary armed
+ok - .omp watch extension: after a shutdown with no session_start the next arm call or agent start arms a fresh generation, replays the stuck token, and wakes inject again
+ok - .omp watch extension: a restart after a task's cleanup never replays its status file, and replays nothing once every row is acknowledged
+ok - .omp watch extension: on a shared code root a resume arms for its recorded home, refuses with none, and an explicit launch records its home
+ok - .omp watch extension: canonical homes stay supervised and later activations or factory binds preserve cross-home records
+ok - .omp extensions: cross-home conversations suppress bound-home digests and guards until returning home
+ok - .omp turn-end guard: an unbound home refuses at session start instead of digesting the code root, and compels one continuation
+ok - .omp extensions: an unbound farm checkout warns every turn while task workers stay silent
+ok - .omp extensions: a descendant of the lock holder never overwrites either loaded marker
+ok - fm-remote-secondmate-control: the host-local launch and restart gates accept omp and keep every other refusal
+ok - fm-spawn: the parent remote-secondmate gate accepts omp and still refuses an adapter without a supervision protocol

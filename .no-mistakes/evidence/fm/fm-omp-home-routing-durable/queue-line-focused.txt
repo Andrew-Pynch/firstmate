@@ -1,0 +1,13 @@
+ok - nothing waiting on the captain prints no line
+ok - the line names the most urgent waiting item and the count of the rest
+ok - with nothing due, the longest-waiting hold leads the line
+ok - dated deferrals and tracking rows are labeled, not counted as waiting on you
+ok - the pinned count and the queue program cannot disagree
+ok - the line stays inside its width and keeps both counts intact
+ok - an unreadable or refused model exits non-zero instead of reading as an empty queue
+ok - the extension pins one line above the editor and clears it when nothing waits
+ok - answering the item changes the line without a restart
+ok - a read that fails leaves the pinned line as it was
+ok - one read at a time, one coalesced follow-up, never a read per trigger
+ok - a cross-home conflict clears, invalidates, and later resumes the queue line
+ok - a worker pane never renders the captain's queue line

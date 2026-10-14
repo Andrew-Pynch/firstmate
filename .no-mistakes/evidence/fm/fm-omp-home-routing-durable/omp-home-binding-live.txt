@@ -1,0 +1,3 @@
+ok - omp omp/18.9.1: an explicit FM_HOME launch from a linked code root records its home and takes the home's stale lock
+ok - omp omp/18.9.1: a resume with FM_HOME unset reclaims the recorded home's stale lock, exports the home, and arms the watcher for it
+ok - omp omp/18.9.1: a launch with no FM_HOME and no recorded home from the linked code root arms nothing

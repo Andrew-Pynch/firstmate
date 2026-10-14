@@ -1,0 +1,11 @@
+ok - fm-home-binding: FM_HOME, then FM_ROOT_OVERRIDE, then the recorded home, then the code root
+ok - fm-home-binding: two homes on one code root bind by recorded home or refuse, never by a shared default
+ok - fm-home-binding: concurrent served-homes additions and a forget never drop an unrelated entry
+ok - fm-home-binding: a served-homes record that cannot be written is reported with the fallback it reopens
+ok - fm-home-binding: a linked task worktree stands down and never records a served home
+ok - fm-home-binding: an unmarked farm checkout warns while a task worker stays silent
+ok - fm-primary-scope: a linked code root serving a separate primary home is guarded; workers and unnamed homes stay exempt
+ok - fm-home-binding: the session-start comparison names both state directories on a mismatch
+ok - fm-session-start: a launch naming no home on a shared code root refuses before locking
+ok - fm-session-start: a harness whose extensions serve another home leaves the selected home untouched
+ok - fm-watcher-down: the banner fires only for a held lock, supervision need, and a stale beat

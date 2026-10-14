@@ -1,0 +1,2 @@
+ok - omp omp/18.9.1: a waiting queue pins one line above the editor
+ok - omp omp/18.9.1: nothing waiting clears the pin instead of leaving a stale line

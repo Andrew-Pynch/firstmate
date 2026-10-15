@@ -175,7 +175,7 @@ test_html_encoded_assignments_refused() {
   for entity in '&quot;' '&apos;' '&#34;' '&#39;' '&#034;' '&#x22;' '&#X22;' '&#x27;' \
     '&bsol;' '&#92;' '&#x5c;' '&Tab;' '&amp;quot;' \
     '&#34' '&#39' '&#034' '&#x22' '&#X22' '&#x27' '&#92' '&#x5c' '&#9' '&#10' \
-    '&#x9' '&#xa' '&amp;#34'; do
+    '&#x9' '&#xa' '&amp;#34' '&quot' '&QUOT' '&amp;quot'; do
     for assignment in "DB_PASSWORD=${entity}private secretphrase${entity}" \
       "APP_SECRET=alpha${entity}secretphrase moresecret" \
       "API_KEY=\"alpha${entity}secretphrase\"" \

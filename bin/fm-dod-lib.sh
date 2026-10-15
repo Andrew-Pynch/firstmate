@@ -10,6 +10,9 @@
 # prints the block on stdout with no trailing blank line. The caller validates the
 # mode; an unknown mode is refused rather than silently rendered as the pipeline
 # contract.
+# PR modes render a self-contained, worker-side StarCube Provenance instruction
+# conditional on .claude/skills/starcube-pr/SKILL.md in the worker's repository.
+# Provenance is informational, never a readiness gate; local-only omits it.
 # The optional third argument is the task's full ship-branch name (a project's
 # registered prefix may replace the legacy `fm/` one); it defaults to `fm/<task-id>`
 # and is the immutable task branch rendered in every delivery contract.
@@ -488,6 +491,7 @@ Ship branch: $branch
 This task ships **direct-PR**: you raise the PR yourself, without the no-mistakes pipeline.
 The task is complete only when committed on your branch.
 When it is implemented and committed, push your branch and open a PR with \`$forge_cli\` that is ready for review, not a draft$pr_base.
+If this repo has \`.claude/skills/starcube-pr/SKILL.md\`, end the PR body with a \`## Provenance\` section of four bullets: \`**Skills:**\` names of skills whose body you loaded this run (\`none recorded\` if your transcript shows none), \`**Worker:**\` harness and model plus \`Sol: reviewed\` or \`Sol: not run\`, \`**Plan:**\` and \`**Report:**\` paths or \`none\`. It is informational, never a readiness gate; invent nothing and omit home paths, hosts, and secrets.
 Before you report done, read the PR back from the forge and confirm it is not a draft $draft_check
 A draft cannot be merged, so a done report on one leaves the merge unasked.
 Then append \`done [at=<epoch>]: PR {url}\` to the status file and stop.
@@ -523,6 +527,7 @@ EOF
       fm_nm_driving_block "$forge"
       cat <<EOF
 
+If this repo has \`.claude/skills/starcube-pr/SKILL.md\`, end the PR body with a \`## Provenance\` section of four bullets: \`**Skills:**\` names of skills whose body you loaded this run (\`none recorded\` if your transcript shows none), \`**Worker:**\` harness and model plus \`Sol: reviewed\` or \`Sol: not run\`, \`**Plan:**\` and \`**Report:**\` paths or \`none\`. It is informational, never a readiness gate; invent nothing and omit home paths, hosts, and secrets.
 After /no-mistakes reports CI green (the CI-ready return point - do not wait for it to keep monitoring in the background until merge), read the PR back from the forge and confirm it is not a draft $draft_check
 A draft cannot be merged, so a done report on one leaves the merge unasked.
 Then append \`done [at=<epoch>]: PR {url} checks green\` and stop. You are finished.

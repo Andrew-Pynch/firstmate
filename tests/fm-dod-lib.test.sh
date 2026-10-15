@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Behavior tests for bin/fm-dod-lib.sh's named-head reachability gate on ship
-# done: acceptance (issue 4768). The gate must test the commit the worker names,
-# not merely that some remote-tracking branch exists or moved.
+# Behavior tests for bin/fm-dod-lib.sh's generated delivery contract and named-head
+# reachability gate on ship done: acceptance (issue 4768). The gate must test
+# the commit the worker names, not merely that some remote branch moved.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -424,6 +424,33 @@ EOF
   pass "promotion keeps a scout's recorded base branch and refuses local-only for it"
 }
 
+# The rendered brief is the worker-facing output contract, not library source.
+test_pr_modes_render_informational_provenance() {
+  local mode forge output line
+  line='If this repo has `.claude/skills/starcube-pr/SKILL.md`, end the PR body with a `## Provenance` section of four bullets: `**Skills:**` names of skills whose body you loaded this run (`none recorded` if your transcript shows none), `**Worker:**` harness and model plus `Sol: reviewed` or `Sol: not run`, `**Plan:**` and `**Report:**` paths or `none`. It is informational, never a readiness gate; invent nothing and omit home paths, hosts, and secrets.'
+  for forge in none forgejo; do
+    for mode in direct-PR no-mistakes; do
+      output="$TMP_ROOT/provenance-$mode-$forge.txt"
+      fm_dod_block "$mode" provenance fm/provenance "$forge" > "$output" \
+        || fail "could not render $mode/$forge"
+      [ "$(grep -Fxc "$line" "$output")" -eq 1 ] \
+        || fail "$mode/$forge did not render the exact self-contained provenance line once"
+    done
+  done
+  for mode in direct-PR no-mistakes; do
+    output="$TMP_ROOT/no-provenance-$mode.txt"
+    # Gerrit publishes changes, not PR bodies; local-only never publishes.
+    fm_dod_block "$mode" provenance fm/provenance gerrit > "$output" \
+      || fail "could not render $mode/gerrit"
+    assert_no_grep '## Provenance' "$output" "non-PR delivery acquired PR provenance"
+  done
+  output="$TMP_ROOT/no-provenance-local-only.txt"
+  fm_dod_block local-only provenance > "$output" || fail "could not render local-only"
+  assert_no_grep '## Provenance' "$output" "local-only acquired PR provenance"
+  pass "PR modes render exact informational provenance; non-PR modes omit it"
+}
+
+test_pr_modes_render_informational_provenance
 test_scout_done_is_not_gated
 test_unpushed_ship_done_is_refused
 test_no_mistakes_prevalidation_done_is_not_gated

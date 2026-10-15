@@ -427,6 +427,7 @@ EOF
 # The rendered brief is the worker-facing output contract, not library source.
 test_pr_modes_render_informational_provenance() {
   local mode forge output line
+  # shellcheck disable=SC2016  # single quotes keep backticks literal in the exact output contract
   line='If this repo has `.claude/skills/starcube-pr/SKILL.md`, end the PR body with a `## Provenance` section of four bullets: `**Skills:**` names of skills whose body you loaded this run (`none recorded` if your transcript shows none), `**Worker:**` harness and model plus `Sol: reviewed` or `Sol: not run`, `**Plan:**` and `**Report:**` paths or `none`. It is informational, never a readiness gate; invent nothing and omit home paths, hosts, and secrets.'
   for forge in none forgejo; do
     for mode in direct-PR no-mistakes; do

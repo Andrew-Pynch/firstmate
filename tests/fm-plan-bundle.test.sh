@@ -42,7 +42,13 @@ ordinary: task-id ask-user mask-value
 delimited: (sk-fixture),[ghp_fixture];"xoxb-fixture"
 public result
 FIXTURE
-  printf '<h1>Plan</h1>\n<p>100.100.10.20</p>\n' > "$task/plan.html"
+  cat > "$task/plan.html" <<'FIXTURE'
+<h1>Plan</h1>
+<p>100.100.10.20</p>
+<p title="A &amp; B">&quot;safe text&quot; &#34; &#x27;</p>
+<code>DB_PASSWORD=fixture </code>
+<code>API_KEY="fixture with spaces" </code>
+FIXTURE
   cp "$task/report.md" "$TMP_ROOT/original-report.md"
   printf 'not an artifact\n' > "$task/ignored.txt"
   output=$(bundle scrub) || fail 'scrubbable fixture was refused'
@@ -66,7 +72,14 @@ delimited: (<redacted>),[<redacted>];"<redacted>"
 public result
 EXPECTED
   cmp -s "$TMP_ROOT/expected-report" "$dir/report.md" || fail 'token or assignment scrub differs'
-  [ "$(cat "$dir/plan.html")" = $'<h1>Plan</h1>\n<p><tailnet-ip></p>' ] || fail 'HTML artifact was not scrubbed'
+  cat > "$TMP_ROOT/expected-plan" <<'EXPECTED'
+<h1>Plan</h1>
+<p><tailnet-ip></p>
+<p title="A &amp; B">&quot;safe text&quot; &#34; &#x27;</p>
+<code><redacted> </code>
+<code><redacted> </code>
+EXPECTED
+  cmp -s "$TMP_ROOT/expected-plan" "$dir/plan.html" || fail 'HTML scrub changed safe markup or missed plain credentials'
   cmp -s "$TMP_ROOT/original-report.md" "$task/report.md" || fail 'source report changed'
   [ ! -e "$dir/ignored.txt" ] || fail 'bundle copied an unapproved file'
   for name in brief.md report.md plan.html; do
@@ -150,6 +163,30 @@ test_unquoted_escaped_assignments_refused() {
   pass 'unquoted escaped spaces, tabs, backslashes, and continuations refuse without credential fragments'
 }
 
+test_html_encoded_assignments_refused() {
+  local entity assignment
+  mkdir -p "$TMP_ROOT/home/data/encoded-value"
+  printf 'safe brief\n' > "$TMP_ROOT/home/data/encoded-value/brief.md"
+  printf 'safe report\n' > "$TMP_ROOT/home/data/encoded-value/report.md"
+  for entity in '&quot;' '&apos;' '&#34;' '&#39;' '&#034;' '&#x22;' '&#X22;' '&#x27;' \
+    '&bsol;' '&#92;' '&#x5c;' '&Tab;' '&amp;quot;'; do
+    for assignment in "DB_PASSWORD=${entity}alpha secretphrase${entity}" \
+      "APP_SECRET=alpha${entity}secretphrase moresecret" \
+      "API_KEY=\"alpha${entity}secretphrase\"" \
+      "API_TOKEN='alpha${entity}secretphrase'" \
+      "DB_PASSWORD=\"alpha\\${entity}secretphrase\""; do
+      printf '<code>%s </code>\n' "$assignment" > "$TMP_ROOT/home/data/encoded-value/plan.html"
+      cp "$TMP_ROOT/home/data/encoded-value/plan.html" "$TMP_ROOT/original-encoded"
+      assert_refused encoded-value
+      [ "$(cat "$TMP_ROOT/refused.err")" = 'error: bundle refused: residual leak or unreadable file in plan.html' ] \
+        || fail 'HTML-encoded assignment exposed credential fragments'
+      cmp -s "$TMP_ROOT/original-encoded" "$TMP_ROOT/home/data/encoded-value/plan.html" \
+        || fail 'refusal changed the original HTML-encoded assignment'
+    done
+  done
+  pass 'HTML-encoded quotes and escapes refuse without output, credential fragments, or retained bundles'
+}
+
 test_residual_leaks_refuse_entire_bundle() {
   local leak
   mkdir -p "$TMP_ROOT/home/data/leak"
@@ -205,6 +242,7 @@ test_scrub_and_digest
 test_private_keys_refused_before_bundle_creation
 test_unsupported_quoted_assignments_refused
 test_unquoted_escaped_assignments_refused
+test_html_encoded_assignments_refused
 test_residual_leaks_refuse_entire_bundle
 test_cgnat_guard_refuses_a_missed_scrub
 test_optional_inputs_and_invalid_tasks

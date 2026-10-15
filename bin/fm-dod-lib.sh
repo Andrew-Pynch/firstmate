@@ -12,7 +12,8 @@
 # contract.
 # PR modes render a self-contained, worker-side StarCube Provenance instruction
 # conditional on .claude/skills/starcube-pr/SKILL.md in the worker's repository.
-# Provenance is informational, never a readiness gate; local-only omits it.
+# Provenance is informational, never a readiness gate; local-only and Gerrit
+# change-publication blocks omit it.
 # The optional third argument is the task's full ship-branch name (a project's
 # registered prefix may replace the legacy `fm/` one); it defaults to `fm/<task-id>`
 # and is the immutable task branch rendered in every delivery contract.

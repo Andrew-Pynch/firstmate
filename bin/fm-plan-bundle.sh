@@ -6,8 +6,16 @@
 # (FM_HOME defaults to FM_ROOT_OVERRIDE or this script's repository root).
 # Copies only those files to a private mktemp directory under TMPDIR (or /tmp),
 # leaving the sources unchanged. At least one file must exist.
-# Replaces HOME with ~, tailnet hosts and CGNAT IPs with placeholders, supported
-# GitHub/Slack/sk- tokens and TOKEN/SECRET/KEY/PASSWORD assignments with <redacted>.
+# Replaces HOME with ~, tailnet hosts and CGNAT IPs with placeholders, and
+# gh[pousr]_/github_pat_, xox[abprs]-, and sk- tokens with <redacted>.
+# Uppercase names ending in TOKEN/SECRET/KEY/PASSWORD have their assignments
+# replaced with <redacted>; literal single-line quoted values (including escaped
+# quotes) and plain values must end at whitespace or the end of the line.
+# Refuses unquoted backslashes, incomplete or concatenated quoting, command or
+# process substitutions, braced/arithmetic expansions, compound arrays, and
+# HTML-encoded quotes/escapes in assignments (including &quot without its
+# semicolon and semicolonless numeric references).
+# Artifact text is never evaluated as shell code.
 # Raw PEM private-key markers refuse before any bundle is created or copied,
 # reporting only the artifact name and line number. Remaining /home/, .ts.net,
 # CGNAT, PRIVATE KEY, or unsupported assignments refuse without leaked bytes.
@@ -20,6 +28,7 @@
 # prepare_attachment_upload, and reads the document back with get_document.
 # This tool does no network I/O. The bucket is NOT used: deepstar/AGENTS.md:282
 # prohibits agent bucket writes and write credentials.
+# CLI regression coverage: tests/fm-plan-bundle.test.sh.
 set -euo pipefail
 umask 077
 

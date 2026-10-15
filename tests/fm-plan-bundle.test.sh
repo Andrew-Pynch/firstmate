@@ -36,9 +36,10 @@ FIXTURE
 tokens: ghp_fixture gho_fixture ghu_fixture ghs_fixture ghr_fixture github_pat_fixture xoxa-fixture xoxb-fixture xoxp-fixture xoxr-fixture xoxs-fixture sk-fixture
 assignments: API_TOKEN=fixture APP_SECRET=fixture API_KEY=fixture DB_PASSWORD=fixture
 quoted: API_TOKEN="fixture with spaces" DB_PASSWORD='fixture with spaces'
------BEGIN RSA PRIVATE KEY-----
-fixture-private-material
------END RSA PRIVATE KEY-----
+escaped: DB_PASSWORD="alpha\"secret phrase" APP_SECRET='alpha\'secret phrase'
+backslashes: API_KEY="alpha\\" TOKEN='beta\\'
+ordinary: task-id ask-user mask-value
+delimited: (sk-fixture),[ghp_fixture];"xoxb-fixture"
 public result
 FIXTURE
   printf '<h1>Plan</h1>\n<p>100.100.10.20</p>\n' > "$task/plan.html"
@@ -58,10 +59,13 @@ EOF
 tokens: <redacted> <redacted> <redacted> <redacted> <redacted> <redacted> <redacted> <redacted> <redacted> <redacted> <redacted> <redacted>
 assignments: <redacted> <redacted> <redacted> <redacted>
 quoted: <redacted> <redacted>
-<redacted>
+escaped: <redacted> <redacted>
+backslashes: <redacted> <redacted>
+ordinary: task-id ask-user mask-value
+delimited: (<redacted>),[<redacted>];"<redacted>"
 public result
 EXPECTED
-  cmp -s "$TMP_ROOT/expected-report" "$dir/report.md" || fail 'token, assignment, or private-key scrub differs'
+  cmp -s "$TMP_ROOT/expected-report" "$dir/report.md" || fail 'token or assignment scrub differs'
   [ "$(cat "$dir/plan.html")" = $'<h1>Plan</h1>\n<p><tailnet-ip></p>' ] || fail 'HTML artifact was not scrubbed'
   cmp -s "$TMP_ROOT/original-report.md" "$task/report.md" || fail 'source report changed'
   [ ! -e "$dir/ignored.txt" ] || fail 'bundle copied an unapproved file'
@@ -76,6 +80,52 @@ EXPECTED
   done
   rm -rf -- "$dir"
   pass 'all leak classes scrubbed, digests match, sources unchanged'
+}
+
+test_private_keys_refused_before_bundle_creation() {
+  local name marker placement
+  mkdir -p "$TMP_ROOT/home/data/private-key" "$TMP_ROOT/no-mktemp"
+  cat > "$TMP_ROOT/no-mktemp/mktemp" <<'SHIM'
+#!/usr/bin/env bash
+printf 'bundle creation attempted\n' >&2
+exit 99
+SHIM
+  chmod +x "$TMP_ROOT/no-mktemp/mktemp"
+  for name in brief.md report.md plan.html; do
+    for marker in '-----BEGIN PRIVATE KEY-----' '-----BEGIN RSA PRIVATE KEY-----' \
+      '-----BEGIN EC PRIVATE KEY-----' '-----BEGIN OPENSSH PRIVATE KEY-----' \
+      '-----BEGIN ENCRYPTED PRIVATE KEY-----' '-----END PRIVATE KEY-----'; do
+      for placement in plain assignment; do
+        printf 'safe brief\n' > "$TMP_ROOT/home/data/private-key/brief.md"
+        printf 'safe report\n' > "$TMP_ROOT/home/data/private-key/report.md"
+        printf 'safe plan\n' > "$TMP_ROOT/home/data/private-key/plan.html"
+        if [ "$placement" = plain ]; then
+          printf 'safe heading\n\n%s\nfixture-private-material\n%s\n' "$marker" "${marker/BEGIN/END}" \
+            > "$TMP_ROOT/home/data/private-key/$name"
+        else
+          printf 'safe heading\n\nAPI_KEY="%s"\nfixture-private-material\n' "$marker" \
+            > "$TMP_ROOT/home/data/private-key/$name"
+        fi
+        PATH="$TMP_ROOT/no-mktemp:$PATH" assert_refused private-key
+        [ "$(cat "$TMP_ROOT/refused.err")" = "error: bundle refused: private key marker in $name:3" ] \
+          || fail 'private key refusal did not report only artifact and line before bundle creation'
+      done
+    done
+  done
+  pass 'raw private keys refuse before bundle creation with only artifact and line diagnostics'
+}
+
+test_unsupported_quoted_assignments_refused() {
+  local assignment
+  mkdir -p "$TMP_ROOT/home/data/unterminated"
+  for assignment in 'DB_PASSWORD="alpha\"secret phrase' "APP_SECRET='alpha\\'secret phrase" \
+    'API_KEY=alpha"secret phrase"' 'API_TOKEN="alpha"suffix"secret phrase"'; do
+    printf '%s\ncontinued credential\n' "$assignment" > "$TMP_ROOT/home/data/unterminated/report.md"
+    assert_refused unterminated
+    [ "$(cat "$TMP_ROOT/refused.err")" = 'error: bundle refused: residual leak or unreadable file in report.md' ] \
+      || fail 'unsupported quoting exposed credential bytes'
+  done
+  pass 'unterminated, multiline, and concatenated quoted assignments refuse without leaked bytes'
 }
 
 test_residual_leaks_refuse_entire_bundle() {
@@ -130,6 +180,8 @@ test_optional_inputs_and_invalid_tasks() {
 }
 
 test_scrub_and_digest
+test_private_keys_refused_before_bundle_creation
+test_unsupported_quoted_assignments_refused
 test_residual_leaks_refuse_entire_bundle
 test_cgnat_guard_refuses_a_missed_scrub
 test_optional_inputs_and_invalid_tasks

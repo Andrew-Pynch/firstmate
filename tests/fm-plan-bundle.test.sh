@@ -128,6 +128,28 @@ test_unsupported_quoted_assignments_refused() {
   pass 'unterminated, multiline, and concatenated quoted assignments refuse without leaked bytes'
 }
 
+test_unquoted_escaped_assignments_refused() {
+  local assignment name
+  mkdir -p "$TMP_ROOT/home/data/escaped-value"
+  for name in brief.md report.md plan.html; do
+    for assignment in 'DB_PASSWORD=alpha\ secretphrase' $'API_TOKEN=alpha\\\tsecretphrase' \
+      $'APP_SECRET=alpha\\\nsecretphrase' $'API_KEY=alpha\\\nsecretphrase\\\nlastfragment' \
+      'DB_PASSWORD=alpha\\secretphrase'; do
+      printf 'safe brief\n' > "$TMP_ROOT/home/data/escaped-value/brief.md"
+      printf 'safe report\n' > "$TMP_ROOT/home/data/escaped-value/report.md"
+      printf 'safe plan\n' > "$TMP_ROOT/home/data/escaped-value/plan.html"
+      printf '%s\n' "$assignment" > "$TMP_ROOT/home/data/escaped-value/$name"
+      cp "$TMP_ROOT/home/data/escaped-value/$name" "$TMP_ROOT/original-escaped"
+      assert_refused escaped-value
+      [ "$(cat "$TMP_ROOT/refused.err")" = "error: bundle refused: residual leak or unreadable file in $name" ] \
+        || fail 'unquoted escaped assignment exposed credential fragments'
+      cmp -s "$TMP_ROOT/original-escaped" "$TMP_ROOT/home/data/escaped-value/$name" \
+        || fail 'refusal changed the original escaped assignment'
+    done
+  done
+  pass 'unquoted escaped spaces, tabs, backslashes, and continuations refuse without credential fragments'
+}
+
 test_residual_leaks_refuse_entire_bundle() {
   local leak
   mkdir -p "$TMP_ROOT/home/data/leak"
@@ -182,6 +204,7 @@ test_optional_inputs_and_invalid_tasks() {
 test_scrub_and_digest
 test_private_keys_refused_before_bundle_creation
 test_unsupported_quoted_assignments_refused
+test_unquoted_escaped_assignments_refused
 test_residual_leaks_refuse_entire_bundle
 test_cgnat_guard_refuses_a_missed_scrub
 test_optional_inputs_and_invalid_tasks

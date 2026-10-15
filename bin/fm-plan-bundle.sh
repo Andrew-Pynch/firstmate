@@ -73,7 +73,7 @@ for name in "${files[@]}"; do
     -e 's#[A-Za-z0-9-]+\.tail[0-9a-f]+\.ts\.net#<tailnet-host>#g' \
     -e "s#$cgnat#<tailnet-ip>#g" \
     -e 's#(^|[^A-Za-z0-9_])(gh[pousr]_|github_pat_|xox[abprs]-|sk-)[A-Za-z0-9_-]+#\1<redacted>#g' \
-    -e 's#[A-Z0-9_]*(TOKEN|SECRET|KEY|PASSWORD)=("([^"\\]|\\.)*"|'"'"'([^'"'"'\\]|\\.)*'"'"'|[^"'"'"'[:space:]]+)([[:space:]]|$)#<redacted>\5#g' \
+    -e 's#[A-Z0-9_]*(TOKEN|SECRET|KEY|PASSWORD)=("([^"\\]|\\.)*"|'"'"'([^'"'"'\\]|\\.)*'"'"'|[^"'"'"'\\[:space:]]+)([[:space:]]|$)#<redacted>\5#g' \
     "$BUNDLE/$name" > "$BUNDLE/.scrubbed"
   mv -- "$BUNDLE/.scrubbed" "$BUNDLE/$name"
   rc=0

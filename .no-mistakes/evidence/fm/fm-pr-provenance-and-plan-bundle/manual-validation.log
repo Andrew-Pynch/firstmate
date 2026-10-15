@@ -1,0 +1,76 @@
+$ bash bin/fm-plan-bundle.sh publish
+bb94dc73097e6b08858934483e94535b292635eb12d6368cf57f524b1b2bff62  brief.md
+48ba27a7303ad91302f3e121e053f6595af3997322d9162f5cabfb3d60bb1c0e  report.md
+32fd00e576d5fd951d391f222515d662323ae683330bb64a1fc84dc789f3c06c  plan.html
+bundle=<isolated-private-bundle>
+Verified: directory mode 0700; only approved files; original bytes unchanged; every printed digest matches exported bytes.
+
+$ bash bin/fm-plan-bundle.sh pem
+exit=1; stdout empty; error: bundle refused: private key marker in report.md:3
+No bundle retained; input unchanged; no artifact command executed.
+
+$ bash bin/fm-plan-bundle.sh array
+exit=1; stdout empty; error: bundle refused: residual leak or unreadable file in report.md
+No bundle retained; input unchanged; no artifact command executed.
+
+$ bash bin/fm-plan-bundle.sh escaped-space
+exit=1; stdout empty; error: bundle refused: residual leak or unreadable file in report.md
+No bundle retained; input unchanged; no artifact command executed.
+
+$ bash bin/fm-plan-bundle.sh continued
+exit=1; stdout empty; error: bundle refused: residual leak or unreadable file in report.md
+No bundle retained; input unchanged; no artifact command executed.
+
+$ bash bin/fm-plan-bundle.sh shell-substitution
+exit=1; stdout empty; error: bundle refused: residual leak or unreadable file in report.md
+No bundle retained; input unchanged; no artifact command executed.
+
+$ bash bin/fm-plan-bundle.sh backtick
+exit=1; stdout empty; error: bundle refused: residual leak or unreadable file in report.md
+No bundle retained; input unchanged; no artifact command executed.
+
+$ bash bin/fm-plan-bundle.sh parameter
+exit=1; stdout empty; error: bundle refused: residual leak or unreadable file in report.md
+No bundle retained; input unchanged; no artifact command executed.
+
+$ bash bin/fm-plan-bundle.sh html-named
+exit=1; stdout empty; error: bundle refused: residual leak or unreadable file in plan.html
+No bundle retained; input unchanged; no artifact command executed.
+
+$ bash bin/fm-plan-bundle.sh html-decimal
+exit=1; stdout empty; error: bundle refused: residual leak or unreadable file in plan.html
+No bundle retained; input unchanged; no artifact command executed.
+
+$ bash bin/fm-plan-bundle.sh html-hex
+exit=1; stdout empty; error: bundle refused: residual leak or unreadable file in plan.html
+No bundle retained; input unchanged; no artifact command executed.
+
+$ bash bin/fm-plan-bundle.sh residual-home
+exit=1; stdout empty; error: bundle refused: residual leak or unreadable file in report.md
+No bundle retained; input unchanged; no artifact command executed.
+
+$ bash bin/fm-plan-bundle.sh residual-host
+exit=1; stdout empty; error: bundle refused: residual leak or unreadable file in report.md
+No bundle retained; input unchanged; no artifact command executed.
+
+$ fm_dod_block direct-PR validation fm/validation none
+exit=0; exact provenance line count=1; rendered output saved.
+
+$ fm_dod_block no-mistakes validation fm/validation none
+exit=0; exact provenance line count=1; rendered output saved.
+
+$ fm_dod_block direct-PR validation fm/validation forgejo
+exit=0; exact provenance line count=1; rendered output saved.
+
+$ fm_dod_block no-mistakes validation fm/validation forgejo
+exit=0; exact provenance line count=1; rendered output saved.
+
+$ fm_dod_block direct-PR validation fm/validation gerrit
+exit=0; exact provenance line count=0; rendered output saved.
+
+$ fm_dod_block no-mistakes validation fm/validation gerrit
+exit=0; exact provenance line count=0; rendered output saved.
+
+$ fm_dod_block local-only validation fm/validation none
+exit=0; exact provenance line count=0; rendered output saved.
+

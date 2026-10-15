@@ -1,0 +1,41 @@
+FM_TEST_BEGIN 2026-10-15T04:12:38Z tests/fm-plan-bundle.test.sh family=unclassified expected_gate_skip=none
+ok - all leak classes scrubbed, digests match, sources unchanged
+ok - raw private keys refuse before bundle creation with only artifact and line diagnostics
+ok - unterminated, multiline, and concatenated quoted assignments refuse without leaked bytes
+ok - unquoted escaped spaces, tabs, backslashes, and continuations refuse without credential fragments
+ok - HTML-encoded quotes and escapes refuse without output, credential fragments, or retained bundles
+ok - shell expansions and compound arrays refuse without evaluation, credential fragments, or retained bundles
+ok - residual home, tailnet, and private-key leaks refuse without output or retained files
+ok - independent CGNAT leak guard refuses a simulated scrub miss
+ok - existing optional inputs accepted; empty, absent, and traversal tasks refused
+all fm-plan-bundle tests passed
+FM_TEST_END 2026-10-15T04:12:51Z tests/fm-plan-bundle.test.sh exit=0 duration_ms=13535 gate_skip=false
+FM_TEST_BEGIN 2026-10-15T04:12:51Z tests/fm-dod-lib.test.sh family=pure-contract-unit expected_gate_skip=none
+ok - PR modes render exact informational provenance; non-PR modes omit it
+ok - scout done: is not gated
+ok - unpushed ship done: is refused
+ok - no-mistakes pre-validation done: is not gated
+ok - named head on a remote-tracking ref is accepted
+ok - a moved remote branch that lacks the named head is refused
+ok - a 40-hex token in the note is not the named head
+ok - a recorded merged PR satisfies the gate after prune
+ok - the merged-PR short-circuit applies only to the recorded PR the done line names
+ok - a forge-recorded head for the named PR is accepted without a local object
+ok - a direct-PR recorded head does not cover a later unpushed commit
+ok - no-mistakes CI-ready done: with extra text is gated
+ok - keyed and spaced ship done: lines are gated
+ok - local-only linked named branch is reachable from the project clone
+ok - local-only detached HEAD only in the disposable copy is refused
+ok - standalone local-only done: requires the named head in the project clone
+ok - non-done lines are not gated
+ok - fenced and indented Captain lines are not authorized intent
+ok - PR-based DoD draft check uses gh-axi
+ok - promotion keeps a scout's recorded base branch and refuses local-only for it
+ok - worker role names the skill and its fallback skill file
+all fm-dod-lib tests passed
+FM_TEST_END 2026-10-15T04:12:56Z tests/fm-dod-lib.test.sh exit=0 duration_ms=4793 gate_skip=false
+FM_TEST_SUMMARY total=2 failed=0 skipped_gate=0 duration_ms=18781
+FM_TEST_SUMMARY_FAMILY family=pure-contract-unit count=1 duration_ms=4793 failed=0
+FM_TEST_SUMMARY_FAMILY family=unclassified count=1 duration_ms=13535 failed=0
+FM_TEST_SLOWEST rank=1 script=tests/fm-plan-bundle.test.sh duration_ms=13535
+FM_TEST_SLOWEST rank=2 script=tests/fm-dod-lib.test.sh duration_ms=4793

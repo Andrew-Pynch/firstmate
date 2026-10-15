@@ -1,0 +1,82 @@
+[
+  {
+    "scenario": "scrub-and-publish-local-bundle",
+    "result": "pass"
+  },
+  {
+    "scenario": "pem",
+    "result": "pass"
+  },
+  {
+    "scenario": "array",
+    "result": "pass"
+  },
+  {
+    "scenario": "escaped-space",
+    "result": "pass"
+  },
+  {
+    "scenario": "continued",
+    "result": "pass"
+  },
+  {
+    "scenario": "shell-substitution",
+    "result": "pass"
+  },
+  {
+    "scenario": "backtick",
+    "result": "pass"
+  },
+  {
+    "scenario": "parameter",
+    "result": "pass"
+  },
+  {
+    "scenario": "html-named",
+    "result": "pass"
+  },
+  {
+    "scenario": "html-decimal",
+    "result": "pass"
+  },
+  {
+    "scenario": "html-hex",
+    "result": "pass"
+  },
+  {
+    "scenario": "residual-home",
+    "result": "pass"
+  },
+  {
+    "scenario": "residual-host",
+    "result": "pass"
+  },
+  {
+    "scenario": "delivery-direct-PR-none",
+    "result": "pass"
+  },
+  {
+    "scenario": "delivery-no-mistakes-none",
+    "result": "pass"
+  },
+  {
+    "scenario": "delivery-direct-PR-forgejo",
+    "result": "pass"
+  },
+  {
+    "scenario": "delivery-no-mistakes-forgejo",
+    "result": "pass"
+  },
+  {
+    "scenario": "delivery-direct-PR-gerrit",
+    "result": "pass"
+  },
+  {
+    "scenario": "delivery-no-mistakes-gerrit",
+    "result": "pass"
+  },
+  {
+    "scenario": "delivery-local-only-none",
+    "result": "pass"
+  }
+]

@@ -39,7 +39,7 @@ quoted: API_TOKEN="fixture with spaces" DB_PASSWORD='fixture with spaces'
 escaped: DB_PASSWORD="alpha\"secret phrase" APP_SECRET='alpha\'secret phrase'
 backslashes: API_KEY="alpha\\" TOKEN='beta\\'
 ampersands: DB_PASSWORD="alpha&beta" API_TOKEN='alpha&beta' SECRET=alpha&beta
-literal values: API_KEY="alpha\&beta" APP_SECRET="cost$5 &copy; &#340; &#x220;"
+literal values: API_KEY="alpha\&beta" APP_SECRET="cost$5 &copy; &#340; &#x220;" TOKEN="alpha (secret phrase)"
 ordinary: task-id ask-user mask-value
 delimited: (sk-fixture),[ghp_fixture];"xoxb-fixture"
 public result
@@ -70,7 +70,7 @@ quoted: <redacted> <redacted>
 escaped: <redacted> <redacted>
 backslashes: <redacted> <redacted>
 ampersands: <redacted> <redacted> <redacted>
-literal values: <redacted> <redacted>
+literal values: <redacted> <redacted> <redacted>
 ordinary: task-id ask-user mask-value
 delimited: (<redacted>),[<redacted>];"<redacted>"
 public result
@@ -193,7 +193,7 @@ test_html_encoded_assignments_refused() {
   pass 'HTML-encoded quotes and escapes refuse without output, credential fragments, or retained bundles'
 }
 
-test_shell_expansion_assignments_refused() {
+test_unsupported_shell_assignments_refused() {
   local format assignment name
   mkdir -p "$TMP_ROOT/home/data/substitution"
   for name in brief.md report.md plan.html; do
@@ -206,7 +206,7 @@ test_shell_expansion_assignments_refused() {
       cp "$TMP_ROOT/home/data/substitution/$name" "$TMP_ROOT/original-substitution"
       assert_refused substitution
       [ "$(cat "$TMP_ROOT/refused.err")" = "error: bundle refused: residual leak or unreadable file in $name" ] \
-        || fail 'shell expansion refusal exposed credential fragments'
+        || fail 'unsupported shell assignment refusal exposed credential fragments'
       [ ! -e "$TMP_ROOT/executed" ] || fail 'artifact shell expansion was evaluated'
       cmp -s "$TMP_ROOT/original-substitution" "$TMP_ROOT/home/data/substitution/$name" \
         || fail 'refusal changed the original shell expansion'
@@ -222,9 +222,13 @@ API_TOKEN="${SAVED_TOKEN:-alpha secretphrase}"
 APP_SECRET=$[1 + 2]
 API_KEY=<(echo "alpha secretphrase" > "%s")
 API_KEY=>(echo "alpha secretphrase" > "%s")
+declare -a API_KEY=(alpha secretphrase)
+APP_SECRET=(alpha secretphrase)
+declare -A DB_PASSWORD=([first]=alpha [second]=secretphrase)
+API_TOKEN+=(alpha secretphrase)
 FORMATS
   done
-  pass 'shell expansions refuse without evaluation, credential fragments, or retained bundles'
+  pass 'shell expansions and compound arrays refuse without evaluation, credential fragments, or retained bundles'
 }
 
 test_residual_leaks_refuse_entire_bundle() {
@@ -283,7 +287,7 @@ test_private_keys_refused_before_bundle_creation
 test_unsupported_quoted_assignments_refused
 test_unquoted_escaped_assignments_refused
 test_html_encoded_assignments_refused
-test_shell_expansion_assignments_refused
+test_unsupported_shell_assignments_refused
 test_residual_leaks_refuse_entire_bundle
 test_cgnat_guard_refuses_a_missed_scrub
 test_optional_inputs_and_invalid_tasks

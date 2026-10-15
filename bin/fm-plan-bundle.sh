@@ -66,14 +66,20 @@ trap 'exit 143' TERM
 # Escape an arbitrary HOME as an ERE literal, including the sed delimiter.
 home_pattern=$(printf '%s\n' "${HOME%/}" | sed 's/[][\\.^$*+?(){}|#]/\\&/g')
 cgnat='100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.[0-9]+\.[0-9]+'
+assignment_prefix='[A-Z0-9_]*(TOKEN|SECRET|KEY|PASSWORD)=("([^"\\]|\\.)*|'"'"'([^'"'"'\\]|\\.)*|[^"'"'"'[:space:]]*)'
+encoded_escape='&(amp;)*(quot|apos|bsol|Tab|NewLine|#0*(9|10|13|34|39|92)|#x0*(9|a|d|22|27|5c));'
+unsupported_assignment=$assignment_prefix'(\\?'$encoded_escape'|\$\(|`)'
 for name in "${files[@]}"; do
   cp -- "$SOURCE/$name" "$BUNDLE/$name"
+  rc=0
+  LC_ALL=C grep -Ei -- "$unsupported_assignment" "$BUNDLE/$name" >/dev/null || rc=$?
+  [ "$rc" -eq 1 ] || die "bundle refused: residual leak or unreadable file in $name"
   sed -E \
     -e "s#$home_pattern#~#g" \
     -e 's#[A-Za-z0-9-]+\.tail[0-9a-f]+\.ts\.net#<tailnet-host>#g' \
     -e "s#$cgnat#<tailnet-ip>#g" \
     -e 's#(^|[^A-Za-z0-9_])(gh[pousr]_|github_pat_|xox[abprs]-|sk-)[A-Za-z0-9_-]+#\1<redacted>#g' \
-    -e 's#[A-Z0-9_]*(TOKEN|SECRET|KEY|PASSWORD)=("([^"&\\]|\\[^&])*"|'"'"'([^'"'"'&\\]|\\[^&])*'"'"'|[^"'"'"'&\\[:space:]]+)([[:space:]]|$)#<redacted>\5#g' \
+    -e 's#[A-Z0-9_]*(TOKEN|SECRET|KEY|PASSWORD)=("([^"\\]|\\.)*"|'"'"'([^'"'"'\\]|\\.)*'"'"'|[^"'"'"'\\[:space:]]+)([[:space:]]|$)#<redacted>\5#g' \
     "$BUNDLE/$name" > "$BUNDLE/.scrubbed"
   mv -- "$BUNDLE/.scrubbed" "$BUNDLE/$name"
   rc=0

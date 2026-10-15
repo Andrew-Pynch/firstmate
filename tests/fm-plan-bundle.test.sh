@@ -38,6 +38,8 @@ assignments: API_TOKEN=fixture APP_SECRET=fixture API_KEY=fixture DB_PASSWORD=fi
 quoted: API_TOKEN="fixture with spaces" DB_PASSWORD='fixture with spaces'
 escaped: DB_PASSWORD="alpha\"secret phrase" APP_SECRET='alpha\'secret phrase'
 backslashes: API_KEY="alpha\\" TOKEN='beta\\'
+ampersands: DB_PASSWORD="alpha&beta" API_TOKEN='alpha&beta' SECRET=alpha&beta
+literal values: API_KEY="alpha\&beta" APP_SECRET="cost$5 &copy;"
 ordinary: task-id ask-user mask-value
 delimited: (sk-fixture),[ghp_fixture];"xoxb-fixture"
 public result
@@ -47,7 +49,7 @@ FIXTURE
 <p>100.100.10.20</p>
 <p title="A &amp; B">&quot;safe text&quot; &#34; &#x27;</p>
 <code>DB_PASSWORD=fixture </code>
-<code>API_KEY="fixture with spaces" </code>
+<code>API_KEY="fixture with spaces" </code><span>&quot;</span>
 FIXTURE
   cp "$task/report.md" "$TMP_ROOT/original-report.md"
   printf 'not an artifact\n' > "$task/ignored.txt"
@@ -67,6 +69,8 @@ assignments: <redacted> <redacted> <redacted> <redacted>
 quoted: <redacted> <redacted>
 escaped: <redacted> <redacted>
 backslashes: <redacted> <redacted>
+ampersands: <redacted> <redacted> <redacted>
+literal values: <redacted> <redacted>
 ordinary: task-id ask-user mask-value
 delimited: (<redacted>),[<redacted>];"<redacted>"
 public result
@@ -77,7 +81,7 @@ EXPECTED
 <p><tailnet-ip></p>
 <p title="A &amp; B">&quot;safe text&quot; &#34; &#x27;</p>
 <code><redacted> </code>
-<code><redacted> </code>
+<code><redacted> </code><span>&quot;</span>
 EXPECTED
   cmp -s "$TMP_ROOT/expected-plan" "$dir/plan.html" || fail 'HTML scrub changed safe markup or missed plain credentials'
   cmp -s "$TMP_ROOT/original-report.md" "$task/report.md" || fail 'source report changed'
@@ -187,6 +191,35 @@ test_html_encoded_assignments_refused() {
   pass 'HTML-encoded quotes and escapes refuse without output, credential fragments, or retained bundles'
 }
 
+test_command_substitution_assignments_refused() {
+  local format assignment name
+  mkdir -p "$TMP_ROOT/home/data/substitution"
+  for name in brief.md report.md plan.html; do
+    while IFS= read -r format; do
+      assignment=${format/'%s'/"$TMP_ROOT/executed"}
+      printf 'safe brief\n' > "$TMP_ROOT/home/data/substitution/brief.md"
+      printf 'safe report\n' > "$TMP_ROOT/home/data/substitution/report.md"
+      printf 'safe plan\n' > "$TMP_ROOT/home/data/substitution/plan.html"
+      printf '%s\n' "$assignment" > "$TMP_ROOT/home/data/substitution/$name"
+      cp "$TMP_ROOT/home/data/substitution/$name" "$TMP_ROOT/original-substitution"
+      assert_refused substitution
+      [ "$(cat "$TMP_ROOT/refused.err")" = "error: bundle refused: residual leak or unreadable file in $name" ] \
+        || fail 'command substitution refusal exposed credential fragments'
+      [ ! -e "$TMP_ROOT/executed" ] || fail 'artifact command substitution was evaluated'
+      cmp -s "$TMP_ROOT/original-substitution" "$TMP_ROOT/home/data/substitution/$name" \
+        || fail 'refusal changed the original command substitution'
+    done <<'FORMATS'
+DB_PASSWORD=$(echo "alpha secretphrase" > "%s")
+DB_PASSWORD=`echo "alpha secretphrase" > "%s"`
+API_TOKEN="$(echo "alpha secretphrase" > "%s")"
+APP_SECRET="`echo "alpha secretphrase" > "%s"`"
+API_KEY=prefix$(echo "alpha secretphrase" > "%s")suffix
+API_KEY=prefix`echo "alpha secretphrase" > "%s"`suffix
+FORMATS
+  done
+  pass 'command substitutions refuse without evaluation, credential fragments, or retained bundles'
+}
+
 test_residual_leaks_refuse_entire_bundle() {
   local leak
   mkdir -p "$TMP_ROOT/home/data/leak"
@@ -243,6 +276,7 @@ test_private_keys_refused_before_bundle_creation
 test_unsupported_quoted_assignments_refused
 test_unquoted_escaped_assignments_refused
 test_html_encoded_assignments_refused
+test_command_substitution_assignments_refused
 test_residual_leaks_refuse_entire_bundle
 test_cgnat_guard_refuses_a_missed_scrub
 test_optional_inputs_and_invalid_tasks

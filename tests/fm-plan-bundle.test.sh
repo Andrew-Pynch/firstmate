@@ -39,7 +39,7 @@ quoted: API_TOKEN="fixture with spaces" DB_PASSWORD='fixture with spaces'
 escaped: DB_PASSWORD="alpha\"secret phrase" APP_SECRET='alpha\'secret phrase'
 backslashes: API_KEY="alpha\\" TOKEN='beta\\'
 ampersands: DB_PASSWORD="alpha&beta" API_TOKEN='alpha&beta' SECRET=alpha&beta
-literal values: API_KEY="alpha\&beta" APP_SECRET="cost$5 &copy;"
+literal values: API_KEY="alpha\&beta" APP_SECRET="cost$5 &copy; &#340; &#x220;"
 ordinary: task-id ask-user mask-value
 delimited: (sk-fixture),[ghp_fixture];"xoxb-fixture"
 public result
@@ -173,8 +173,10 @@ test_html_encoded_assignments_refused() {
   printf 'safe brief\n' > "$TMP_ROOT/home/data/encoded-value/brief.md"
   printf 'safe report\n' > "$TMP_ROOT/home/data/encoded-value/report.md"
   for entity in '&quot;' '&apos;' '&#34;' '&#39;' '&#034;' '&#x22;' '&#X22;' '&#x27;' \
-    '&bsol;' '&#92;' '&#x5c;' '&Tab;' '&amp;quot;'; do
-    for assignment in "DB_PASSWORD=${entity}alpha secretphrase${entity}" \
+    '&bsol;' '&#92;' '&#x5c;' '&Tab;' '&amp;quot;' \
+    '&#34' '&#39' '&#034' '&#x22' '&#X22' '&#x27' '&#92' '&#x5c' '&#9' '&#10' \
+    '&#x9' '&#xa' '&amp;#34'; do
+    for assignment in "DB_PASSWORD=${entity}private secretphrase${entity}" \
       "APP_SECRET=alpha${entity}secretphrase moresecret" \
       "API_KEY=\"alpha${entity}secretphrase\"" \
       "API_TOKEN='alpha${entity}secretphrase'" \
@@ -191,7 +193,7 @@ test_html_encoded_assignments_refused() {
   pass 'HTML-encoded quotes and escapes refuse without output, credential fragments, or retained bundles'
 }
 
-test_command_substitution_assignments_refused() {
+test_shell_expansion_assignments_refused() {
   local format assignment name
   mkdir -p "$TMP_ROOT/home/data/substitution"
   for name in brief.md report.md plan.html; do
@@ -204,10 +206,10 @@ test_command_substitution_assignments_refused() {
       cp "$TMP_ROOT/home/data/substitution/$name" "$TMP_ROOT/original-substitution"
       assert_refused substitution
       [ "$(cat "$TMP_ROOT/refused.err")" = "error: bundle refused: residual leak or unreadable file in $name" ] \
-        || fail 'command substitution refusal exposed credential fragments'
-      [ ! -e "$TMP_ROOT/executed" ] || fail 'artifact command substitution was evaluated'
+        || fail 'shell expansion refusal exposed credential fragments'
+      [ ! -e "$TMP_ROOT/executed" ] || fail 'artifact shell expansion was evaluated'
       cmp -s "$TMP_ROOT/original-substitution" "$TMP_ROOT/home/data/substitution/$name" \
-        || fail 'refusal changed the original command substitution'
+        || fail 'refusal changed the original shell expansion'
     done <<'FORMATS'
 DB_PASSWORD=$(echo "alpha secretphrase" > "%s")
 DB_PASSWORD=`echo "alpha secretphrase" > "%s"`
@@ -215,9 +217,14 @@ API_TOKEN="$(echo "alpha secretphrase" > "%s")"
 APP_SECRET="`echo "alpha secretphrase" > "%s"`"
 API_KEY=prefix$(echo "alpha secretphrase" > "%s")suffix
 API_KEY=prefix`echo "alpha secretphrase" > "%s"`suffix
+DB_PASSWORD=${SAVED_PASSWORD:-alpha secretphrase}
+API_TOKEN="${SAVED_TOKEN:-alpha secretphrase}"
+APP_SECRET=$[1 + 2]
+API_KEY=<(echo "alpha secretphrase" > "%s")
+API_KEY=>(echo "alpha secretphrase" > "%s")
 FORMATS
   done
-  pass 'command substitutions refuse without evaluation, credential fragments, or retained bundles'
+  pass 'shell expansions refuse without evaluation, credential fragments, or retained bundles'
 }
 
 test_residual_leaks_refuse_entire_bundle() {
@@ -276,7 +283,7 @@ test_private_keys_refused_before_bundle_creation
 test_unsupported_quoted_assignments_refused
 test_unquoted_escaped_assignments_refused
 test_html_encoded_assignments_refused
-test_command_substitution_assignments_refused
+test_shell_expansion_assignments_refused
 test_residual_leaks_refuse_entire_bundle
 test_cgnat_guard_refuses_a_missed_scrub
 test_optional_inputs_and_invalid_tasks

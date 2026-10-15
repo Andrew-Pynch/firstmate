@@ -67,8 +67,8 @@ trap 'exit 143' TERM
 home_pattern=$(printf '%s\n' "${HOME%/}" | sed 's/[][\\.^$*+?(){}|#]/\\&/g')
 cgnat='100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.[0-9]+\.[0-9]+'
 assignment_prefix='[A-Z0-9_]*(TOKEN|SECRET|KEY|PASSWORD)=("([^"\\]|\\.)*|'"'"'([^'"'"'\\]|\\.)*|[^"'"'"'[:space:]]*)'
-encoded_escape='&(amp;)*(quot|apos|bsol|Tab|NewLine|#0*(9|10|13|34|39|92)|#x0*(9|a|d|22|27|5c));'
-unsupported_assignment=$assignment_prefix'(\\?'$encoded_escape'|\$\(|`)'
+encoded_escape='&(amp;)*((quot|apos|bsol|Tab|NewLine);|#0*(9|10|13|34|39|92)(;|[^0-9]|$)|#x0*(9|a|d|22|27|5c)(;|[^0-9a-f]|$))'
+unsupported_assignment=$assignment_prefix'(\\?'$encoded_escape'|(\$|<|>)\(|\$\{|\$\[|`)'
 for name in "${files[@]}"; do
   cp -- "$SOURCE/$name" "$BUNDLE/$name"
   rc=0

@@ -41,7 +41,21 @@
 # age the page script keeps current, and the page re-fetches itself every 10 s
 # and swaps its panes in place (no reload; the reader's pane, selection, and
 # filter stay), so a need that disappears scores as a cleared call. The top bar
-# reads STALE once the page has not re-rendered for 10 minutes.
+# reads STALE once the page has not re-rendered for 10 minutes. Above the panes,
+# a Wins strip links the curated `wins` (work that demonstrably shipped).
+# At 760 px wide or less (a phone) the panes stack, items open in place instead
+# of in the inspector, Done today and Held calls start folded (tap a pane header),
+# keyboard hints are hidden, and type and tap targets grow to phone size. The
+# page writes manifest.json and its icons beside itself, so Add to Home Screen
+# opens it as a standalone app.
+# Answers: with answers_origin set (bin/fm-current-answers.sh's header), every
+# captain call (Needs you and Held calls) carries its options as buttons - the
+# curated "options", else lettered choices, yes/no, merge/close, or
+# approve/reject named in its words - plus a one-line text box. A first tap arms
+# an option and a second sends it; the receipt then moves from Main's inbox to
+# read to replied as the page reads /api/answers every 10 s, and answers whose
+# call left the page stay listed under Your answers. Each render publishes the
+# answerable calls with their revisions to state/.current-page/decisions.json.
 #   1 Needs you: curated needs re-checked within FM_CURRENT_PAGE_CONFIRM_HOURS
 #     (default 2), plus captain calls Main held within that window that no need
 #     covers yet. A need tied to a backlog row ("task") leaves the page the moment
@@ -74,7 +88,7 @@
 #                backticks for monospace text and its Copy button.
 #          "asked": when it was asked (default: the row's hold-set stamp).
 #          "checked": this need's own re-check time (default: top-level checked).
-#          "options", "rec": option chips, with the recommended one marked.
+#          "options", "rec": answer buttons (chips when answers are off), the recommended one marked.
 #          "message", "to": recipient-ready text with a Copy message button that
 #                copies the exact raw string, its text folded below.
 #          "who", "machine": the worker or second mate it concerns and its host.
@@ -83,6 +97,8 @@
 #   hide   ["<task-id>", ...]                   workers left off the page
 #   mates  {"<id>": {"machine", "scope"}}       secondmate host and scope
 #   links  [{"label", "url"}]                   link-outs in the top bar (O opens the first)
+#   wins   [{"t", "url", "why", "kind"}]        up to 10 Wins cards: title, the link that
+#          shows the success, one line on why it matters, optional short link label
 #   initiatives [{"id", "title", "match"}]
 #          "match": {"project_tokens": [...], "linear_projects": [...],
 #                    "title_keywords": [...]} uses OR within and across lists.

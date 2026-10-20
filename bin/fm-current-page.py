@@ -31,6 +31,8 @@ import time
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, SCRIPT_DIR)
 import fm_md  # noqa: E402  (the one Markdown renderer and page theme, beside this file)
+import fm_current_answers as answers  # noqa: E402  (answer key, revision, token, decisions file)
+import zlib  # noqa: E402
 CODE_ROOT = os.path.dirname(SCRIPT_DIR)
 HOME = os.environ.get("FM_HOME") or CODE_ROOT
 STATE = os.path.join(HOME, "state")
@@ -310,7 +312,7 @@ def open_decisions():
 def parse_curated(path):
     """The keeper's curated JSON; bin/fm-current-page.sh's header owns the field list."""
     empty = {"checked": None, "needs": [], "why": {}, "mates": {}, "plain": {}, "hide": set(),
-             "initiatives": [], "completed": [], "links": [], "error": ""}
+             "initiatives": [], "completed": [], "links": [], "wins": [], "error": ""}
     try:
         with open(path, encoding="utf-8") as fh:
             data = json.load(fh)
@@ -335,6 +337,8 @@ def parse_curated(path):
             "completed": [n for n in data.get("completed") or [] if isinstance(n, dict)],
             "links": [(str(n.get("label") or fm_md.link_label(str(n["url"]))), str(n["url"]))
                       for n in data.get("links") or [] if isinstance(n, dict) and re.match(r"https://", str(n.get("url", "")))],
+            "wins": [n for n in data.get("wins") or [] if isinstance(n, dict) and str(n.get("t", "")).strip()
+                     and re.match(r"https?://", str(n.get("url", "")))][:10],
             "error": ""}
 
 
@@ -419,7 +423,7 @@ def need_message(need):
     return button, f'<details class="need-message"><summary>{head}</summary><blockquote>{"".join(parts)}</blockquote></details>'
 
 
-def need_actions(need):
+def need_actions(need, answerable=False):
     """The direct link, exact commands with Copy, message, and option chips of one curated need."""
     acts = []
     link = str(need.get("link") or "").strip()
@@ -439,12 +443,52 @@ def need_actions(need):
     if button:
         acts.append(button)
     options = need.get("options")
-    if isinstance(options, list):
+    if isinstance(options, list) and not answerable:
         for option in options:
             if isinstance(option, str) and option.strip():
                 rec = option == need.get("rec")
                 acts.append(f'<span class="opt{" rec" if rec else ""}">{e(option)}{" (recommended)" if rec else ""}</span>')
     return (f'<div class="acts">{"".join(acts)}</div>' if acts else "") + folded
+
+
+LETTER_RE = re.compile(r"(?<![\w/])([A-F])(\s*\((?:recommended|rec)\))?\s*[:)]")
+REC_RE = re.compile(r"(?<![\w/])([A-Fa-f])\b[^.;:]{0,4}\(?recommended\)?", re.I)
+
+
+def decision_options(text):
+    """Answer buttons from a decision's own words: lettered choices (A: ... B: ..., A/B/C, a, b, or c),
+    yes/no, merge/close, or approve/reject; ([], None) when it names none, so the page offers a text box only."""
+    letters = [m.group(1) for m in LETTER_RE.finditer(text)]
+    slash = re.search(r"(?<![\w/])([A-Fa-f](?:\s*/\s*[A-Fa-f])+)(?![\w/])", text)
+    listed = re.search(r"(?<!\w)([a-f]), ([a-f]),? or ([a-f])(?!\w)", text, re.I)
+    run = []
+    for letter in dict.fromkeys(letters):
+        if ord(letter) - ord("A") == len(run):
+            run.append(letter)
+    if len(run) < 2 and slash:
+        run = [x.strip().upper() for x in slash.group(1).split("/")]
+    if len(run) < 2 and listed:
+        run = [x.upper() for x in listed.groups()]
+    if len(run) >= 2:
+        rec = REC_RE.search(text)
+        return run, rec.group(1).upper() if rec and rec.group(1).upper() in run else None
+    for pair in (("yes", "no"), ("merge", "close"), ("approve", "reject")):
+        if re.search(rf"\b{pair[0]}\s*(?:/|or)\s*{pair[1]}\b", text, re.I):
+            return [p.capitalize() for p in pair], None
+    return [], None
+
+
+def answer_block(key, rev, options, rec):
+    """Option buttons plus a one-line text box; the page script posts the tap and paints its receipt here."""
+    buttons = "".join(
+        f'<button type="button" class="ans-btn{" rec" if o == rec else ""}" data-opt="{e(o)}">{e(o)}'
+        f'{"<small>recommended</small>" if o == rec else ""}</button>' for o in options)
+    return (f'<div class="answer" data-ans="{e(key)}" data-rev="{e(rev)}">'
+            + (f'<div class="ans-opts">{buttons}</div>' if buttons else "")
+            + f'<div class="ans-text"><input type="text" maxlength="{answers.MAX_TEXT}" enterkeyhint="send" autocomplete="off" '
+            f'placeholder="{"Or type an answer" if options else "Type your answer"}" aria-label="Answer for Main">'
+            '<button type="button" class="ans-send">Send</button></div>'
+            '<div class="receipt" aria-live="polite" hidden></div></div>')
 
 
 # ---------- model ----------
@@ -797,15 +841,81 @@ font:700 13px var(--mono);letter-spacing:.14em;animation:toast 3.2s ease-out for
 .toast.acc{border-color:var(--acc);color:var(--acc);box-shadow:var(--glow)}.toast.big{font-size:22px;padding:14px 24px}
 @keyframes toast{0%{transform:translateX(130%)}8%{transform:none}85%{opacity:1}100%{opacity:0;transform:translateY(-12px)}}
 @media (max-width:1100px){body{height:auto;overflow:auto}#cols{grid-template-columns:1fr}.pane,#insp{min-height:40vh}#hud{flex-wrap:wrap;height:auto}}
+#wins,#mine{flex:none;display:flex;align-items:center;gap:10px;padding:8px 10px 0}#wins>.lbl{color:var(--data);flex:none}
+#mine>.lbl{color:var(--link);flex:none}
+.wins-row,.mine-list{display:flex;gap:8px;overflow-x:auto;flex:1;min-width:0;padding-bottom:3px;scrollbar-width:thin;scrollbar-color:var(--acc-dim) transparent}
+.win,.mine{flex:0 0 250px;display:flex;flex-direction:column;gap:1px;min-width:0;padding:5px 10px;background:var(--pane);
+border:1px solid var(--data-dim);border-left:3px solid var(--data);border-radius:var(--r);color:var(--fg)}
+.win:hover{text-decoration:none;border-color:var(--data);box-shadow:0 0 14px rgba(0,221,170,.25)}
+.win b,.mine>b{font:600 13px var(--sans);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.win .why{font-size:12px;color:var(--fg2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.win .m{font:10.5px var(--mono);color:var(--data);letter-spacing:.06em}
+.mine{flex-basis:320px;border-color:rgba(124,196,255,.25);border-left-color:var(--link)}.mine .receipt{margin-top:4px}
+.answer{margin:14px 0 6px;padding:10px 12px;border:1px solid var(--acc-dim);background:rgba(255,136,0,.04);border-radius:var(--r)}
+.answer.busy{opacity:.6;pointer-events:none}
+.ans-opts{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px}
+.ans-btn{font:600 13px var(--mono);color:var(--fg);border-color:var(--acc-hi);padding:6px 12px;text-transform:none;letter-spacing:.02em;text-align:center}
+.ans-btn small{display:block;font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;opacity:.8}
+.ans-btn.rec{border-color:var(--data);color:var(--data)}
+.ans-btn.chosen{background:var(--acc);border-color:var(--acc);color:#0a0a0f}
+.ans-btn.armed{background:var(--data);border-color:var(--data);color:#0a0a0f;box-shadow:0 0 16px rgba(0,221,170,.5)}
+.ans-btn.armed::after{content:"tap again to send";display:block;font-size:9.5px;letter-spacing:.1em;text-transform:uppercase}
+.ans-text{display:flex;gap:8px}
+.ans-text input{flex:1;min-width:0;font:14px var(--sans);background:var(--surface);color:var(--fg);border:1px solid var(--acc-dim);
+border-radius:var(--r);padding:5px 8px;outline:0}.ans-text input:focus{border-color:var(--acc)}
+.receipt{margin-top:10px;font:12.5px/1.5 var(--mono);color:var(--data)}.receipt.err{color:var(--alert)}
+.rc-head{font-weight:700;letter-spacing:.06em}.rc-you{color:var(--fg2)}.rc-you b{color:var(--fg)}.rc-id{color:var(--dim)}
+.steps{display:flex;flex-wrap:wrap;gap:4px;margin:4px 0}.steps i{font-style:normal;font-size:10px;letter-spacing:.08em;padding:0 6px;
+border:1px solid var(--dim);color:var(--dim)}.steps i.on{border-color:var(--data);color:var(--data)}
+.rc-reply{margin-top:6px;padding:8px 10px;border-left:3px solid var(--link);background:rgba(124,196,255,.07);color:var(--fg);
+font:14px/1.55 var(--sans);white-space:pre-wrap;overflow-wrap:anywhere}
+.mob{display:none}
+@media (max-width:760px){
+html{-webkit-text-size-adjust:100%}
+body{height:auto;overflow-x:hidden;overflow-y:auto;font-size:16px;
+padding:0 env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
+.scan,#insp,#keys,#hud .lv,#hud .hint,#hud .sp,#clock,.pane>header kbd{display:none}
+#hud{flex-wrap:wrap;height:auto;gap:2px 12px;padding:calc(env(safe-area-inset-top) + 6px) 12px 4px;
+white-space:normal;font-size:12px}
+#hud .stat b{font-size:16px}
+#hud .out{flex-basis:100%;display:flex;flex-wrap:wrap;gap:0 18px}
+#hud .out a{display:inline-flex;align-items:center;min-height:44px;margin:0!important;font-size:14px}
+.mob{display:inline-flex;align-items:center;justify-content:center}#logbtn{margin-left:auto}
+#warn p{font-size:14px;padding:8px 12px}
+#wins,#mine{display:block;padding:12px 10px 0}#wins>.lbl,#mine>.lbl{display:block;margin:0 2px 6px;font-size:12px}
+.wins-row{overflow-x:auto;scroll-snap-type:x mandatory;gap:10px;padding-bottom:6px}
+.win{flex:0 0 84%;scroll-snap-align:start;padding:10px 12px;min-height:56px}
+.mine-list{flex-direction:column;overflow:visible}.mine{flex:none;padding:10px 12px}
+.win b,.mine>b{font-size:16px;white-space:normal}.win .why{font-size:14px;white-space:normal}.win .m{font-size:12px}
+#cols{display:block;padding:12px 10px}.stack{display:block}
+.pane{margin:0 0 12px;animation:none}.pane>header{font-size:13px;padding:10px 12px;min-height:44px;cursor:pointer}.list{overflow:visible}
+.pane>header::after{content:"\\25BE";color:var(--fg2);margin-left:8px}.pane.fold>header::after{content:"\\25B8"}.pane.fold .list{display:none}
+.list h3{font-size:12px;padding:12px 12px 4px}
+.it .row{min-height:48px;padding:10px 12px;font-size:16px;white-space:normal;align-items:flex-start}
+.it .t{white-space:normal;overflow:visible}.it .m{font-size:12px;padding-top:3px}.it .mk{margin-top:8px}
+.it.open .det,#needs-now .it .det{display:block;padding:0 14px 14px 26px;overflow-wrap:anywhere}
+.it .det h2{display:none}
+.why,.st,.do{font-size:16px}.chip{font-size:12px}code{font-size:13px;word-break:break-all}
+button,a.go{min-height:44px;padding:8px 14px;font-size:14px}a.go{display:inline-flex;align-items:center}
+.need-message summary{min-height:44px;display:flex;align-items:center}
+.ans-btn{min-height:52px;flex:1 1 40%;font-size:16px}.ans-text input{min-height:44px;font-size:16px}.ans-send{min-width:84px}
+.receipt{font-size:14px}.steps i{font-size:11px;padding:2px 6px}
+.zero{height:auto;padding:28px 0}
+.overlay .box{min-width:0;width:calc(100vw - 24px);max-height:85vh}.timeline li{white-space:normal}
+#toasts{left:12px;right:12px;bottom:calc(env(safe-area-inset-bottom) + 12px);align-items:stretch}.toast{text-align:center}
+}
 """
 
 # Keys, selection, filter, copy, and live refresh. The page re-fetches itself (a cheap 304 while unchanged), swaps
-# every [data-swap] element in place, and keeps the reader's pane, selection, and filter; a need that vanished was
-# answered, so it scores a cleared call.
+# every [data-swap] element in place, and keeps the reader's pane, selection, filter, open items, and half-typed
+# answers; a need that vanished was answered, so it scores a cleared call. Answers: a tap arms an option, a second
+# tap posts it to the answer endpoint, and every 10 s the page reads /api/answers to move each receipt from Main's
+# inbox to read to replied. Narrow screens (phone) stack the panes and open items in place instead of the inspector.
 PAGE_JS = r"""
 const $=(s,r=document)=>r.querySelector(s),$$=(s,r=document)=>[...r.querySelectorAll(s)];
-const S={pane:0,sel:{},q:"",cleared:+(sessionStorage.getItem("fm-cleared")||0)};let panes=[],pend="";
-const body=$("#insp .body"),q=$("#q");
+const S={pane:0,sel:{},q:"",cleared:+(sessionStorage.getItem("fm-cleared")||0),open:new Set(),ans:{},sending:{},fed:false,
+ fold:new Set(["p-done","p-held"])};
+let panes=[],pend="";const body=$("#insp .body"),q=$("#q"),MOB=matchMedia("(max-width:760px)");
 function ago(s){s=Math.max(0,Math.floor(s));if(s<60)return"just now";if(s<3600)return Math.floor(s/60)+"m ago";
  if(s<172800)return Math.floor(s/3600)+"h ago";return Math.floor(s/86400)+"d ago";}
 function tick(){const now=Date.now()/1000;
@@ -817,9 +927,9 @@ function vis(p){return $$(".it",p).filter(x=>!x.hidden);}
 function cur(i=S.pane){const its=vis(panes[i]||document.createElement("p"));return its.find(x=>x.dataset.key===S.sel[i])||its[0]||null;}
 function show(scroll=true){panes.forEach((p,i)=>{p.classList.toggle("on",i===S.pane);const c=cur(i);
   $$(".it.sel",p).forEach(x=>x!==c&&x.classList.remove("sel"));if(c){c.classList.add("sel");S.sel[i]=c.dataset.key;}});
- const it=cur();if(it&&scroll)it.scrollIntoView({block:"nearest"});
+ const it=cur();if(it&&scroll&&!MOB.matches)it.scrollIntoView({block:"nearest"});
  body.innerHTML=it?it.querySelector(".det").innerHTML:'<p class="k">Nothing here'+(S.q?" for this filter":"")+".</p>";
- body.style.animation="none";void body.offsetWidth;body.style.animation="";$("#insp-n").textContent=panes[S.pane].dataset.title;tick();}
+ body.style.animation="none";void body.offsetWidth;body.style.animation="";$("#insp-n").textContent=panes[S.pane].dataset.title;tick();paint();}
 function move(d){const its=vis(panes[S.pane]);if(!its.length)return;let i=its.indexOf(cur());
  i=Math.max(0,Math.min(its.length-1,i+d));S.sel[S.pane]=its[i].dataset.key;show();}
 function to(i){S.pane=(i+panes.length)%panes.length;show();}
@@ -837,9 +947,12 @@ function filter(v){S.q=v.trim().toLowerCase();
 function toast(t,cls=""){const d=document.createElement("div");d.className="toast "+cls;d.textContent=t;$("#toasts").appendChild(d);
  setTimeout(()=>d.remove(),3300);}
 function score(){const c=$("#cleared");c.textContent=S.cleared;sessionStorage.setItem("fm-cleared",S.cleared);}
-function bind(){panes=$$(".pane[data-pane]").sort((a,b)=>a.dataset.pane-b.dataset.pane);
+function folds(){panes.forEach(p=>p.classList.toggle("fold",MOB.matches&&S.fold.has(p.id)));}
+function bind(){panes=$$(".pane[data-pane]").sort((a,b)=>a.dataset.pane-b.dataset.pane);folds();
  panes.forEach(p=>{const n=$(".n",p);n.dataset.n=n.textContent;});}
+function inputs(){return $$(".answer input").map(i=>[i.closest(".answer").dataset.ans,i]);}
 function apply(text){const doc=new DOMParser().parseFromString(text,"text/html");
+ const typed={},focus=(inputs().find(([,i])=>i===document.activeElement)||[])[0];inputs().forEach(([k,i])=>{if(i.value)typed[k]=i.value;});
  const keys=()=>new Set($$("#needs-now .it").map(x=>x.dataset.key)),before=keys(),done=$$("#done .it").length;
  $$("[data-swap]").forEach(el=>{const n=doc.getElementById(el.id);if(n)el.replaceWith(document.importNode(n,true));});
  document.body.dataset.rendered=doc.body.dataset.rendered;document.title=doc.title;bind();const after=keys();
@@ -848,10 +961,52 @@ function apply(text){const doc=new DOMParser().parseFromString(text,"text/html")
  if(gone){S.cleared+=gone;score();toast(gone>1?gone+" CALLS CLEARED":"CALL CLEARED");}
  if(fresh.length)toast(fresh.length>1?fresh.length+" NEW CALLS":"NEW CALL","acc");
  const shipped=$$("#done .it").length-done;if(shipped>0)toast("+"+shipped+" SHIPPED");
- if(before.size&&!after.size)toast("INBOX ZERO","big");filter(q.value);}
+ if(before.size&&!after.size)toast("INBOX ZERO","big");filter(q.value);
+ $$(".it").forEach(x=>x.classList.toggle("open",S.open.has(x.dataset.key)));
+ inputs().forEach(([k,i])=>{if(typed[k])i.value=typed[k];});
+ const back=inputs().find(([k,i])=>k===focus&&i.offsetParent);if(back)back[1].focus({preventScroll:true});paint();}
+function esc(s){const d=document.createElement("div");d.textContent=s==null?"":String(s);return d.innerHTML;}
+function hhmm(iso){const d=new Date(iso||"");return isNaN(d)?"":d.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit",hour12:false});}
+function rid(){return crypto.randomUUID?crypto.randomUUID():[...crypto.getRandomValues(new Uint8Array(16))].map(b=>b.toString(16).padStart(2,"0")).join("");}
+const STEPS=[["sending","SENT"],["received","IN MAIN'S INBOX"],["seen","MAIN READ IT"],["answered","MAIN REPLIED"]];
+function receipt(a){if(a.state==="error")return'<div class="rc-head">&#10007; NOT SENT</div><div>'+esc(a.detail)+"</div>";
+ const n=STEPS.findIndex(s=>s[0]===a.state);
+ const head={sending:"SENDING&#8230;",received:"&#10003; MAIN'S INBOX HAS IT "+hhmm(a.at),seen:"&#10003;&#10003; MAIN READ IT, REPLY COMING",
+  answered:"&#10003;&#10003; MAIN REPLIED "+hhmm(a.reply_at)}[a.state]||esc(a.state);
+ return'<div class="rc-head">'+head+'</div><div class="steps">'+STEPS.map((s,i)=>'<i class="'+(i<=n?"on":"")+'">'+s[1]+"</i>").join("")
+  +'</div><div class="rc-you">You said: <b>'+esc(a.answer)+"</b>"+(a.note?' <span class="rc-id">note '+esc(a.note)+"</span>":"")+"</div>"
+  +(a.reply?'<div class="rc-reply">'+esc(a.reply)+"</div>":"");}
+function paint(){const shown=new Set();
+ $$(".answer[data-ans]").forEach(b=>{const k=b.dataset.ans,a=S.sending[k]||S.ans[k],r=$(".receipt",b);if(b.closest(".pane"))shown.add(k);
+  b.classList.toggle("busy",!!a&&a.state==="sending");$$(".ans-btn",b).forEach(x=>x.classList.toggle("chosen",!!a&&x.dataset.opt===a.answer));
+  r.hidden=!a;if(a){r.classList.toggle("err",a.state==="error");r.innerHTML=receipt(a);}});
+ const m=$("#mine");if(!m)return;const off=Object.values(S.ans).filter(a=>!shown.has(a.key));m.hidden=!off.length;
+ $(".mine-list",m).innerHTML=off.map(a=>'<div class="mine"><b>'+esc(a.title)+'</b><div class="receipt">'+receipt(a)+"</div></div>").join("");}
+async function send(box,pick){const key=box.dataset.ans,said=pick.option||pick.text,id=rid();let r=null,j={};
+ const h=box.closest(".det,.body"),title=(h&&h.querySelector("h2")||{}).textContent||key;
+ S.sending[key]={state:"sending",answer:said};paint();
+ for(let i=0;i<3&&!r;i++){try{r=await fetch("/api/answer",{method:"POST",credentials:"same-origin",
+  headers:{"Content-Type":"application/json","X-FM-Answer-Token":($("#hud").dataset.token||"")},
+  body:JSON.stringify({key,rev:box.dataset.rev,rid:id,...pick})});}catch{await new Promise(z=>setTimeout(z,800));}}
+ try{j=r?await r.json():{};}catch{}delete S.sending[key];
+ if(r&&r.ok){S.ans[key]={...j,title};toast("MAIN GOT IT");if(navigator.vibrate)navigator.vibrate(30);paint();setTimeout(poll,1500);return true;}
+ S.sending[key]={state:"error",answer:said,detail:j.detail||j.error||(r?"HTTP "+r.status:"offline; try again")};paint();
+ if(r&&r.status===409){toast("DECISION CHANGED, REFRESHING","acc");refresh();}
+ else if(r&&r.status===403&&j.error==="token"){toast("RELOADING","acc");setTimeout(()=>location.reload(),900);}
+ else toast("NOT SENT","acc");
+ setTimeout(()=>{if(S.sending[key]&&S.sending[key].state==="error"){delete S.sending[key];paint();}},15000);return false;}
+async function sendText(box){const i=$("input",box),t=i.value.trim();if(!t){toast("TYPE AN ANSWER FIRST","acc");i.focus();return;}
+ if(await send(box,{text:t}))inputs().forEach(([k,x])=>{if(k===box.dataset.ans)x.value="";});}
+async function poll(){if(!$("#hud").dataset.token)return;try{const r=await fetch("/api/answers",{cache:"no-store"});if(!r.ok)return;
+ const j=await r.json(),prev=S.ans;S.ans={};(j.answers||[]).forEach(a=>{S.ans[a.key]=a;const p=prev[a.key];if(!S.fed||!p)return;
+  if(a.state==="answered"&&p.state!=="answered")toast("MAIN REPLIED");else if(a.state==="seen"&&p.state==="received")toast("MAIN READ IT");});
+ S.fed=true;paint();}catch{}}
 async function refresh(){try{const r=await fetch(location.href,{cache:"no-cache"});if(!r.ok)throw 0;const t=await r.text();
  const m=t.match(/data-rendered="(\d+)"/);if(m&&m[1]!==document.body.dataset.rendered)apply(t);}catch{$("#live").classList.add("off");}}
-addEventListener("keydown",ev=>{if(ev.target===q){if(ev.key==="Escape"){q.value="";filter("");q.blur();}
+document.addEventListener("keydown",ev=>{const i=ev.target.closest&&ev.target.closest(".answer input");
+ if(i&&ev.key==="Enter"&&!ev.isComposing){ev.preventDefault();sendText(i.closest(".answer"));}});
+addEventListener("keydown",ev=>{if(ev.target.closest&&ev.target.closest(".answer"))return;
+ if(ev.target===q){if(ev.key==="Escape"){q.value="";filter("");q.blur();}
   else if(ev.key==="Enter"||ev.key==="ArrowDown"){q.blur();}return;}
  if(ev.metaKey||ev.altKey||(ev.ctrlKey&&!"du".includes(ev.key)))return;
  const ov=$(".overlay:not([hidden])");if(ov){if(["Escape","?","L","q"].includes(ev.key)){ov.hidden=true;ev.preventDefault();}return;}
@@ -869,11 +1024,22 @@ document.addEventListener("click",ev=>{const b=ev.target.closest("button.copy-co
  if(b){const t=b.classList.contains("copy-message")?b.dataset.copy:b.previousElementSibling.textContent;
   copyText(t).then(()=>{b.textContent="Copied";toast("COPIED");},()=>{b.textContent="Copy failed";});return;}
  const ov=ev.target.closest(".overlay");if(ov&&!ev.target.closest(".box")){ov.hidden=true;return;}
- const it=ev.target.closest(".pane .it");if(it&&!ev.target.closest("a")){const i=panes.indexOf(it.closest(".pane"));
+ if(ev.target.closest("#logbtn")){$("#log").hidden=false;return;}
+ const hd=ev.target.closest(".pane>header");
+ if(hd&&MOB.matches){const p=hd.parentElement;if(!S.fold.delete(p.id))S.fold.add(p.id);folds();return;}
+ const ab=ev.target.closest(".ans-btn");
+ if(ab){if(!ab.classList.contains("armed")){$$(".ans-btn.armed").forEach(x=>x.classList.remove("armed"));ab.classList.add("armed");
+   setTimeout(()=>ab.classList.remove("armed"),4000);return;}
+  ab.classList.remove("armed");send(ab.closest(".answer"),{option:ab.dataset.opt});return;}
+ const sb=ev.target.closest(".ans-send");if(sb){sendText(sb.closest(".answer"));return;}
+ const it=ev.target.closest(".pane .it");if(it&&!ev.target.closest("a,button,input,.det")){const i=panes.indexOf(it.closest(".pane"));
+  if(MOB.matches){if(it.classList.toggle("open"))S.open.add(it.dataset.key);else S.open.delete(it.dataset.key);}
   S.pane=i;S.sel[i]=it.dataset.key;show(false);}});
-document.addEventListener("dblclick",ev=>{if(ev.target.closest(".pane .it"))openSel();});
+document.addEventListener("visibilitychange",()=>{if(!document.hidden){refresh();poll();}});
+document.addEventListener("dblclick",ev=>{if(ev.target.closest(".pane .it")&&!ev.target.closest(".det,button,input,a")&&!MOB.matches)openSel();});
 q.addEventListener("input",()=>filter(q.value));
-bind();score();show();clock();setInterval(clock,1000);setInterval(tick,30000);setInterval(refresh,10000);
+MOB.addEventListener("change",folds);
+bind();score();show();clock();setInterval(clock,1000);setInterval(tick,30000);setInterval(refresh,10000);poll();setInterval(poll,10000);
 """
 
 
@@ -881,6 +1047,7 @@ def render(paths, reason):
     now = time.time()
     today = dt.date.fromtimestamp(now).isoformat()
     confirm = env_int("FM_CURRENT_PAGE_CONFIRM_HOURS", 2) * 3600
+    answers_on = bool(paths.get("answers_origin"))
     notes = parse_notes(paths["notes"])
     cur = parse_curated(paths["curated"])
     mates = parse_secondmates()
@@ -908,15 +1075,33 @@ def render(paths, reason):
     def heat(asked):
         return "heat1" if asked is None or now - asked < 7200 else "heat2" if now - asked < 28800 else "heat3"
 
+    decisions = {}
+
+    def answer_for(task, title, text, options, rec):
+        """Register one answerable decision for the answer endpoint and return its buttons; '' when answers are off."""
+        if not answers_on:
+            return ""
+        key = answers.answer_key(task, title)
+        if key in decisions and decisions[key]["title"] != title:
+            key += "~" + answers.answer_key("", title)[5:11]
+        if not options:
+            options, rec = decision_options(f"{title} {text}")
+        rev = answers.revision(key, title, text, options)
+        decisions[key] = {"row": task, "title": title, "rev": rev, "options": options}
+        return answer_block(key, rev, options, rec)
+
     def need_div(n, stale, asked, checked):
         who, task = str(n.get("who") or ""), str(n.get("task") or "")
         host = n.get("machine") or (by_task[who]["host"] if who in by_task else mates.get(who, {}).get("host") or here)
         link = str(n.get("link") or "").strip()
+        opts = [o for o in n.get("options") or [] if isinstance(o, str) and o.strip()] if isinstance(n.get("options"), list) else []
+        reason = calls.get(task, {}).get("hold_reason", "")
+        ans = answer_for(task, str(n["t"]), f'{n.get("why", "")} {reason}'.strip(), opts, n.get("rec") if opts else None)
         row = f'<span class="mk"></span><span class="t">{e(str(n["t"]))}</span><span class="m">{age(asked, now)}</span>'
         det = (f'<h2>{e(str(n["t"]))}</h2>'
                + chips(age(asked, now, "asked "), e(str(host)), e(who) if who != task else "", f"<code>{e(task)}</code>" if task else "",
                        f'not re-checked · {age(checked, now, "checked ")}' if stale else "")
-               + f'<div class="why">{fm_md.inline(str(n.get("why", "")))}</div>{need_actions(n)}')
+               + f'<div class="why">{fm_md.inline(str(n.get("why", "")))}</div>{need_actions(n, bool(ans))}{ans}')
         return item_div("need:" + (task or str(n["t"])), row, det, href=link if re.match(r"https?://", link) else "",
                         task=task, cls=heat(asked) + (" dim" if stale else ""))
     needs_now, needs_stale, curated_tasks, asks = [], [], set(), []
@@ -948,9 +1133,11 @@ def render(paths, reason):
         title = plain_words(c.get("title", ""), 120) or c["id"]
         reason = c.get("hold_reason", "")
         until = f'until {e(c["until"])}' if c["until"] else ""
+        ans = answer_for(c["id"], title, reason, [], None)
         row = f'<span class="mk"></span><span class="t">{e(title)}</span><span class="m">{until or age(c["asked"], now)}</span>'
         det = (f"<h2>{e(title)}</h2>" + chips(age(c["asked"], now, "asked "), note, until, f'<code>{e(c["id"])}</code>')
-               + f'<div class="why">{linked_words(reason, 260)}</div><p class="k">Answer it by telling Main.</p>')
+               + f'<div class="why">{linked_words(reason, 260)}</div>'
+               + (ans or '<p class="k">Answer it by telling Main.</p>'))
         return item_div("call:" + c["id"], row, det, href=fm_md.first_url(re.sub(r"\S*data/\S+", "", reason)), task=c["id"],
                         cls=cls or heat(c["asked"]))
     for c in fresh_calls:
@@ -1022,12 +1209,25 @@ def render(paths, reason):
                  ("^d / ^u", "scroll the inspector"), ("L", "keeper log"), ("O", "open the first link-out (Linear)"),
                  ("r", "refresh now (it also refreshes itself every 10 s)"), ("?", "this help")]
     keys_help = "".join(f"<kbd>{e(k)}</kbd><span>{e(v)}</span>" for k, v in help_rows)
+    wins = "".join(
+        f'<a class="win" href="{e(str(w["url"]))}" target="_blank" rel="noopener"><b>{e(str(w["t"]))}</b>'
+        f'<span class="why">{e(str(w.get("why", "")))}</span>'
+        f'<span class="m">{e(str(w.get("kind") or fm_md.link_label(str(w["url"]))))} &#8599;</span></a>' for w in cur["wins"])
+    page_dir = os.path.dirname(os.path.abspath(paths["out"]))
+    write_pwa_assets(page_dir, os.path.basename(paths["out"]))
     page = (
         f'<!doctype html><html lang="en"><head><meta charset="utf-8"><title>{f"({len(needs_now)}) " if needs_now else ""}Current</title>'
-        '<meta name="viewport" content="width=device-width,initial-scale=1">'
+        '<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">'
+        '<meta name="theme-color" content="#0a0a0f"><meta name="apple-mobile-web-app-capable" content="yes">'
+        '<meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="Current">'
+        '<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">'
+        f'<link rel="manifest" href="{PWA_MANIFEST}"><link rel="apple-touch-icon" href="{PWA_ICONS[180]}">'
+        f'<link rel="icon" type="image/png" href="{PWA_ICONS[192]}">'
         f"<style>{fm_md.THEME_CSS}{PAGE_CSS}</style></head>"
         f'<body data-rendered="{int(now)}"><div class="grid-bg"></div><div class="scan"></div>'
-        f'<div id="hud" data-swap title="{e(reason)}"><span class="brand">FM//CURRENT</span>'
+        f'<div id="hud" data-swap title="{e(reason)}"'
+        + (f' data-token="{answers.mint_token(now)}"' if answers_on else "")
+        + '><span class="brand">FM//CURRENT</span>'
         f'<span class="live" id="live"><span class="dot"></span> <span id="live-l">LIVE</span> · {age(now, now)}</span>'
         f'<span class="stat{" hot" if needs_now else " good"}">NEED<b>{len(needs_now)}</b></span>'
         f'<span class="stat">RUN<b>{len(running)}</b></span><span class="stat good">DONE<b>{len(done_today)}</b></span>'
@@ -1036,9 +1236,12 @@ def render(paths, reason):
            if oldest is not None else "")
         + f'<span class="lv" title="one level per 5 shipped today">LV<b>{level}</b><i class="bar"><i style="width:{xp}%"></i></i></span>'
         f'<span class="sp"></span><span class="stat">KEEPER {age(cur["checked"], now)}</span>'
-        f'<span class="out">{links}</span><span id="clock"></span><span><kbd>?</kbd></span></div>'
+        f'<span class="out">{links}</span><span id="clock"></span><span class="hint"><kbd>?</kbd></span>'
+        '<button type="button" id="logbtn" class="mob">Log</button></div>'
         f'<div id="warn" data-swap>{"".join(f"<p>{b}</p>" for b in banners)}</div>'
-        '<div id="cols">'
+        + f'<nav id="wins" data-swap aria-label="Wins"{"" if wins else " hidden"}><span class="lbl">Wins</span><div class="wins-row">{wins}</div></nav>'
+        + ('<section id="mine" hidden><span class="lbl">Your answers</span><div class="mine-list"></div></section>' if answers_on else "")
+        + '<div id="cols">'
         + pane("needs", 1, "Needs you", len(needs_now), f'<div id="needs-now">{needs_body}</div>')
         + '<div class="stack">'
         + pane("running", 2, "Running", len(running), running_body)
@@ -1056,9 +1259,77 @@ def render(paths, reason):
         f'<div class="overlay" id="log" hidden data-swap><div class="box"><h2>Keeper log</h2>{notes_html}</div></div>'
         '<div id="toasts"></div>'
         f"<script>{PAGE_JS}</script></body></html>")
+    if answers_on:   # decisions first, so a tap on the new page never meets the previous render's revisions
+        answers.write_decisions(decisions, now)
     write_atomic(paths["out"], page)
     return {"needs": len(needs_now), "stale_needs": len(needs_stale), "running": len(running),
             "done_today": len(done_today), "older_calls": len(older_calls), "forge": forge_state}
+
+# ---------- installable app (Add to Home Screen) ----------
+
+PWA_MANIFEST = "manifest.json"
+PWA_ICONS = {180: "apple-touch-icon.png", 192: "current-icon-192.png", 512: "current-icon-512.png"}
+
+
+def icon_png(size):
+    """The app icon as PNG bytes, drawn here so the page needs no image library: an orange radar ring with a
+    teal sweep on the page's near-black, 2x2 supersampled."""
+    import math
+    bg, acc, data = (10, 10, 15), (255, 136, 0), (0, 221, 170)
+
+    def mix(c, over, a):
+        return tuple(c[i] + (over[i] - c[i]) * a for i in range(3))
+
+    def shade(u, v):
+        c = bg
+        if abs((u + 1) * 4 % 1) < 0.02 or abs((v + 1) * 4 % 1) < 0.02:
+            c = mix(c, acc, 0.12)
+        r, ang = math.hypot(u, v), math.degrees(math.atan2(v, u))
+        if r < 0.72 and -90 <= ang <= -30:
+            c = mix(c, data, 0.45 * (ang + 90) / 60)
+        if abs(r - 0.45) < 0.025:
+            c = mix(c, data, 0.8)
+        if abs(r - 0.72) < 0.06 or r < 0.14 or (abs(u) < 0.03 and 0.8 < abs(v) < 0.95) or (abs(v) < 0.03 and 0.8 < abs(u) < 0.95):
+            c = acc
+        return c
+    rows = bytearray()
+    for y in range(size):
+        rows.append(0)
+        for x in range(size):
+            px = [shade((x + dx) / size * 2 - 1, (y + dy) / size * 2 - 1) for dx in (0.25, 0.75) for dy in (0.25, 0.75)]
+            rows.extend(int(sum(p[i] for p in px) / 4) for i in range(3))
+
+    def chunk(kind, payload):
+        return (len(payload).to_bytes(4, "big") + kind + payload
+                + zlib.crc32(kind + payload).to_bytes(4, "big"))
+    head = size.to_bytes(4, "big") * 2 + bytes([8, 2, 0, 0, 0])
+    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", head) + chunk(b"IDAT", zlib.compress(bytes(rows), 9)) + chunk(b"IEND", b"")
+
+
+def write_pwa_assets(page_dir, page_name):
+    """manifest.json and the icons beside the page, so iOS Add to Home Screen opens it as a standalone app.
+    Icons are drawn once (absent files only); the manifest is rewritten only when its content changes."""
+    manifest = json.dumps({"name": "FM Current", "short_name": "Current", "start_url": page_name, "scope": "./",
+                           "display": "standalone", "background_color": "#0a0a0f", "theme_color": "#0a0a0f",
+                           "icons": [{"src": name, "sizes": f"{size}x{size}", "type": "image/png", "purpose": "any"}
+                                     for size, name in PWA_ICONS.items()]}, indent=1) + "\n"
+    path = os.path.join(page_dir, PWA_MANIFEST)
+    try:
+        with open(path, encoding="utf-8") as fh:
+            same = fh.read() == manifest
+    except OSError:
+        same = False
+    if not same:
+        write_atomic(path, manifest)
+    for size, name in PWA_ICONS.items():
+        target = os.path.join(page_dir, name)
+        if not os.path.exists(target):
+            tmp = os.path.join(page_dir, f".{name}.tmp.{os.getpid()}")
+            with open(tmp, "wb") as fh:
+                fh.write(icon_png(size))
+            os.chmod(tmp, 0o644)
+            os.replace(tmp, target)
+
 
 
 # ---------- plumbing ----------
@@ -1074,7 +1345,8 @@ def write_atomic(path, content):
 
 
 def configured_paths():
-    """config/current-page: first plain line is the page; optional notes=<path> and curated=<path> lines."""
+    """config/current-page: first plain line is the page; optional notes=<path> and curated=<path> lines, and
+    answers_origin=<origin> (bin/fm-current-answers.sh's header), which turns on the page's answer buttons."""
     found = {}
     try:
         with open(os.path.join(HOME, "config", "current-page"), encoding="utf-8") as fh:
@@ -1082,8 +1354,10 @@ def configured_paths():
                 line = line.strip()
                 if not line or line.startswith("#"):
                     continue
-                key, val = line.split("=", 1) if re.match(r"^(notes|curated)=", line) else ("out", line)
-                if key not in found:
+                key, val = line.split("=", 1) if re.match(r"^(notes|curated|answers_origin|answers_listen)=", line) else ("out", line)
+                if key in ("answers_origin", "answers_listen"):
+                    found.setdefault(key, val)
+                elif key not in found:
                     found[key] = val if os.path.isabs(val) else os.path.join(HOME, val)
     except OSError:
         pass
@@ -1182,6 +1456,8 @@ def main(argv):
         else:
             sys.exit(f"fm-current-page: unknown argument {a!r} (see --help)")
     paths = {**configured_paths(), **flags}
+    if os.environ.get("FM_CURRENT_ANSWERS_ORIGIN"):
+        paths["answers_origin"] = os.environ["FM_CURRENT_ANSWERS_ORIGIN"]
     if not paths.get("out"):
         print("fm-current-page: no output configured; write the page path to config/current-page or pass --out",
               file=sys.stderr)

@@ -97,14 +97,13 @@ Removing or upgrading the shadowing client is the durable fix.
 
 ## Watching and task containers
 
-The ordinary topology puts one task tab per endpoint in the exact workspace of the Firstmate or secondmate that launches it.
-When the launcher has no Herdr workspace to inherit, the adapter maintains one durable home-labeled workspace instead.
+Each ordinary task endpoint receives a new one-task workspace, including when presentation matching is unavailable or disabled.
+Secondmates retain their durable home-labeled workspace.
 
 | Home | Workspace label |
 | --- | --- |
 | Primary | `firstmate` |
 | Secondmate | `2ndmate-<secondmate-id>`, derived from its validated `.fm-secondmate-home` marker |
-
 A secondmate launched by the primary receives a narrowly scoped home override during container creation.
 
 ### Watching tasks
@@ -126,9 +125,8 @@ Herdr 0.7.5 exports `HERDR_ENV`, `HERDR_PANE_ID`, `HERDR_SESSION`, `HERDR_SOCKET
 A Firstmate or secondmate agent's own commands inherit them.
 Older injection shapes are unverified, so a claimed launcher pane without the injected socket identity cannot be trusted.
 
-With presentation spaces disabled, a crewmate or scout is created in the exact workspace that identity currently resolves to.
-That workspace is read live from Herdr rather than from the injected snapshot, so the worker always appears beside the agent that launched it.
-Duplicate labels elsewhere in the session are irrelevant, and the globally focused workspace is never the target.
+With presentation spaces disabled, a crewmate or scout still receives a new workspace rather than a tab beside the launcher.
+Any claimed launcher identity is verified before creation; duplicate home labels and the globally focused workspace never select the task destination.
 A `--secondmate` launch is the deliberate exception: it stands up that secondmate home's own workspace instead of joining the launcher's.
 
 ### Unresolvable launcher identity
@@ -144,12 +142,8 @@ That covers:
 
 ### Firstmate running outside Herdr
 
-Firstmate running outside Herdr entirely has no launcher workspace to inherit, so its workers use this home's own labeled workspace, created on first use.
-That path needs the home label to identify exactly one workspace.
-Two workspaces sharing it are an unresolvable placement and refuse rather than adopting either.
-
-Avoid naming a personal workspace `firstmate` or `2ndmate-<id>` for that reason.
-Also avoid it because the adapter cannot distinguish that label collision from its own container.
+Firstmate running outside Herdr entirely creates a new workspace for each ordinary task without adopting a home-label match.
+Only a secondmate launch uses the per-home label lookup, which must identify exactly one workspace.
 
 An older secondmate workspace using `firstmate-<id>` is not migrated automatically.
 Rename it manually before expecting new tasks or recovery to use it.
@@ -160,9 +154,8 @@ Recovery and list-live still scan the first workspace matching the home label, b
 The one recovery that does place new work is the control plane's reclaim of a destroyed endpoint.
 It mints a replacement tab through this section's ordinary placement rules while pinning the herdr session the task's record names ([`agent-control.md`](agent-control.md) "Reclaiming a task whose endpoint is gone").
 
-Existing task operations use recorded endpoint ids and do not move a live task when labels change.
-The per-home workspace is reused while it has task tabs.
-Closing its last tab can remove the workspace, and the next spawn recreates it.
+Existing task operations use recorded endpoint ids.
+Relaunch replaces an agent-free ordinary task stranded in the caller's workspace or a home-labeled supervisor workspace with a new task workspace, leaving the old pane untouched.
 
 ## Presentation spaces
 
@@ -204,7 +197,7 @@ On those releases, that close moves the active workspace for roughly a seventh o
 An unconfigured home is therefore projected only on a release at or above the 0.8.0 floor.
 On those releases every workspace-removal primitive preserves focus, and that proof stops being load-bearing.
 
-Below the floor, an unconfigured home uses the ordinary flat layout instead, with the task in its own workspace labelled with the task id (never a tab in the home workspace, captain rule 2026-10-01).
+Below the floor, an unconfigured home creates an isolated task workspace without presentation ordering or restart binding.
 It warns once per home per detected release, naming the running release and the upgrade that restores the projection.
 That one-warning-per-release record is a `state/.herdr-presentation-floor-<release>` marker.
 Deleting it only makes the same warning appear again.
@@ -289,7 +282,7 @@ A foreign, ambiguous, detached, or manually interleaved child makes ordering ski
 
 Ordering failure never fails the task spawn.
 Firstmate does not retry, adopt, reuse, close, delete, or rename anything in response to an unavailable method, lock contention, ambiguous socket, lost response, failed move, or verification mismatch.
-The worker remains on the ordinary flat or Herdr-current-order path.
+The worker remains in its isolated task workspace without verified presentation ordering.
 
 ### Cleanup and focus safety
 
@@ -383,7 +376,7 @@ Then the journal advances atomically to the replacement endpoint before metadata
 The reclaim path never moves, closes, deletes, or renames a workspace and never touches a parent, sibling, captain, or foreign pane.
 A failed replacement rolls back only the exact response-derived new pane when focus-safe verification permits it.
 
-These cases fall back flat (the task still gets its own workspace, `fm_backend_herdr_task_workspace_create`; only a secondmate or a home that opted out of presentation uses the home workspace) without mutating the old projection when duplicate-agent risk is positively absent:
+These cases fall back to a new task workspace without mutating the old projection when duplicate-agent risk is positively absent:
 
 - Version 1 journals.
 - Dead or missing panes.

@@ -2518,6 +2518,13 @@ case "${1:-} ${2:-}" in
         : > "$D/herdr-agent-live" ;;
     esac
     exit 0 ;;
+  'workspace get')
+    if [ -f "$D/herdr-main-workspace" ] && [ "${3:-}" = ws1 ]; then
+      printf '{"result":{"workspace":{"workspace_id":"ws1","label":"firstmate"}}}\n'
+    else
+      printf '{"error":{"code":"workspace_not_found"}}\n'
+    fi
+    exit 0 ;;
   'workspace list')
     printf '{"result":{"workspaces":[]}}\n'
     exit 0 ;;
@@ -2643,6 +2650,31 @@ test_herdr_relaunch_resumes_only_the_registered_pi_session() {
     rc=0
   done
   pass "fm-spawn --relaunch: resumes the bound Pi session only for a Pi registration"
+}
+
+test_herdr_relaunch_leaves_a_shared_main_workspace() {
+  local dir out rc source id
+  for source in token caller; do
+    id="rl78-$source"
+    herdr_case_or_skip "shared-main-$source" "$id" || return 0
+    dir=$HERDR_CASE_DIR
+    rc=0
+    if [ "$source" = token ]; then
+      : > "$dir/fake/herdr-main-workspace"
+      out=$(run_control "$dir" "$id" relaunch --note "move the replacement out of Main") || rc=$?
+    else
+      out=$(HERDR_WORKSPACE=ws1 HERDR_WORKSPACE_ID='' \
+        run_control "$dir" "$id" relaunch --note "move the replacement out of Main") || rc=$?
+    fi
+    expect_code 0 "$rc" "a shared-workspace relaunch should preserve the task"$'\n'"$out"
+    [ "$(meta_field "$dir" "$id" herdr_workspace_id)" = wsnew ] \
+      || fail "relaunch reused Main's workspace instead of recording a new task workspace"
+    assert_contains "$(cat "$dir/fake/herdr-created-tabs")" "--workspace wsnew" \
+      "replacement tab was not created in the new workspace"
+    [ "$(meta_field "$dir" "$id" worktree)" = "$dir/wt" ] \
+      || fail "workspace migration changed the task's worktree"
+    pass "relaunch leaves Main identified by $source without changing the task's work"
+  done
 }
 
 test_herdr_reclaim_adopts_a_pane_that_outlived_its_server() {
@@ -2969,6 +3001,7 @@ SH
 test_relaunch_off_opencode_removes_tracked_wiring
 test_exit_and_relaunch_remove_the_dialog_file
 test_exit_removes_the_dialog_file_before_releasing_the_lock
+test_herdr_relaunch_leaves_a_shared_main_workspace
 test_same_harness_relaunch_keeps_identity_and_reuses_the_endpoint
 test_relaunch_refuses_before_exit_when_the_composer_holds_pending_text
 test_relaunch_refuses_before_exit_when_the_composer_state_is_unproven

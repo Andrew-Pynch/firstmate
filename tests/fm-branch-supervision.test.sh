@@ -1558,7 +1558,12 @@ test_quiet_record_never_caps_a_present_captains_spawn() {
   out=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$root" "$ROOT/bin/fm-spawn.sh" task-new --mode no-mistakes --yolo off 2>&1)
   assert_not_contains "$out" "caps concurrent workers" "a quiet record capped a present captain's spawn"
   FM_HOME="$home" "$ROOT/bin/fm-afk-contract.sh" enter --objective 'the accepted objective for this window' --spend 1 >/dev/null 2>&1 || fail "away entry over quiet failed"
-  out=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$root" "$ROOT/bin/fm-spawn.sh" task-new --mode no-mistakes --yolo off 2>&1)
+  # The spend count is live workers: a record counts while its endpoint exists,
+  # so the two records' tmux sessions answer as present for the capped spawn.
+  mkdir -p "$home/fakebin"
+  printf '#!/usr/bin/env bash\ncase "$1" in has-session) exit 0 ;; *) exit 1 ;; esac\n' > "$home/fakebin/tmux"
+  chmod +x "$home/fakebin/tmux"
+  out=$(PATH="$home/fakebin:$PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$root" "$ROOT/bin/fm-spawn.sh" task-new --mode no-mistakes --yolo off 2>&1)
   assert_contains "$out" "caps concurrent workers at 1 and 2 ordinary task(s) are live" "the away record's cap no longer binds"
   pass "a quiet-mode record never caps a present captain's spawn, while the away record's cap still binds"
 }

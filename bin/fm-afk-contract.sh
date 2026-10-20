@@ -122,8 +122,10 @@
 #   fm-afk-contract.sh validate [--path <record>]  exit 0 when the record is readable and complete
 #   fm-afk-contract.sh live-workers
 #     Print the ordinary worker count this home holds right now (SPEND CAP
-#     below). Reads no record, so it answers before an entry as well as during
-#     one.
+#     below): records with a live backend endpoint, plus, during an away
+#     window, records spawned in it. Secondmates, older stopped records, and
+#     records with no backend endpoint do not count. Answers before an entry
+#     as well as during one.
 #   fm-afk-contract.sh archive              move the record aside; print its path
 #   fm-afk-contract.sh archived <entered_epoch>   print that archived record's path
 #
@@ -205,16 +207,24 @@ fm_afk_contract_present() {  # [state-dir]
 
 # The ordinary workers this home runs right now (the header's SPEND CAP): every
 # state/*.meta whose kind is not secondmate, because a secondmate is a
-# persistent home rather than spend, and whose endpoint is not recorded as
-# absent (a merge record has no window=) or read dead or missing by
-# bin/fm-backend.sh's fm_backend_agent_state, so stale records that outlive
-# their worker no longer consume the cap. Every other reading (alive,
-# ambiguous, unreadable, unverified) still counts, and a home whose backend
-# helpers cannot be loaded counts every non-secondmate record. This is the one
-# implementation of that count, read by the entry default here and by
+# persistent home rather than spend, and that has a recorded backend endpoint
+# (a merge record has no window= and is never a worker, even with a fresh
+# mtime). While a valid away record exists, a record spawned in this away
+# window counts whatever its endpoint reads now (spawn_gen supplies the start
+# epoch; a legacy record uses its file mtime), so a worker that already exited
+# still spent this window. Any other record counts only while
+# bin/fm-backend.sh's fm_backend_target_exists finds its endpoint, so stale
+# records that outlive their worker no longer consume the cap. A home whose
+# backend helpers cannot be loaded counts every non-secondmate record. This is
+# the one implementation of that count, read by the entry default here and by
 # bin/fm-spawn.sh's refusal.
 fm_afk_contract_live_ordinary_workers() {  # [state-dir]
-  local state=${1:-$FM_AFK_CONTRACT_STATE} meta live=0 target probe=1
+  local state=${1:-$FM_AFK_CONTRACT_STATE} meta live=0 target probe=1 record entered='' gen started
+  record=$(fm_afk_contract_path "$state")
+  if [ -f "$record" ] && fm_afk_contract_validate "$record" 2>/dev/null; then
+    entered=$(fm_afk_contract_read_field "$record" entered_epoch)
+    case "$entered" in ''|*[!0-9]*) entered='' ;; esac
+  fi
   fm_afk_contract_backend_helpers || probe=0
   for meta in "$state"/*.meta; do
     [ -f "$meta" ] || continue
@@ -224,23 +234,36 @@ fm_afk_contract_live_ordinary_workers() {  # [state-dir]
       # merge record); that reads as "no endpoint", never as an abort.
       target=$(fm_backend_target_of_meta "$meta") || target=
       [ -n "$target" ] || continue
-      case "$(fm_backend_agent_state "$(fm_backend_of_meta "$meta")" "$target")" in
-        dead|missing) continue ;;
-      esac
+      if [ -n "$entered" ]; then
+        gen=$(fm_meta_get "$meta" spawn_gen)
+        started=${gen#s}
+        started=${started%%.*}
+        case "$gen:$started" in
+          s*:[0-9]*) case "$started" in *[!0-9]*) started='' ;; esac ;;
+          *) started='' ;;
+        esac
+        [ -n "$started" ] \
+          || started=$(stat -c %Y "$meta" 2>/dev/null || stat -f %m "$meta" 2>/dev/null || true)
+        case "$started" in
+          ''|*[!0-9]*) ;;
+          *) if [ "$started" -ge "$entered" ]; then live=$((live + 1)); continue; fi ;;
+        esac
+      fi
+      fm_backend_target_exists "$(fm_backend_of_meta "$meta")" "$target" || continue
     fi
     live=$((live + 1))
   done
   printf '%s\n' "$live"
 }
 
-# Lazily reach the backend liveness helpers the count above reads, as
+# Lazily reach the backend helpers the count above reads, as
 # fm_afk_contract_lock_helpers below does for the lock primitive.
 fm_afk_contract_backend_helpers() {
-  command -v fm_backend_agent_state >/dev/null 2>&1 && return 0
+  command -v fm_backend_target_exists >/dev/null 2>&1 && return 0
   [ -f "$FM_AFK_CONTRACT_DIR/fm-backend.sh" ] || return 1
   # shellcheck source=/dev/null
   . "$FM_AFK_CONTRACT_DIR/fm-backend.sh" >/dev/null 2>&1
-  command -v fm_backend_agent_state >/dev/null 2>&1
+  command -v fm_backend_target_exists >/dev/null 2>&1
 }
 
 # The cap to record when the captain gave no --spend: the count standing at

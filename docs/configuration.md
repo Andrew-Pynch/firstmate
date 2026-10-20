@@ -906,6 +906,13 @@ Keep the export root private and never serve it directly.
 The schema is versioned for compatible readers, but it is not a Firstmate command API and no Firstmate reader consumes it.
 [`architecture.md`](architecture.md#read-only-record-exports) describes the mechanism boundary; [`bin/fm-record-export.sh`](../bin/fm-record-export.sh) owns the exact allowlist, schema, path checks, publication, and retention mechanics.
 
+## Live current page (config/current-page)
+
+The optional local, gitignored `config/current-page` names, on its first non-comment line, the HTML file `bin/fm-current-page.sh` renders for the captain; optional `notes=<path>` and `curated=<path>` lines name its human-maintained inputs, and relative paths resolve against the home.
+With it absent the command renders nothing unless given `--out`.
+The page reads this home's durable records only and never claims, acknowledges, or advances a wake, so a renderer or its `watch` trigger can run beside supervision without changing it.
+`bin/fm-current-page.sh`'s header owns the sources, the curated-file format, the trigger, and its environment knobs.
+
 ## Turn-end pane-churn absorb (config/turnend-churn-absorb)
 
 The optional local, gitignored `config/turnend-churn-absorb` presence flag opts this home into a default-off third form of positive work evidence in watcher triage.

@@ -3228,7 +3228,7 @@ fm_backend_herdr_composer_identity() {  # <target> -> "<agent>\t<status>"
 # equally defeat this state read's pre-submit concat guard. The composer is
 # by definition inside the viewport, and `--source visible` needs none of the
 # small-N --lines workaround.
-fm_backend_herdr_composer_state() {  # <target> -> empty|pending|pending-unproven|unknown
+fm_backend_herdr_composer_state() {  # <target> -> empty|pending|pending-unproven|agent-gone|unknown
   local target=$1 cap caps verdict identity
   fm_backend_herdr_parse_target "$target" || { printf 'unknown'; return 0; }
   # cortex=ask: a titled rounded composer box is the one shape a Cortex agent

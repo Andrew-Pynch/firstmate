@@ -59,6 +59,7 @@ That relaxation is scoped to the atomic-submission pair and never widens to a ba
 A stopped agent whose pane still shows the dialog text is not refused.
 [`fm_composer_blocking_dialog`](../bin/fm-composer-lib.sh) owns the recognised set, which today is only Claude's background-task exit picker; [its verification record](verification/runtime-backends.md#claude-background-task-exit-picker) lists the dialogs that are not covered.
 T3 Code has no composer and its `/mcp` tools offer no session stop, so `exit` refuses there before sending anything ([`t3code-backend.md`](t3code-backend.md#current-lifecycle-and-safety)).
+The `agent-gone` verdict is a separate exception that applies to every harness and backend pair: it is positive proof the session already ended, not a relaxation of the unreadable-read rule, so exit and relaunch treat that endpoint as agent-free instead of refusing on a composer that only looks occupied.
 
 **Teardown and discard are not verbs and will not become verbs.**
 `exit` stops an agent and preserves everything else.

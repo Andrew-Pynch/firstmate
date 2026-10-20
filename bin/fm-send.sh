@@ -54,8 +54,11 @@
 # escalation policy for ordinary and fire-and-forget records.
 # On pane backends, the composer pre-check before the ring is ADVISORY only: when
 # the composer visibly holds pending text the ring is skipped with a notice and
-# the watcher re-rings an ordinary record later; no composer verdict is
-# delivery proof on this plane, and a failed ring never fails the send.
+# the watcher re-rings an ordinary record later, and when the composer proves
+# the session has shut down (the harness's own resume hint with no composer
+# below it) the record goes to recovery exactly as a dead endpoint's does, with
+# the same exit-3 notice; no composer verdict is delivery proof on this plane,
+# and a failed ring never fails the send.
 #
 # TYPED - the LOCAL text submitted directly instead of through the inbox. On a
 # pane backend, a harness-native invocation (a leading "/", or a leading "$" to

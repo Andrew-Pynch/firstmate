@@ -589,6 +589,7 @@ Because of that, the primary treats a missing correlated report as a missed repo
 A remote mate that did answer is therefore never asked to repost while its answer is still in flight.
 A genuinely missing answer still gets exactly one repost once the mirror is known to be current.
 
+A captured delta already covered by a receipted larger capture is acknowledged without replaying its status bytes or moving the cursor backward; `bin/fm-procevent-remote-reply.sh` owns the prefix-identity and raw-byte proof.
 The [process-to-event operating contract](configuration.md#process-to-event-sources-stateprocevent) owns automatic application, one-announcement replay deduplication, and the unhandled fallback path.
 
 ### Source log continuity

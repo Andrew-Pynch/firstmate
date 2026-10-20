@@ -910,7 +910,7 @@ font:700 13px var(--mono);letter-spacing:.14em;animation:toast 3.2s ease-out for
 @keyframes toast{0%{transform:translateX(130%)}8%{transform:none}85%{opacity:1}100%{opacity:0;transform:translateY(-12px)}}
 @media (max-width:1100px){body{height:auto;overflow:auto}#cols{grid-template-columns:1fr}.pane,#insp{min-height:40vh}#hud{flex-wrap:wrap;height:auto}}
 #wins,#mine{flex:none;display:flex;align-items:center;gap:10px;padding:8px 10px 0}#wins>.lbl{color:var(--data);flex:none}
-#mine>.lbl{color:var(--link);flex:none}
+#mine>.lbl{color:var(--link);flex:none}#mine>.lbl .n{color:var(--fg2);margin-left:6px}
 .wins-row,.mine-list{display:flex;gap:8px;overflow-x:auto;flex:1;min-width:0;padding-bottom:3px;scrollbar-width:thin;scrollbar-color:var(--acc-dim) transparent}
 .win,.mine{flex:0 0 250px;display:flex;flex-direction:column;gap:1px;min-width:0;padding:5px 10px;background:var(--pane);
 border:1px solid var(--data-dim);border-left:3px solid var(--data);border-radius:var(--r);color:var(--fg)}
@@ -918,7 +918,10 @@ border:1px solid var(--data-dim);border-left:3px solid var(--data);border-radius
 .win b,.mine>b{font:600 13px var(--sans);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .win .why{font-size:12px;color:var(--fg2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .win .m{font:10.5px var(--mono);color:var(--data);letter-spacing:.06em}
-.mine{flex-basis:320px;border-color:rgba(124,196,255,.25);border-left-color:var(--link)}.mine .receipt{margin-top:4px}
+.mine{flex:0 0 300px;gap:0;padding:4px 10px;border-color:rgba(124,196,255,.25);border-left-color:var(--link)}
+.mine .mh{display:flex;gap:6px;align-items:baseline;min-width:0}
+.mine .mh b{flex:1;min-width:0;font:600 13px var(--sans);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mine .mh .m{flex:none;font:10.5px var(--mono);color:var(--fg2)}.mine .rc{margin:0}
 .answer{margin:14px 0 6px;padding:10px 12px;border:1px solid var(--acc-dim);background:rgba(255,136,0,.04);border-radius:var(--r)}
 .answer.busy{opacity:.6;pointer-events:none}
 .ans-opts{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px}
@@ -931,12 +934,13 @@ border:1px solid var(--data-dim);border-left:3px solid var(--data);border-radius
 .ans-text{display:flex;gap:8px}
 .ans-text input{flex:1;min-width:0;font:14px var(--sans);background:var(--surface);color:var(--fg);border:1px solid var(--acc-dim);
 border-radius:var(--r);padding:5px 8px;outline:0}.ans-text input:focus{border-color:var(--acc)}
-.receipt{margin-top:10px;font:12.5px/1.5 var(--mono);color:var(--data)}.receipt.err{color:var(--alert)}
-.rc-head{font-weight:700;letter-spacing:.06em}.rc-you{color:var(--fg2)}.rc-you b{color:var(--fg)}.rc-id{color:var(--dim)}
-.steps{display:flex;flex-wrap:wrap;gap:4px;margin:4px 0}.steps i{font-style:normal;font-size:10px;letter-spacing:.08em;padding:0 6px;
-border:1px solid var(--dim);color:var(--dim)}.steps i.on{border-color:var(--data);color:var(--data)}
-.rc-reply{margin-top:6px;padding:8px 10px;border-left:3px solid var(--link);background:rgba(124,196,255,.07);color:var(--fg);
-font:14px/1.55 var(--sans);white-space:pre-wrap;overflow-wrap:anywhere}
+.receipt{margin-top:10px}.receipt.err .rc{color:var(--alert)}
+.rc{display:block;font:12px/1.5 var(--mono);color:var(--fg2);min-width:0}.rc b{color:var(--fg)}
+.rc>summary,.rc.line{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;list-style:none;cursor:pointer}
+.rc>summary::-webkit-details-marker{display:none}.rc.line{cursor:default}
+.gl{font:700 11px var(--mono);color:var(--data);margin-right:4px}.gl.wait{color:var(--fg2)}.gl.err{color:var(--alert)}
+.rc-reply{margin:4px 0 2px;padding:6px 8px;border-left:3px solid var(--link);background:rgba(124,196,255,.07);color:var(--fg);
+font:13px/1.5 var(--sans);white-space:pre-wrap;overflow-wrap:anywhere}
 .mob{display:none}
 @media (max-width:760px){
 html{-webkit-text-size-adjust:100%}
@@ -953,21 +957,24 @@ white-space:normal;font-size:12px}
 #wins,#mine{display:block;padding:12px 10px 0}#wins>.lbl,#mine>.lbl{display:block;margin:0 2px 6px;font-size:12px}
 .wins-row{overflow-x:auto;scroll-snap-type:x mandatory;gap:10px;padding-bottom:6px}
 .win{flex:0 0 84%;scroll-snap-align:start;padding:10px 12px;min-height:56px}
-.mine-list{flex-direction:column;overflow:visible}.mine{flex:none;padding:10px 12px}
-.win b,.mine>b{font-size:16px;white-space:normal}.win .why{font-size:14px;white-space:normal}.win .m{font-size:12px}
+.mine-list{overflow-x:auto;scroll-snap-type:x mandatory;gap:10px;padding-bottom:6px}.mine{flex:0 0 84%;scroll-snap-align:start;padding:8px 12px}
+.win b{font-size:16px;white-space:normal}.win .why{font-size:14px;white-space:normal}.win .m{font-size:12px}
+.mine .mh b{font-size:15px}.rc{font-size:13px}.rc>summary{min-height:32px;padding-top:4px}
 #cols{display:block;padding:12px 10px}.stack{display:block}
 .pane{margin:0 0 12px;animation:none}.pane>header{font-size:13px;padding:10px 12px;min-height:44px;cursor:pointer}.list{overflow:visible}
 .pane>header::after{content:"\\25BE";color:var(--fg2);margin-left:8px}.pane.fold>header::after{content:"\\25B8"}.pane.fold .list{display:none}
 .list h3{font-size:12px;padding:12px 12px 4px}
 .it .row{min-height:48px;padding:10px 12px;font-size:16px;white-space:normal;align-items:flex-start}
 .it .t{white-space:normal;overflow:visible}.it .m{font-size:12px;padding-top:3px}.it .mk{margin-top:8px}
-.it.open .det,#needs-now .it .det{display:block;padding:0 14px 14px 26px;overflow-wrap:anywhere}
+#needs-now .it .row{white-space:nowrap;align-items:center}#needs-now .it .t{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#needs-now .it .m,#needs-now .it .mk{padding-top:0;margin-top:0}
+.it.open .det{display:block;padding:0 14px 14px 26px;overflow-wrap:anywhere}
 .it .det h2{display:none}
 .why,.st,.do{font-size:16px}.chip{font-size:12px}code{font-size:13px;word-break:break-all}
 button,a.go{min-height:44px;padding:8px 14px;font-size:14px}a.go{display:inline-flex;align-items:center}
 .need-message summary{min-height:44px;display:flex;align-items:center}
 .ans-btn{min-height:52px;flex:1 1 40%;font-size:16px}.ans-text input{min-height:44px;font-size:16px}.ans-send{min-width:84px}
-.receipt{font-size:14px}.steps i{font-size:11px;padding:2px 6px}
+.receipt{font-size:14px}
 .zero{height:auto;padding:28px 0}
 .overlay .box{min-width:0;width:calc(100vw - 24px);max-height:85vh}.timeline li{white-space:normal}
 #toasts{left:12px;right:12px;bottom:calc(env(safe-area-inset-bottom) + 12px);align-items:stretch}.toast{text-align:center}
@@ -982,7 +989,7 @@ button,a.go{min-height:44px;padding:8px 14px;font-size:14px}a.go{display:inline-
 PAGE_JS = r"""
 const $=(s,r=document)=>r.querySelector(s),$$=(s,r=document)=>[...r.querySelectorAll(s)];
 const S={pane:0,sel:{},q:"",cleared:+(sessionStorage.getItem("fm-cleared")||0),open:new Set(),ans:{},sending:{},fed:false,
- fold:new Set(["p-done","p-held"])};
+ fold:new Set(["p-done","p-held"]),rcOpen:new Set(),read:JSON.parse(localStorage.getItem("fm-read")||"{}")};
 let panes=[],pend="";const body=$("#insp .body"),q=$("#q"),MOB=matchMedia("(max-width:760px)");
 function ago(s){s=Math.max(0,Math.floor(s));if(s<60)return"just now";if(s<3600)return Math.floor(s/60)+"m ago";
  if(s<172800)return Math.floor(s/3600)+"h ago";return Math.floor(s/86400)+"d ago";}
@@ -1034,22 +1041,32 @@ function apply(text){const doc=new DOMParser().parseFromString(text,"text/html")
  inputs().forEach(([k,i])=>{if(typed[k])i.value=typed[k];});
  const back=inputs().find(([k,i])=>k===focus&&i.offsetParent);if(back)back[1].focus({preventScroll:true});paint();}
 function esc(s){const d=document.createElement("div");d.textContent=s==null?"":String(s);return d.innerHTML;}
-function hhmm(iso){const d=new Date(iso||"");return isNaN(d)?"":d.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit",hour12:false});}
 function rid(){return crypto.randomUUID?crypto.randomUUID():[...crypto.getRandomValues(new Uint8Array(16))].map(b=>b.toString(16).padStart(2,"0")).join("");}
-const STEPS=[["sending","SENT"],["received","IN MAIN'S INBOX"],["seen","MAIN READ IT"],["answered","MAIN REPLIED"]];
-function receipt(a){if(a.state==="error")return'<div class="rc-head">&#10007; NOT SENT</div><div>'+esc(a.detail)+"</div>";
- const n=STEPS.findIndex(s=>s[0]===a.state);
- const head={sending:"SENDING&#8230;",received:"&#10003; MAIN'S INBOX HAS IT "+hhmm(a.at),seen:"&#10003;&#10003; MAIN READ IT, REPLY COMING",
-  answered:"&#10003;&#10003; MAIN REPLIED "+hhmm(a.reply_at)}[a.state]||esc(a.state);
- return'<div class="rc-head">'+head+'</div><div class="steps">'+STEPS.map((s,i)=>'<i class="'+(i<=n?"on":"")+'">'+s[1]+"</i>").join("")
-  +'</div><div class="rc-you">You said: <b>'+esc(a.answer)+"</b>"+(a.note?' <span class="rc-id">note '+esc(a.note)+"</span>":"")+"</div>"
-  +(a.reply?'<div class="rc-reply">'+esc(a.reply)+"</div>":"");}
-function paint(){const shown=new Set();
+const GL={sending:["&#8230;","sending","wait"],received:["&#10003;","in Main's inbox","wait"],seen:["&#10003;&#10003;","Main read it","wait"],
+ answered:["&#10003;&#10003;","Main replied",""]};
+function glyph(a){if(a.state==="error")return'<i class="gl err" title="not sent">&#10007;</i>';
+ const g=GL[a.state]||["?",a.state,"wait"];return'<i class="gl '+g[2]+'" title="'+g[1]+'">'+g[0]+"</i>";}
+function receipt(a,bare){const g=bare?"":glyph(a);
+ if(a.state==="error")return'<div class="rc line">'+g+"not sent: "+esc(a.detail)+"</div>";
+ const you="You: <b>"+esc(a.answer)+"</b>";
+ if(!a.reply)return'<div class="rc line">'+g+you+" &#183; "+(GL[a.state]||[0,esc(a.state)])[1]+"</div>";
+ return'<details class="rc" data-rc="'+esc(a.note||a.key)+'"'+(S.rcOpen.has(a.note||a.key)?" open":"")+"><summary>"+g+you
+  +" &#183; Main: "+esc(a.reply.split("\n")[0])+'</summary><div class="rc-reply">'+esc(a.reply)+"</div></details>";}
+function tsOf(a){return(Date.parse(a.reply_at||a.at||"")||0)/1000;}
+function paint(){const shown=new Set(),now=Date.now()/1000;
  $$(".answer[data-ans]").forEach(b=>{const k=b.dataset.ans,a=S.sending[k]||S.ans[k],r=$(".receipt",b);if(b.closest(".pane"))shown.add(k);
   b.classList.toggle("busy",!!a&&a.state==="sending");$$(".ans-btn",b).forEach(x=>x.classList.toggle("chosen",!!a&&x.dataset.opt===a.answer));
   r.hidden=!a;if(a){r.classList.toggle("err",a.state==="error");r.innerHTML=receipt(a);}});
- const m=$("#mine");if(!m)return;const off=Object.values(S.ans).filter(a=>!shown.has(a.key));m.hidden=!off.length;
- $(".mine-list",m).innerHTML=off.map(a=>'<div class="mine"><b>'+esc(a.title)+'</b><div class="receipt">'+receipt(a)+"</div></div>").join("");}
+ const m=$("#mine");if(!m)return;
+ // An answer whose call left the page stays here while Main has not replied; a reply stays 24 h, or until it was on screen a minute.
+ const seen=document.visibilityState==="visible";
+ const off=Object.values(S.ans).filter(a=>{if(shown.has(a.key))return false;if(a.state!=="answered")return true;
+  const id=a.note||a.key;if(now-tsOf(a)>86400)return false;if(seen&&!S.read[id])S.read[id]=now;return!(S.read[id]&&now-S.read[id]>60);})
+  .sort((x,y)=>tsOf(y)-tsOf(x));
+ for(const id in S.read)if(now-S.read[id]>259200)delete S.read[id];localStorage.setItem("fm-read",JSON.stringify(S.read));
+ m.hidden=!off.length;$(".lbl .n",m).textContent=off.length;
+ $(".mine-list",m).innerHTML=off.map(a=>'<div class="mine"><div class="mh">'+glyph(a)+'<b title="'+esc(a.title)+'">'+esc(a.title)+"</b>"
+  +'<span class="m">'+ago(now-tsOf(a))+"</span></div>"+receipt(a,true)+"</div>").join("");}
 async function send(box,pick){const key=box.dataset.ans,said=pick.option||pick.text,id=rid();let r=null,j={};
  const h=box.closest(".det,.body"),title=(h&&h.querySelector("h2")||{}).textContent||key;
  S.sending[key]={state:"sending",answer:said};paint();
@@ -1105,6 +1122,8 @@ document.addEventListener("click",ev=>{const b=ev.target.closest("button.copy-co
   S.pane=i;S.sel[i]=it.dataset.key;show(false);}});
 document.addEventListener("visibilitychange",()=>{if(!document.hidden){refresh();poll();}});
 document.addEventListener("dblclick",ev=>{if(ev.target.closest(".pane .it")&&!ev.target.closest(".det,button,input,a")&&!MOB.matches)openSel();});
+document.addEventListener("toggle",ev=>{const d=ev.target;if(!d.matches||!d.matches("details.rc"))return;
+ if(d.open)S.rcOpen.add(d.dataset.rc);else S.rcOpen.delete(d.dataset.rc);},true);
 document.addEventListener("wheel",ev=>{const s=ev.target.closest&&ev.target.closest(".wins-row,.mine-list");
  if(!s||ev.ctrlKey||s.scrollWidth<=s.clientWidth||Math.abs(ev.deltaY)<=Math.abs(ev.deltaX))return;
  s.scrollLeft+=ev.deltaY*(ev.deltaMode===1?16:ev.deltaMode===2?s.clientWidth:1);ev.preventDefault();},{passive:false});
@@ -1318,7 +1337,7 @@ def render(paths, reason):
         '<button type="button" id="logbtn" class="mob">Log</button></div>'
         f'<div id="warn" data-swap>{"".join(f"<p>{b}</p>" for b in banners)}</div>'
         + f'<nav id="wins" data-swap aria-label="Wins"{"" if wins else " hidden"}><span class="lbl">Wins</span><div class="wins-row">{wins}</div></nav>'
-        + ('<section id="mine" hidden><span class="lbl">Your answers</span><div class="mine-list"></div></section>' if answers_on else "")
+        + ('<section id="mine" hidden><span class="lbl">Your answers<span class="n"></span></span><div class="mine-list"></div></section>' if answers_on else "")
         + '<div id="cols">'
         + pane("needs", 1, "Needs you", len(needs_now), f'<div id="needs-now">{needs_body}</div>')
         + '<div class="stack">'

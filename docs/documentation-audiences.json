@@ -509,6 +509,10 @@
       "audience": "operator-current"
     },
     {
+      "path": "docs/supervisor-cheatsheet.md",
+      "audience": "agent-runtime"
+    },
+    {
       "path": "docs/tmux-backend.md",
       "audience": "operator-current"
     },

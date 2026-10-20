@@ -301,15 +301,21 @@ def sync_fold_shadow():
 
 
 def open_decisions():
+    """Still-open status decisions, each with the human-step URL bin/fm-classify-lib.sh's fm_human_step_url reads
+    from it ("" when it is not a human step)."""
     sync_fold_shadow()
-    script = 'source "$1/fm-classify-lib.sh" && scan_open_decisions_incremental "$2"'
+    script = ('source "$1/fm-classify-lib.sh" || exit 1\n'
+              'scan_open_decisions_incremental "$2" | while IFS=$\'\\t\' read -r task key verb note; do\n'
+              '  url=$(fm_human_step_url "$verb" "$key" "$note") || url=\n'
+              '  printf \'%s\\t%s\\t%s\\t%s\\t%s\\n\' "$task" "$key" "$verb" "$url" "$note"\n'
+              'done')
     res = subprocess.run(["bash", "-c", script, "fm-current-page", SCRIPT_DIR, FOLD],
                          capture_output=True, text=True, timeout=300)
     out = []
     for line in res.stdout.splitlines():
-        parts = line.split("\t", 3)
-        if len(parts) == 4:
-            out.append({"task": parts[0], "key": parts[1], "verb": parts[2], "note": parts[3]})
+        parts = line.split("\t", 4)
+        if len(parts) == 5:
+            out.append({"task": parts[0], "key": parts[1], "verb": parts[2], "url": parts[3], "note": parts[4]})
     return out
 
 
@@ -1448,6 +1454,30 @@ def render(paths, reason):
     for c in fresh_calls:
         needs_now.append(call_div(c, "new, not summarized yet", "new " + heat(c["asked"])))
         asks.append(c["asked"])
+
+    # Human steps: a worker parked on a person at a browser (fm_human_step_url in bin/fm-classify-lib.sh owns the
+    # shape). The open decision is the live record, so the card needs no keeper re-check and leaves the moment Main
+    # closes that decision. A curated need about the same worker replaces it.
+    curated_about = {str(n.get(f) or "") for n in cur["needs"] for f in ("who", "task")}
+
+    def step_div(d):
+        r = by_task.get(d["task"], {})
+        title = f'Human step for {r.get("title") or d["task"]}'
+        what = plain_words(d["note"], 200) or "Finish the step at the link."
+        step = {"link": d["url"], "link_label": "the step",
+                "do": f"Open `{d['url']}`, finish the step there, then tell Main it is done"}
+        ans = answer_for(d["task"], title, what, ["Done"], None)
+        asked = r.get("updated")
+        row = f'<span class="mk"></span><span class="t">{e(title)}</span><span class="m">{age(asked, now)}</span>'
+        det = (f"<h2>{e(title)}</h2>"
+               + chips(age(asked, now, "asked "), e(str(r.get("host") or here)), f'<code>{e(d["task"])}</code>',
+                       f'<code>{e(d["key"])}</code>')
+               + f'<div class="why">{e(what)}</div>{need_actions(step, bool(ans))}{ans}' + docs(d["task"]))
+        return item_div("step:" + d["task"] + ":" + d["key"], row, det, href=d["url"], task=d["task"], cls=heat(asked))
+    for d in [d for ds in open_by_task.values() for d in ds]:
+        if d["url"] and d["task"] not in curated_about:
+            needs_now.append(step_div(d))
+            asks.append(by_task.get(d["task"], {}).get("updated"))
 
     # Running: workers whose endpoint is present right now; second mates always, by their routed status.
     def run_div(r):

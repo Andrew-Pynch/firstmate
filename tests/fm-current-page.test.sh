@@ -156,6 +156,27 @@ assert_contains "$(page_part second-mates)" 'the far box needs a <b>disk</b> dec
 assert_not_contains "$page" '<b>disk</b>' "status text is escaped"
 pass "Running shows live workers in plain words with their PR"
 
+# A worker parked on a sign-in: its open human-step decision is the one status
+# record that reaches Needs you, as the step's link plus its URL in a copy block,
+# and it leaves the moment Main closes that decision.
+STEP_URL='https://vigil.example.com/login?next=/sweep'
+fm_write_meta "$STATE/delta-login.meta" "kind=ship" "backend=tmux" "window=fm-delta:0" "project=$HOME_DIR/projects/alpha"
+printf '%s\n' \
+  "needs-decision [key=human-step-vigil] [at=$((now - 120))]: sign in to Vigil prod at $STEP_URL" \
+  "paused [key=human-step-vigil] [at=$((now - 110))]: waiting on that human step" > "$STATE/delta-login.status"
+"$ROOT/bin/fm-current-page.sh" >/dev/null
+needs=$(page_part needs-now)
+assert_contains "$needs" 'Human step for delta-login' "a human step is a Needs you card"
+assert_contains "$needs" "href=$STEP_URL" "the card links straight to the step"
+assert_contains "$(cat "$PAGE")" "<code>$STEP_URL</code><button type=\"button\" class=\"copy-command\">Copy</button>" \
+  "the exact URL sits in a copy block"
+assert_contains "$needs" 'sign in to Vigil prod at' "the card says what the step is"
+printf 'resolved [key=human-step-vigil] [at=%s]: captain signed in\n' "$now" >> "$STATE/delta-login.status"
+"$ROOT/bin/fm-current-page.sh" >/dev/null
+assert_not_contains "$(page_part needs-now)" 'Human step for delta-login' "a closed human step leaves Needs you"
+rm -f "$STATE/delta-login.meta" "$STATE/delta-login.status"
+pass "a worker's open human step shows in Needs you with its URL to copy until Main closes it"
+
 # Task documents: a worker's own report and plan, a doc its status names, never its brief or a secret-shaped file.
 mkdir -p "$HOME_DIR/data/alpha-fix" "$HOME_DIR/data/shared-notes"
 printf '# Alpha report\n\n## Findings\n\n- the banner **color** is picked\n' > "$HOME_DIR/data/alpha-fix/report.md"

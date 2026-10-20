@@ -909,6 +909,7 @@ That \`done:\` is accepted only when this copy's HEAD - your latest commit - is 
 If you deliberately keep the PR a draft, append \`paused [at=<epoch>]: {why the draft is held}\` instead of done.
 Do NOT run /no-mistakes. The configured merge authority decides whether to merge the PR; firstmate relays the outcome.
 EOF
+      fm_dod_followup_rule "$forge_cli"
       ;;
     local-only:*)
       cat <<EOF
@@ -946,11 +947,33 @@ Then append \`done [at=<epoch>]: PR {url} checks green\` and stop. You are finis
 That CI-ready \`done:\` is accepted only when this copy's HEAD - your latest commit - is one the /no-mistakes run pushed, so commit nothing after the run; the check tests that commit, not merely that a branch moved.
 If you deliberately keep the PR a draft, append \`paused [at=<epoch>]: {why the draft is held}\` instead of done.
 EOF
+      fm_dod_followup_rule "$forge_cli"
       ;;
     *)
       echo "error: fm_dod_block: unknown delivery mode '$mode'" >&2
       return 1 ;;
   esac
+}
+
+# The merge-race rule both PR-based contracts end with. bin/fm-pr-merge.sh is
+# its enforcement half: it refuses while the worker's latest work event is the
+# `working:` line this rule asks for, and while the live PR head differs from
+# the pr_head= bin/fm-pr-check.sh recorded from the worker's last ready line.
+# The state read names the forge CLI rule 3 of the brief requires (gh-axi, or
+# tea on Forgejo), never raw gh.
+fm_dod_followup_rule() {  # <forge-cli>
+  local read
+  if [ "$1" = tea ]; then
+    read="\`tea api --repo <owner>/<repo> /repos/{owner}/{repo}/pulls/<number>\` (its \`state\` and \`merged\` fields)"
+  else
+    read="\`gh-axi pr view <number>\` (its state)"
+  fi
+  cat <<EOF
+The merge authority may merge the PR as soon as you report it ready, even while you keep working.
+Before any later change reaches that PR (a follow-up push, or a /no-mistakes run that pushes), read its state with $read, where <number> is the PR number from your PR URL.
+If it is merged or closed, never push to it: start a new branch from the updated default branch and deliver the follow-up as a new PR.
+If it is open, first append \`working [at=<epoch>]: follow-up to PR {url}\`, which holds the merge, then report your ready \`done:\` line again once the follow-up is ready; firstmate re-records the PR head from that line.
+EOF
 }
 
 # 0 when <sha> is contained in a ref under <namespace> in <repo>.

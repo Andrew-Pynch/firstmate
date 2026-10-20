@@ -20,6 +20,9 @@
 # skips this refusal, because its own merge-time draft refusal is authoritative.
 # The recorded pr= also frees the task's place in a declared project capacity
 # (bin/fm-project-capacity-lib.sh).
+# Run it on every ready `done:` line a worker reports for the PR, a follow-up's
+# included: each direct run re-records pr_head= from the forge, while the
+# merge-time run keeps the recorded one (see the metadata rewrite below).
 # Usage: fm-pr-check.sh <task-id> <pr-url>
 set -eu
 
@@ -211,12 +214,25 @@ META_DEVICE=$(fm_pr_file_device "$META") || exit 1
 STATE_DEVICE=$(fm_pr_file_device "$STATE") || exit 1
 [ "$META_DEVICE" = "$STATE_DEVICE" ] || { echo "error: task metadata is unavailable" >&2; exit 1; }
 META_TMP=$(mktemp "$STATE/.fm-pr-meta.XXXXXX") || exit 1
+RECORDED_PR=
+RECORDED_PR_HEAD=
 while IFS= read -r line || [ -n "$line" ]; do
   case "$line" in
-    pr=*|pr_head=*) ;;
+    pr=*) RECORDED_PR=${line#pr=} ;;
+    pr_head=*) RECORDED_PR_HEAD=${line#pr_head=} ;;
     *) printf '%s\n' "$line" >> "$META_TMP" || exit 1 ;;
   esac
 done < "$META"
+# Every direct run re-records the live head: firstmate runs this on each ready
+# `done:` line the worker reports, including a follow-up's. The merge-time run
+# from bin/fm-pr-merge.sh keeps a GitHub head already recorded for this PR,
+# because that head is the one the worker last reported ready and the merge
+# refuses while the live head differs from it; re-recording it here would let a
+# second merge attempt wave through a push the worker never reported done.
+if [ "${FM_PR_CHECK_MERGE:-}" = 1 ] && [ "$PROVIDER" = github ] \
+  && [ "$RECORDED_PR" = "$URL" ] && fm_pr_head_valid "$RECORDED_PR_HEAD"; then
+  PR_HEAD=$RECORDED_PR_HEAD
+fi
 printf 'pr=%s\n' "$URL" >> "$META_TMP" || exit 1
 [ -z "$PR_HEAD" ] || printf 'pr_head=%s\n' "$PR_HEAD" >> "$META_TMP" || exit 1
 chmod 0600 "$META_TMP" || exit 1

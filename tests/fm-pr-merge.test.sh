@@ -698,6 +698,7 @@ run_pr_merge() {
   FM_TEST_GLAB_JSON="$case_dir/mr.json" \
   FM_TEST_TEA_LOG="$case_dir/tea.log" \
   HOME="${FM_TEST_USER_HOME:-$case_dir/user-home}" \
+  FM_CREW_STATE_BIN="$case_dir/fakebin/fm-crew-state" \
   PATH="$case_dir/fakebin:$PATH" \
     "$PR_MERGE" "$@"
   rc=$?
@@ -779,6 +780,113 @@ test_verified_merge_records_pr_and_head() {
     "records-before-merge: pr_head= was not recorded"
   assert_logged_gh_merge "$case_dir" 9 example/repo --squash
   pass "fm-pr-merge records pr= and pr_head= for a verified GitHub merge"
+}
+
+# Run bin/fm-pr-check.sh the way firstmate does on a worker's ready line, with
+# the case's gh mock answering the head and draft reads.
+run_pr_check() {
+  local case_dir=$1; shift
+  FM_ROOT_OVERRIDE="$ROOT" \
+  FM_HOME="$case_dir/home" \
+  FM_STATE_OVERRIDE="$case_dir/state" \
+  FM_TEST_GH_LOG="$case_dir/gh.log" \
+  FM_TEST_GH_VIEW_JSON="$case_dir/github-view.json" \
+  FM_TEST_GH_HEAD="$case_dir/github-head" \
+  HOME="$case_dir/user-home" \
+  PATH="$case_dir/fakebin:$PATH" \
+    "$ROOT/bin/fm-pr-check.sh" "$@"
+}
+
+# The merge race: a worker pushed to its PR after its ready report. Merging the
+# moved head would land a follow-up nobody reported ready, so the merge refuses
+# until the worker's next ready line is recorded; a refused attempt must not
+# re-record the head itself, or the retry would wave the push through.
+test_github_moved_head_refuses_until_rerecorded() {
+  local case_dir rc url ready moved attempt
+  url=https://github.com/example/repo/pull/31
+  ready=1212121212121212121212121212121212121212
+  moved=3434343434343434343434343434343434343434
+  case_dir=$(make_case github-moved-head)
+  add_gh_mocks "$case_dir" "$ready"
+  : > "$case_dir/gh-axi.log"
+  run_pr_check "$case_dir" task-x1 "$url" > "$case_dir/check-1.out" 2>&1 \
+    || fail "moved-head: the ready line could not be recorded: $(cat "$case_dir/check-1.out")"
+  assert_grep "pr_head=$ready" "$case_dir/state/task-x1.meta" "moved-head: the ready head was not recorded"
+  write_github_live_json "$case_dir" "$moved"
+  for attempt in 1 2; do
+    set +e
+    run_pr_merge "$case_dir" task-x1 "$url" > "$case_dir/stdout" 2> "$case_dir/stderr"
+    rc=$?
+    set -e
+    expect_code 1 "$rc" "moved-head: attempt $attempt must refuse"
+    assert_grep "the head is $moved, not $ready from the worker's last ready report" "$case_dir/stderr" \
+      "moved-head: attempt $attempt did not name both heads"
+    assert_grep "pr_head=$ready" "$case_dir/state/task-x1.meta" \
+      "moved-head: attempt $attempt re-recorded the moved head"
+  done
+  assert_no_grep 'pr merge ' "$case_dir/gh.log" "moved-head: a refused merge reached the forge"
+  run_pr_check "$case_dir" task-x1 "$url" > "$case_dir/check-2.out" 2>&1 \
+    || fail "moved-head: the follow-up ready line could not be recorded: $(cat "$case_dir/check-2.out")"
+  run_pr_merge "$case_dir" task-x1 "$url" > "$case_dir/stdout" 2> "$case_dir/stderr" \
+    || fail "moved-head: merge after re-recording failed: $(cat "$case_dir/stderr")"
+  assert_logged_gh_merge "$case_dir" 31 example/repo --squash
+  pass "a GitHub head that moved after the ready report refuses until the next ready line is recorded"
+}
+
+# The worker's own word that it is changing the PR again holds the merge until
+# it reports ready again.
+test_working_after_ready_report_refuses() {
+  local case_dir rc url
+  url=https://github.com/example/repo/pull/32
+  case_dir=$(make_case working-after-ready)
+  add_gh_mocks "$case_dir" 5656565656565656565656565656565656565656
+  : > "$case_dir/gh-axi.log"
+  printf '%s\n' \
+    "done [at=1]: PR $url checks green" \
+    "working [at=2]: follow-up to PR $url" \
+    'note [at=3]: report=data/task-x1/report.md' > "$case_dir/state/task-x1.status"
+  set +e
+  run_pr_merge "$case_dir" task-x1 "$url" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  expect_code 1 "$rc" "working-after-ready: merge must refuse"
+  assert_grep "working [at=2]: follow-up to PR $url" "$case_dir/stderr" \
+    "working-after-ready: the refusal did not quote the worker's line"
+  assert_no_grep 'pr merge ' "$case_dir/gh.log" "working-after-ready: a refused merge reached the forge"
+  assert_no_grep 'pr=https://' "$case_dir/state/task-x1.meta" "working-after-ready: a refused merge recorded the PR"
+  printf 'done [at=4]: PR %s checks green\n' "$url" >> "$case_dir/state/task-x1.status"
+  run_pr_merge "$case_dir" task-x1 "$url" > "$case_dir/stdout" 2> "$case_dir/stderr" \
+    || fail "working-after-ready: merge after the next ready line failed: $(cat "$case_dir/stderr")"
+  assert_logged_gh_merge "$case_dir" 32 example/repo --squash
+  pass "a working line after the ready report holds the merge until the worker reports ready again"
+}
+
+# A no-mistakes run that is still executing or parked at a gate is a validation
+# in flight; only a finished one lets the merge through.
+test_in_flight_validation_refuses() {
+  local case_dir rc url verdict
+  url=https://github.com/example/repo/pull/33
+  for verdict in 'state: working · source: run-step · running: review' \
+    'state: parked · source: run-step · parked at fix_review: 1 finding(s)'; do
+    case_dir=$(make_case "in-flight-${verdict:7:6}")
+    add_gh_mocks "$case_dir" 7878787878787878787878787878787878787878
+    : > "$case_dir/gh-axi.log"
+    printf '#!/usr/bin/env bash\nprintf "%%s\\n" %q\n' "$verdict" > "$case_dir/fakebin/fm-crew-state"
+    chmod +x "$case_dir/fakebin/fm-crew-state"
+    set +e
+    run_pr_merge "$case_dir" task-x1 "$url" > "$case_dir/stdout" 2> "$case_dir/stderr"
+    rc=$?
+    set -e
+    expect_code 1 "$rc" "in-flight: '$verdict' must refuse"
+    assert_grep 'its validation run is still in flight' "$case_dir/stderr" "in-flight: the refusal did not say why"
+    assert_no_grep 'pr merge ' "$case_dir/gh.log" "in-flight: a refused merge reached the forge"
+  done
+  printf '#!/usr/bin/env bash\necho "state: done · source: run-step · checks green: PR ready for review"\n' \
+    > "$case_dir/fakebin/fm-crew-state"
+  run_pr_merge "$case_dir" task-x1 "$url" > "$case_dir/stdout" 2> "$case_dir/stderr" \
+    || fail "in-flight: merge after the run finished failed: $(cat "$case_dir/stderr")"
+  assert_logged_gh_merge "$case_dir" 33 example/repo --squash
+  pass "a no-mistakes validation still in flight holds the merge"
 }
 
 # The forge call is the point of no return: once gh-axi has merged, nothing this
@@ -2968,6 +3076,9 @@ test_github_closed_unqueued_outcome_omits_retry_flags
 test_github_agreeing_queue_rules_keep_retry_guidance
 test_github_conflicting_queue_rules_report_ambiguity
 test_verified_merge_records_pr_and_head
+test_github_moved_head_refuses_until_rerecorded
+test_working_after_ready_report_refuses
+test_in_flight_validation_refuses
 test_pr_metadata_is_recorded_before_the_forge_call
 test_merge_failure_propagates_after_recording
 test_github_open_unqueued_outcome_refuses

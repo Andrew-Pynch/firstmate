@@ -149,7 +149,11 @@
 #      proven historical head, or kind=scout): fall back to the recorded
 #      backend's pane busy state, then the resolved status declaration
 #      when its verb maps to a recognized run-state. Decision-only events such as
-#      `resolved` never become current state or detail.
+#      `resolved` never become current state or detail. An open human-step
+#      needs-decision on an idle pane (fm_human_step_url in
+#      bin/fm-classify-lib.sh owns the shape) reads paused, not parked, with a
+#      "human step: <url>" component: the worker is waiting on a person at a
+#      browser, not wedged, and the decision stays open for firstmate to relay.
 #   5. Missing meta or torn-down worktree: report unknown · none. If no run is
 #      attributed to this crew, a dead endpoint also reports unknown · none rather
 #      than trusting a stale status log. On tmux, herdr, and rex, which own a
@@ -1390,6 +1394,11 @@ fi
 if [ -n "$LOG_VERB" ]; then
   if [ "$LOG_VERB" = "done" ]; then
     emit_ship_status_done
+  fi
+  # A human-step wait: the open decision is a person's click, not an answer the
+  # worker idles for unexplained, so it reads as a declared pause with the URL.
+  if HUMAN_STEP_URL=$(status_human_step_url "$LOG_LINE"); then
+    emit paused status-log "$FM_HUMAN_STEP_COMPONENT$HUMAN_STEP_URL${SEP}$(status_line_note "$LOG_LINE")"
   fi
   LOG_STATE=$(map_log_state "$LOG_LINE")
   if [ "$LOG_STATE" != unknown ]; then

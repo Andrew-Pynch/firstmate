@@ -1027,6 +1027,38 @@ test_genuine_daemon_down_reports_blocked() {
   pass "genuine daemon-down blocked line still reports blocked"
 }
 
+# A worker parked on a person at a browser reads as a declared pause carrying
+# the URL, so supervision stops treating its idle pane as a wedge. A
+# human-step key without a URL, or the URL under an ordinary key, stays an
+# ordinary parked decision, and resolving the step ends the pause.
+test_human_step_wait_reads_paused_with_url() {
+  reset_fakes
+  local d out; d=$(new_case human-step)
+  make_repo_on_branch "$d/wt" fm/feat-hs
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-hs.meta" "window=fm:fm-feat-hs" "worktree=$d/wt" "kind=ship" "harness=claude"
+  FM_FAKE_AXI_STATUS=""
+  FM_FAKE_BUSY=0
+  arm_idle_record "$d/state" feat-hs
+  printf '%s\n' \
+    'working [at=1]: proving the prod sweep' \
+    'needs-decision [key=human-step-vigil-login] [at=2]: sign in to Vigil prod at https://vigil.example.com/login?next=%2Fsweep.' \
+    'paused [key=human-step-vigil-login] [at=3]: waiting on that human step' > "$d/state/feat-hs.status"
+  out=$(run_crew_state "$d" feat-hs)
+  assert_contains "$out" "state: paused" "an open human step on an idle pane reads paused"
+  assert_contains "$out" "human step: https://vigil.example.com/login?next=%2Fsweep ·" "the exact URL is its own component"
+  printf 'resolved [key=human-step-vigil-login] [at=4]: captain signed in\n' >> "$d/state/feat-hs.status"
+  out=$(run_crew_state "$d" feat-hs)
+  assert_not_contains "$out" "human step:" "a resolved human step is no longer reported"
+  printf '%s\n' 'needs-decision [key=human-step-nourl] [at=5]: someone has to sign in somewhere' > "$d/state/feat-hs.status"
+  out=$(run_crew_state "$d" feat-hs)
+  assert_contains "$out" "state: parked" "a human step without a URL stays an ordinary decision"
+  printf '%s\n' 'needs-decision [key=pick-host] [at=6]: deploy to https://a.example.com or https://b.example.com?' > "$d/state/feat-hs.status"
+  out=$(run_crew_state "$d" feat-hs)
+  assert_contains "$out" "state: parked" "a URL under an ordinary decision key stays parked"
+  pass "a human-step wait reads paused with its exact URL; anything else keeps its reading"
+}
+
 # (c) genuine parked run + needs-decision log AGREE -> parked, NOT superseded
 test_genuine_parked_not_superseded() {
   reset_fakes
@@ -5851,6 +5883,7 @@ test_socket_refusal_over_terminal_run_reports_blocked
 test_socket_refusal_override_expires_when_the_crew_moves_on
 test_ordinary_blocked_over_live_run_keeps_plain_superseded
 test_genuine_daemon_down_reports_blocked
+test_human_step_wait_reads_paused_with_url
 test_secondmate_open_block_survives_unrelated_append
 test_newest_open_decision_supplies_the_reported_detail
 test_single_owner_terminal_declaration_supersedes_stale_decision

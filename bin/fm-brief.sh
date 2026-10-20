@@ -124,6 +124,9 @@
 # "blocked:": pause for a known wait expected to clear on its own, including
 # the worker's own background work, pipeline or long command; blocked when
 # firstmate must act. The first-sight alert remains; repeats use the long cadence.
+# Ship and scout scaffolds also tell a worker blocked on a person at a browser
+# to open a human-step decision with the exact URL and pause instead of
+# polling; fm_human_step_url in bin/fm-classify-lib.sh owns that shape.
 # Emission-time syntax and legacy unknown-time handling are owned by
 # bin/fm-classify-lib.sh; each scaffold renders the stamp as a literal <epoch>
 # placeholder the worker replaces with a numeric Unix time as it appends, so a
@@ -733,6 +736,9 @@ $CREWMATE_PAUSE_INSTRUCTIONS
 5. If you hit the same obstacle twice, append \`blocked [at=<epoch>]: {why}\` and stop; firstmate will help.
 6. If a decision belongs to a human (product choices, destructive actions),
    append \`needs-decision [at=<epoch>]: {summary of options}\` and stop. Firstmate will reply with the decision.
+   If your next step needs a person at a browser that no headless session can complete (a sign-in, an OAuth consent, a device approval), and you have checked it is still needed, do not poll, sleep, or retry it:
+   append \`needs-decision [key=human-step-<slug>] [at=<epoch>]: {the exact step} {its exact https URL}\`, then \`$PAUSED_VERB [key=human-step-<slug>] [at=<epoch>]: waiting on that human step\`, and end your turn.
+   Firstmate puts the URL in front of a person and tells you through your inbox when the step is done.
    A decision or blocker you opened stays open until a \`resolved\` line carrying its exact key lands; a later \`done:\` or \`working:\` line never closes it, even when the answer is what started that work.
    Firstmate's reply normally writes that closing line at answer time; when a blocker or wait clears WITHOUT a firstmate reply, append \`resolved [at=<epoch>]: {how it cleared}\` yourself (same \`[key=<slug>]\` if you opened it with one) as you resume.
 $SHARED_INFRA_RULE
@@ -817,6 +823,9 @@ $CREWMATE_PAUSE_INSTRUCTIONS
 5. If you hit the same obstacle twice, append \`blocked [at=<epoch>]: {why}\` and stop; firstmate will help.
 6. If a decision belongs above the implementation worker (product choices, destructive actions),
    append \`needs-decision [at=<epoch>]: {summary of options}\` and stop. Firstmate will reply with the decision.
+   If your next step needs a person at a browser that no headless session can complete (a sign-in, an OAuth consent, a device approval), and you have checked it is still needed, do not poll, sleep, or retry it:
+   append \`needs-decision [key=human-step-<slug>] [at=<epoch>]: {the exact step} {its exact https URL}\`, then \`$PAUSED_VERB [key=human-step-<slug>] [at=<epoch>]: waiting on that human step\`, and end your turn.
+   Firstmate puts the URL in front of a person and tells you through your inbox when the step is done.
 $ASK_USER_BLOCK
    A decision or blocker you opened stays open until a \`resolved\` line carrying its exact key lands; a later \`done:\` or \`working:\` line never closes it, even when the answer is what started that work.
    Firstmate's reply normally writes that closing line at answer time; when a blocker or wait clears WITHOUT a firstmate reply, append \`resolved [at=<epoch>]: {how it cleared}\` yourself (same \`[key=<slug>]\` if you opened it with one) as you resume.

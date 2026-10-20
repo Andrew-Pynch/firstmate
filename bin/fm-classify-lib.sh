@@ -432,6 +432,88 @@ status_paused_until() {  # <status-line> -> epoch on stdout
   fm_utc_iso_to_epoch "$token"
 }
 
+# --- human-step wait --------------------------------------------------------
+# A worker whose next step needs a person at a browser (a sign-in, an OAuth
+# consent, a device approval) that no headless session can complete opens a
+# needs-decision whose key is `human-step` or starts with `human-step-` and
+# whose note carries the exact http(s) URL, then declares `paused:` and ends its
+# turn instead of polling; bin/fm-brief.sh owns that worker instruction.
+# This section is the one definition of that shape. bin/fm-crew-state.sh reads
+# such an open decision on an idle worker as a paused wait carrying a
+# "human step: <url>" component, so supervision stops treating the idle pane as
+# a wedge, and bin/fm-current-page.py puts the URL on the Deck's Needs you pane
+# as a copy-paste block. The decision itself stays open, so the drain keeps
+# presenting it until firstmate closes it with bin/fm-send.sh --resolve-key once
+# the human says the step is done.
+FM_HUMAN_STEP_KEY_PREFIX='human-step'
+# shellcheck disable=SC2034 # Read by bin/fm-crew-state.sh, not this lib.
+FM_HUMAN_STEP_COMPONENT='human step: '
+
+# The URL of a human step: the first http(s) URL in <note> when <verb> is
+# needs-decision and <key> is in the human-step namespace, with trailing
+# sentence punctuation dropped. Returns 1 otherwise, including for a human-step
+# key whose note names no URL: without the exact place to click there is
+# nothing the human can act on, so it stays an ordinary decision.
+fm_human_step_url() {  # <verb> <key> <note> -> URL on stdout
+  local verb=$1 key=$2 note=$3 url re
+  [ "$verb" = needs-decision ] || return 1
+  case "$key" in
+    "$FM_HUMAN_STEP_KEY_PREFIX"|"$FM_HUMAN_STEP_KEY_PREFIX"-?*) ;;
+    *) return 1 ;;
+  esac
+  re='https?://[^][:space:]<>"`'\''[]+'
+  [[ "$note" =~ $re ]] || return 1
+  url=${BASH_REMATCH[0]}
+  while :; do
+    case "$url" in
+      *[.,\;:\)]) url=${url%?} ;;
+      *) break ;;
+    esac
+  done
+  case "$url" in http://?*|https://?*) printf '%s\n' "$url" ;; *) return 1 ;; esac
+}
+
+# fm_human_step_url for one status line, reading its verb, key, and note with
+# the same readers the decision fold uses.
+status_human_step_url() {  # <status-line> -> URL on stdout
+  local line=$1 verb key
+  status_line_verb "$line" verb
+  key=$(_fm_decision_key "$line") || return 1
+  fm_human_step_url "$verb" "$key" "$(status_line_note "$line")"
+}
+
+# The worker's latest work event: its last `working`, paused, `needs-decision`,
+# `blocked`, `done`, or `failed` line. Decision-closing `resolved` and
+# `captain-held` lines and `note:` lines are skipped, because none of them says
+# whether the worker is still changing its work. bin/fm-pr-merge.sh refuses a
+# merge while this is a `working:` line: the ship brief tells a worker to append
+# one before any later push to a PR it already reported ready, and to report
+# `done` again after it (bin/fm-dod-lib.sh). Bounded like last_status_line: a
+# tail window holding no work event widens to the whole file.
+status_latest_work_line() {  # <status-file>
+  local f=$1 line=''
+  [ -f "$f" ] && [ -r "$f" ] || return 0
+  if ! line=$(tail -n "$FM_CLASSIFY_EVENT_WINDOW_LINES" "$f" 2>/dev/null | _fm_status_work_event_scan); then
+    line=$(_fm_status_work_event_scan < "$f") || line=''
+  fi
+  [ -z "$line" ] || printf '%s\n' "$line"
+}
+
+# Print the last work event on stdin; return 1 when the stream holds none.
+_fm_status_work_event_scan() {
+  local line verb last='' pause
+  pause=${FM_CLASSIFY_PAUSED_VERB:-$FM_CLASSIFY_PAUSED_VERB_DEFAULT}
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in *:*) ;; *) continue ;; esac
+    status_line_verb "$line" verb
+    case "$verb" in
+      working|needs-decision|blocked|done|failed|"$pause") last=$line ;;
+    esac
+  done
+  [ -n "$last" ] || return 1
+  printf '%s' "$last"
+}
+
 # --- optional event emission time -------------------------------------------
 # New writers may append "[at=<epoch>]" before the first colon, alongside key
 # and corr tags in any order. Epoch is UTC Unix seconds: canonical unsigned

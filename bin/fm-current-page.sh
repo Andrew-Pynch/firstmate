@@ -83,7 +83,11 @@
 #     (default 2), plus captain calls Main held within that window that no need
 #     covers yet. A need tied to a backlog row ("task") leaves the page the moment
 #     that row stops being an open captain hold (answered, released, done, or
-#     deferred). Raw status lines never reach this pane.
+#     deferred). Raw status lines never reach this pane; the one structured
+#     exception is a worker's open human-step decision (fm_human_step_url in
+#     bin/fm-classify-lib.sh), shown as the step's link, its URL as a copy block,
+#     and a Done answer, until Main closes that decision or a curated need about
+#     the same worker replaces it.
 #   2 Running: workers whose recorded local endpoint is present now and whose last
 #     status is not paused, done, or failed, each with its PR link and the
 #     curated plain line (used only while re-checked within the window and newer

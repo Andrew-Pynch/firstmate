@@ -98,6 +98,13 @@
 # setting, which the merge API applies, and imposing squash there would override
 # that convention rather than mirror the GitHub default.
 #
+# A merge is also refused while the task's worker may still be changing the PR
+# (require_worker_settled owns the rule): its latest status work event is
+# `working:`, its no-mistakes validation run is still executing or parked, or,
+# on GitHub, the live head differs from the pr_head= recorded from its last
+# ready report. bin/fm-pr-check.sh re-records that head when run on the
+# worker's next ready line; the merge-time recording below keeps it.
+#
 # A GitLab merge is refused unless every pre-merge condition holds, each read
 # live at merge time rather than taken from recorded metadata: the merge request
 # is open, detailed_merge_status is mergeable, has_conflicts is false,
@@ -207,6 +214,8 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 . "$SCRIPT_DIR/fm-merge-authority-lib.sh"
 # shellcheck source=bin/fm-afk-contract.sh
 . "$SCRIPT_DIR/fm-afk-contract.sh"
+# shellcheck source=bin/fm-classify-lib.sh
+. "$SCRIPT_DIR/fm-classify-lib.sh"
 
 if [ "$#" -lt 2 ]; then
   echo "error: invalid PR merge request" >&2
@@ -572,10 +581,39 @@ fi
 
 # The recorded head is read before bin/fm-pr-check.sh rewrites the metadata,
 # because that script re-records pr= and drops a pr_head= it cannot resolve.
-RECORDED_HEAD=
-if [ "$PROVIDER" = gitlab ] || [ "$PROVIDER" = forgejo ]; then
-  RECORDED_HEAD=$(grep '^pr_head=' "$META" | tail -1 | cut -d= -f2- || true)
-fi
+# On GitHub it is the head of the worker's last ready report (the merge-time
+# recording keeps it), so github_verify_mergeable refuses a live head that
+# differs; GitLab and Forgejo compare it against their own live head below.
+RECORDED_HEAD=$(grep '^pr_head=' "$META" | tail -1 | cut -d= -f2- || true)
+
+# Merge-race guard; fm_dod_followup_rule in bin/fm-dod-lib.sh is its worker
+# half. A PR can merge while its worker is still changing it, and a follow-up
+# that lands after the merge never reaches the base branch. Before anything is
+# recorded, refuse while the worker's latest work event is the `working:` line
+# that rule asks for before any later change to a ready PR, and, for a
+# no-mistakes task, while bin/fm-crew-state.sh reads its validation run as
+# still executing or parked at a gate. The live GitHub head that differs from
+# RECORDED_HEAD is the third case, read with the rest of the live state.
+require_worker_settled() {
+  local line mode
+  line=$(status_latest_work_line "$STATE/$ID.status")
+  if [ "$(status_line_verb "$line")" = working ]; then
+    printf 'error: refusing to merge %s: the worker reported more work after its ready report, so a follow-up may still be on its way:\n  %s\n' \
+      "$URL" "$line" >&2
+    printf 'error: wait for its next ready done line, run bin/fm-pr-check.sh %s %s on it, then merge\n' "$ID" "$URL" >&2
+    return 1
+  fi
+  mode=$(grep '^mode=' "$META" | tail -1 | cut -d= -f2- || true)
+  [ "$mode" = no-mistakes ] || return 0
+  line=$("$FM_CREW_STATE_BIN" "$ID" 2>/dev/null) || line=
+  case "$line" in
+    "state: working · source: run-step"*|"state: parked · source: run-step"*)
+      printf 'error: refusing to merge %s: its validation run is still in flight (%s); merge after the worker reports it ready\n' \
+        "$URL" "$line" >&2
+      return 1
+      ;;
+  esac
+}
 
 # Pre-merge conditions for a GitLab merge request, read from one live view of
 # the merge request. Sets FM_PR_MERGE_HEAD to the verified head on success and
@@ -1115,6 +1153,10 @@ FIELDS
   [ "$draft" = false ] \
     || refusals="$refusals  - the pull request is a draft
 "
+  if [ -n "$RECORDED_HEAD" ] && [ "$RECORDED_HEAD" != "$live_head" ]; then
+    refusals="$refusals  - the head is $live_head, not $RECORDED_HEAD from the worker's last ready report; once the worker reports done for the new head, run bin/fm-pr-check.sh $ID $URL to re-record it
+"
+  fi
   [ "$mergeable" = MERGEABLE ] \
     || mergeable_refusal="  - mergeable is \"${mergeable:-unreadable}\", not MERGEABLE
 "
@@ -1695,6 +1737,7 @@ away_status=0
 require_current_away_authority || away_status=$?
 [ "$away_status" -eq 0 ] || exit "$away_status"
 require_recorded_pr_identity || exit 1
+require_worker_settled || exit 1
 record_pr_metadata || exit 1
 require_released_captain_hold || exit 1
 

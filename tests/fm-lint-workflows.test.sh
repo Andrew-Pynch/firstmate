@@ -480,6 +480,7 @@ case "$*" in
   "rev-parse --abbrev-ref HEAD") printf 'feature\n'; exit 0 ;;
   "rev-parse --verify -q origin/main") exit 0 ;;
   "merge-base "*) printf 'fakebase123\n'; exit 0 ;;
+  "rev-list --count "*) printf '1\n'; exit 0 ;;
   "diff --name-only --diff-filter=ACMR -z fakebase123 --")
     [ -n "${FM_TEST_GIT_DIFF_FILE:-}" ] && cat "${FM_TEST_GIT_DIFF_FILE}"
     exit 0

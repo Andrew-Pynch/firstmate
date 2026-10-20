@@ -20,7 +20,7 @@
 # secondmate's routed lines arrive in its local state/<mate>.status);
 # bin/fm-tasks-axi.sh for backlog titles and held rows; the still-open
 # decisions fold of bin/fm-classify-lib.sh; and GitHub (gh) for PRs merged in
-# the last 24 h across the GitHub repositories data/projects.md names, cached
+# the last 7 d across the GitHub repositories data/projects.md names, cached
 # under state/.current-page for FM_CURRENT_PAGE_FORGE_TTL seconds (default 300)
 # and skipped entirely with FM_CURRENT_PAGE_NO_FORGE=1. A failed GitHub read
 # keeps the last good list and says so on the page.
@@ -30,7 +30,8 @@
 # stay private: the wake drain's own cursors and presentation records are never
 # read or written, and rendering never claims or acknowledges a wake.
 #
-# Page sections: NEXT for Andrew and Needs you, both taken only from the curated
+# Page sections: Initiatives (goals, grouped completions, next and waiting),
+# then NEXT for Andrew and Needs you, both taken only from the curated
 # file and never from raw status lines; free notes; Live workstreams, each card
 # showing the curated plain line or else its last status line reduced to plain
 # words (home data/ paths, links, and [name=value] tags removed) plus a count of
@@ -62,6 +63,23 @@
 #   plain  {"<task-id>": "<plain status>"}      card text instead of the status line
 #   hide   ["<task-id>", ...]                   rows left off the page
 #   mates  {"<id>": {"machine", "scope"}}       secondmate host and scope
+#   initiatives [{"id", "title", "goal", "why", "match", "next", "waiting"}]
+#          "match": {"project_tokens": [...], "linear_projects": [...],
+#                    "title_keywords": [...]} uses OR within and across lists.
+#          Literal, case-insensitive title keywords take priority (longest wins),
+#          then Linear project id/name, then exact project token; ties use array
+#          order. Give broad repositories narrow title keywords. Unmatched work
+#          goes to Other. "next" and "waiting" are arrays of plain sentences.
+#          Existing curated needs and active plain lines also join their card.
+#   completed [{"id", "title", "completed", "url", "project_token", "linear_project"}]
+#          Optional Done tickets from Linear or another source, with an ISO date
+#          or timestamp and an evidence URL. Only explicit completion records
+#          count, never an In Review or cancelled item.
+# Initiatives read Done rows and the configured markdown done archive, including
+# items after worker cleanup. PR and Done totals are separate, not additive:
+# one task can have both records. Merged timestamps give rolling 24 h and 7 d;
+# date-only Done records show today and the past week, with that limit named.
+# The existing Landed today section still shows only the last 24 h.
 # A missing or malformed file shows an empty NEXT with the problem named.
 # The notes format and legacy Markdown fallback are owned by fm-current-page.py's header.
 #

@@ -56,9 +56,24 @@ SH
   printf '%s\n' "$fb"
 }
 
+# The registry every fixture home resolves against: alpha and its siblings are
+# registered, so a row naming them renders its colour token, while a row naming
+# any other repo must render an explicit unresolved reason.
+write_project_registry() {  # <data-dir>
+  cat > "$1/projects.md" <<'EOF'
+# Projects
+
+- alpha [direct-PR +yolo] subprojects=alpha - Org/alpha
+- beta [local-only] subprojects=beta - Org/beta
+- gamma [direct-PR +yolo] subprojects=gamma - Org/gamma
+- delta [local-only] subprojects=delta - Org/delta
+EOF
+}
+
 make_home() {  # <name>
   local home=$TMP_ROOT/$1
   mkdir -p "$home/state" "$home/data" "$home/projects" "$home/config"
+  write_project_registry "$home/data"
   printf '%s\n' "$home"
 }
 
@@ -561,6 +576,7 @@ test_backlog_tasks_axi_forms_and_overrides() {
   data=$TMP_ROOT/override-data
   projects=$TMP_ROOT/override-projects
   mkdir -p "$data/bold-task" "$projects/bold-worktree"
+  write_project_registry "$data"
   cat > "$data/backlog.md" <<EOF
 ## In flight
 - **bold-task** - Bold Task data/bold-task/report.md (repo: alpha, since 2026-07-07) (kind: scout)
@@ -694,6 +710,10 @@ EOF
     "view should render bracketed PR artifact outside the title"
   assert_contains "$view" "| done-note | Done Note | delta | ship | - | local main |" \
     "view should render local-only done artifact outside the title"
+  # An unregistered project is reported on the row instead of being rendered as
+  # a bare repo name that looks like a project.
+  assert_contains "$view" '| sample-decision-route | Choose sample route | unresolved: repo "sample" is not a registered project; register it in data/projects.md | captain |' \
+    "view should report an unregistered project rather than render it silently"
   pass "snapshot parses tasks-axi rows and respects operational overrides"
 }
 
@@ -803,7 +823,7 @@ test_view_renders_snapshot() {
     "view should render done backlog row"
   assert_contains "$view" "bin/fm-send.sh fm-secondmate-task" \
     "view should show secondmate send guidance"
-  assert_contains "$view" "| secondmate-task | working / status-log | secondmate | $home/secondmate-home | tmux | present / alive |" \
+  assert_contains "$view" "| secondmate-task | working / status-log | secondmate | alpha | tmux | present / alive |" \
     "view should show secondmate endpoint agent liveness"
   assert_not_contains "$view" "fm-peek.sh fm-secondmate-task" \
     "view must not tell firstmate to routinely peek secondmates"
@@ -824,9 +844,9 @@ test_view_renders_dead_secondmate_agent_status() {
   printf 'working: watching delegated scope\n' > "$home/state/dead-secondmate.status"
   fakebin=$(make_fakebin "$home")
   view=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$VIEW")
-  assert_contains "$view" "| dead-secondmate | unknown / none | secondmate | $home/secondmate-home | tmux | present / dead |" \
+  assert_contains "$view" "| dead-secondmate | unknown / none | secondmate | alpha | tmux | present / dead |" \
     "view should distinguish a present secondmate endpoint from a dead agent"
-  assert_contains "$view" "| dead-secondmate | unknown / none | secondmate | $home/secondmate-home | tmux | present / dead | - | $home/secondmate-home (absent) |" \
+  assert_contains "$view" "| dead-secondmate | unknown / none | secondmate | alpha | tmux | present / dead | - | $home/secondmate-home (absent) |" \
     "view should show a recorded missing secondmate home path"
   pass "fleet view renders secondmate agent liveness"
 }

@@ -50,14 +50,17 @@ printf '%s\n' "$SNAPSHOT" | jq -r '
   def action_of($t):
     if $t.kind == "secondmate" then "\($t.actions.send) - \($t.actions.watch)"
     else $t.actions.watch end;
+  def project_of($r):
+    if ($r.project_resolution.status // "") == "resolved" then $r.project_resolution.token
+    else "unresolved: " + ($r.project_resolution.reason // "project could not be resolved") end;
   def task_row($t):
-    "| \($t.id) | \($t.current_state.state) / \($t.current_state.source) | \($t.kind) | \(dash($t.backlog.repo // $t.project)) | \($t.backend) | \(endpoint_of($t)) | \(artifact($t)) | \(path_of($t)) | \(action_of($t)) |";
+    "| \($t.id) | \($t.current_state.state) / \($t.current_state.source) | \($t.kind) | \(project_of($t)) | \($t.backend) | \(endpoint_of($t)) | \(artifact($t)) | \(path_of($t)) | \(action_of($t)) |";
   def blocker($r):
     if ($r.blocked_by // "") == "" then "-"
     elif ($r.blocked_reason // "") == "" then $r.blocked_by
     else "\($r.blocked_by) - \($r.blocked_reason)" end;
   def backlog_row($r):
-    "| \($r.id // "-") | \(dash($r.title // $r.raw)) | \(dash($r.repo)) | \(dash($r.kind)) | \(blocker($r)) | \(dash($r.pr_url // $r.report_path // $r.local_note)) |";
+    "| \($r.id // "-") | \(dash($r.title // $r.raw)) | \(project_of($r)) | \(dash($r.kind)) | \(blocker($r)) | \(dash($r.pr_url // $r.report_path // $r.local_note)) |";
 
   "# Fleet View",
   "",
@@ -68,7 +71,7 @@ printf '%s\n' "$SNAPSHOT" | jq -r '
   (if (.tasks | length) == 0 then
     "No live task metadata found."
    else
-    "| ID | Current | Kind | Repo/Project | Backend | Endpoint | Artifact | Path | Watch / return channel |",
+    "| ID | Current | Kind | Project | Backend | Endpoint | Artifact | Path | Watch / return channel |",
     "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     (.tasks[] | task_row(.))
    end),
@@ -77,7 +80,7 @@ printf '%s\n' "$SNAPSHOT" | jq -r '
   (if ([.backlog.records[]? | select(.state == "queued")] | length) == 0 then
     "No queued backlog records found."
    else
-    "| ID | Title | Repo | Kind | Blocked By | Artifact |",
+    "| ID | Title | Project | Kind | Blocked By | Artifact |",
     "| --- | --- | --- | --- | --- | --- |",
     (.backlog.records[] | select(.state == "queued") | backlog_row(.))
    end),
@@ -86,7 +89,7 @@ printf '%s\n' "$SNAPSHOT" | jq -r '
   (if ([.backlog.records[]? | select(.state == "done")] | length) == 0 then
     "No done backlog records found."
    else
-    "| ID | Title | Repo | Kind | Blocked By | Artifact |",
+    "| ID | Title | Project | Kind | Blocked By | Artifact |",
     "| --- | --- | --- | --- | --- | --- |",
     (.backlog.records[] | select(.state == "done") | backlog_row(.))
    end),

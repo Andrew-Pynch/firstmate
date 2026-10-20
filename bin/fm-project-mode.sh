@@ -36,6 +36,10 @@
 #   left over is the mode. <prefix> must not contain a space; an empty override
 #   ("branch=") resolves to "" for a bare "<task-id>" ship branch instead of the
 #   legacy "fm/<task-id>".
+# An optional whitespace-free `subprojects=<t1>[,<t2>...]` field may follow the
+# mode bracket; this script ignores it. It carries the project's Herdr colour
+# tokens and is resolved by bin/fm-project-lib.sh, which owns that half of the
+# grammar; docs/configuration.md "Project registry" owns the schema.
 #
 # Registered modes:
 #   no-mistakes            full pipeline -> PR -> configured merge authority (default)

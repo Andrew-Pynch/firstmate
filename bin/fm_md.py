@@ -79,12 +79,15 @@ MD_CSS = """
 """
 
 
+LINEAR_ISSUE_RE = re.compile(r"https://linear\.app/[^/]+/issue/([A-Za-z]+-\d+)")
+
+
 def link_label(url):
     """A short label for a full URL: PR #n, a Linear key, Slack, a design slug, or host plus last path part."""
     pr = re.fullmatch(r"https://github\.com/[\w.-]+/[\w.-]+/pull/(\d+)/?", url)
     if pr:
         return f"PR #{pr.group(1)}"
-    linear = re.match(r"https://linear\.app/[^/]+/issue/([A-Za-z]+-\d+)", url)
+    linear = LINEAR_ISSUE_RE.match(url)
     if linear:
         return linear.group(1).upper()
     if re.match(r"https://[\w.-]*slack\.com/", url):
@@ -148,12 +151,17 @@ def inline(text):
             href = safe_href(m.group("href"))
             label = _emphasis(e(m.group("label"), quote=False))
             label = re.sub(r"`([^`]+)`", r"<code>\1</code>", label)
-            out.append(f'<a href="{e(href)}" title="{e(href)}">{label}</a>' if href else e(m.group()))
+            out.append(f'<a href="{e(href)}"{_title(href)}>{label}</a>' if href else e(m.group()))
         else:
             url, trail = _url_token(m.group("aurl") or m.group("url"))
-            out.append(f'<a href="{e(url)}" title="{e(url)}">{e(link_label(url))}</a>{e(trail)}')
+            out.append(f'<a href="{e(url)}"{_title(url)}>{e(link_label(url))}</a>{e(trail)}')
     out.append(_emphasis(e(text[end:], quote=False)))
     return "".join(out)
+
+
+def _title(url):
+    """The full URL as a native tooltip, except on Linear issues: LINEAR_CARD already shows their hover card."""
+    return "" if LINEAR_ISSUE_RE.match(url) else f' title="{e(url)}"'
 
 
 LIST_RE = re.compile(r"^( *)([-*+]|\d{1,9}[.)])(?: +|$)(.*)$")
@@ -390,13 +398,16 @@ padding:10px 12px;font:13px/1.4 system-ui,-apple-system,sans-serif;text-align:le
 const RE=/\bSTA-\d{1,6}\b/g,SKIP=/^(SCRIPT|STYLE|TEXTAREA|INPUT|SELECT|NOSCRIPT|OPTION)$/,got=new Map();let card,tShow=0,tHide=0,at=null;
 function skip(n){for(let p=n.parentNode;p&&p.nodeType===1;p=p.parentNode)
  if(SKIP.test(p.tagName)||p.isContentEditable||p.classList.contains("sta")||p.id==="sta-card")return true;return false;}
+// One tooltip per ticket: the card. Native title and aria tooltips on a ticket id's ancestors, and on any Linear issue link, go.
+function untitle(x){for(let p=x;p&&p.nodeType===1&&p!==document.body;p=p.parentElement){p.removeAttribute("title");p.removeAttribute("aria-describedby");}}
 function scan(root){if(!root||root.id==="sta-card")return;const w=document.createTreeWalker(root,NodeFilter.SHOW_TEXT),hits=[];
  if(root.nodeType===3){if(/STA-\d/.test(root.nodeValue)&&!skip(root))hits.push(root);}
- else while(w.nextNode()){const n=w.currentNode;if(/STA-\d/.test(n.nodeValue)&&!skip(n))hits.push(n);}
- for(const n of hits){const t=n.nodeValue,f=document.createDocumentFragment();let last=0,m;RE.lastIndex=0;
+ else{while(w.nextNode()){const n=w.currentNode;if(/STA-\d/.test(n.nodeValue)&&!skip(n))hits.push(n);}
+  root.querySelectorAll('a[href*="linear.app/"][href*="/issue/"]').forEach(untitle);if(root.matches&&root.matches('a[href*="linear.app/"]'))untitle(root);}
+ for(const n of hits){const t=n.nodeValue,f=document.createDocumentFragment(),host=n.parentElement;let last=0,m;RE.lastIndex=0;
   while((m=RE.exec(t))){if(m.index>last)f.append(t.slice(last,m.index));const s=document.createElement("span");
    s.className="sta";s.dataset.sta=m[0];s.textContent=m[0];f.append(s);last=m.index+m[0].length;}
-  if(last){if(last<t.length)f.append(t.slice(last));n.replaceWith(f);}}}
+  if(last){if(last<t.length)f.append(t.slice(last));n.replaceWith(f);untitle(host);}}}
 function get(id){const c=got.get(id);if(c&&Date.now()-c.at<60000)return c.p;
  const p=fetch("/api/linear/"+id,{credentials:"same-origin"}).then(r=>r.json().then(j=>({ok:r.ok,code:r.status,j}),()=>({ok:false,code:r.status,j:{}})),
   ()=>({ok:false,code:0,j:{}}));got.set(id,{at:Date.now(),p});return p;}

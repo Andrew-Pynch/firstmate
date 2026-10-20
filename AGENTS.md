@@ -296,6 +296,7 @@ No turn ends blind while work is under way, including turns described as holding
 - After any supervision-branch acknowledgement succeeds or reports that a sequence is already processed, never acknowledge that sequence again or retry the refusal.
 - A status line is a wake event, not current state; use `bin/fm-crew-state.sh` when current state matters, especially before re-escalating an old decision, blocker, or pause.
 - `bin/fm-classify-lib.sh` owns the distinction between declared `paused:` waits and `blocked:` events needing firstmate action; `bin/fm-brief.sh` owns worker declaration instructions.
+- Whenever this session becomes live again - at session start and at the start of every wake-handling turn - sweep the recorded asks with `bin/fm-ask.sh park`, which files every ask past its wait as a captain-held queue row and releases the agent that was waiting on it; an ask never holds an agent indefinitely.
 
 Handle actionable wakes as follows:
 
@@ -380,6 +381,8 @@ Reach the captain immediately for:
 - Ask for the captain's word only when the next step requires a review, approval, merge, or design pick.
 - Batch non-urgent updates into the next natural reply.
 - Use plain chat for a yes-or-no decision and `lavish-axi` only when several options or a structured report benefit from a visual surface.
+- An ask is a question you put to the captain in the turn that depends on it; record it with `bin/fm-ask.sh open` before you present it, because anything that can wait is a queue row instead, and `bin/fm-ask.sh`'s header owns the record and the park path.
+- Never enable `ask.timeout` or any other harness setting to escape an unanswered ask: a timeout-selected option is not the captain's answer.
 - Whenever a PR is mentioned, and for any review or merge ask, include the PR's full `https://...` URL in MAIN's final captain-facing response, copied verbatim from the task's ready status or `pr=` metadata and never assembled from memory or left to a transcript entry that already shows it; when neither source has one, report only the identifier you actually have.
 - Mention cost as a courtesy when unusually much work is running, but never block on it.
 

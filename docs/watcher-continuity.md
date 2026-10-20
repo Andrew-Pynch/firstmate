@@ -72,7 +72,8 @@ The extension header owns how consumption is observed and why it only decides wh
 omp's replacement follows its own generation-owner contract in `.omp/extensions/fm-primary-omp-watch.ts`, whose header owns its differences from Pi:
 
 - It retires the predecessor arm at replacement shutdown instead of retaining it across the handoff.
-- It reports no shutdown reason, so every shutdown with a pending actionable close persists the handoff for the next owning `session_start` to replay.
+- It reports no shutdown reason, so every shutdown with a pending actionable close persists the handoff for the next owning `session_start` or orphaned-generation recovery to replay.
+- An in-process child session never owns the watch.
 
 ### Cursor stop hook
 
@@ -81,7 +82,6 @@ It re-arms by parking that awaited hook on `bin/fm-watch-arm.sh` and returning a
 [`turnend-guard.md`](turnend-guard.md#harness-integrations) owns its Pi-host stand-down, loop bounds, and supersession baton.
 
 ### Claude Stop hook
-
 Claude's `.claude/settings.json` Stop `asyncRewake` hook (`bin/fm-claude-stop-autoarm.sh`) owns routine tokenless re-arm.
 Do not run the hook as a manual arm from a tool turn: a short-lived tool process cannot own its park; its header and help own the invocation contract.
 The hook fires on every Stop.

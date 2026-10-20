@@ -18,20 +18,18 @@
 #   identity every lookup here matches on, so a hand-renamed workspace is still
 #   found.
 #
-#   PLACEMENT RULE (data/captain.md "Grill lane"; the captain's own rule "no
-#   third grill gets new tab. only ever 2 grills per tab", data/
-#   pam-fleet-semantics-grill/report.md Q7, confirmed by round 3 Q10 "new tab,
-#   packed in pairs"):
-#     - one grill workspace per project token, reused for every grill of that
-#       project; it is never the firstmate workspace and never a worker space;
-#     - at most two grills (panes) per tab;
-#     - a new grill fills the lowest-numbered tab that still holds fewer than
-#       two, splitting it into a second pane;
-#     - when every tab is full, a new tab is created in the same workspace;
-#       the workspace itself is never recreated, so one project's grills stay in
-#       one workspace and grow by tab.
-#   Every pane in a grill workspace is a grill, which is why pane_count on the
-#   tab is the authoritative count.
+#   PLACEMENT: bin/fm-grill-lib.sh owns the captain's packing rule (data/
+#   captain.md "Grill lane") and is the only place it is stated; this script is
+#   the only caller that acts on it. In short: one grill workspace per project
+#   token, reused for every grill of that project and never the firstmate
+#   workspace or a worker space; a new grill fills the lowest-numbered tab that
+#   still holds room, and only a workspace whose every tab is full grows a new
+#   tab, so one project's grills stay in one workspace.
+#   The decision is made from that workspace's live tab and pane lists on every
+#   run, so it is correct whatever an earlier run or a hand left behind. The tab
+#   and pane herdr seeds a brand-new workspace with become the FIRST grill's tab
+#   and pane: herdr removes a workspace when its last tab closes, so that tab is
+#   filled rather than replaced.
 #
 #   --launch runs that command line in the new pane (as `sh -lc <command>`);
 #   without it the script only places and labels the pane and prints the pane id
@@ -164,47 +162,75 @@ if [ -z "$WS" ]; then
     exit 1
   }
   if [ "$DRY_RUN" -eq 1 ]; then
+    # A dry run has no live response to read, so it plans the cold case: the
+    # workspace it would create, whose seeded tab and pane take this grill.
     WS='<new-workspace>'
+    TAB='<seeded-tab>'
+    PANE='<seeded-pane>'
   else
     WS=$(printf '%s' "$OUT" | jq -r '.result.workspace.workspace_id // empty')
-    [ -n "$WS" ] || {
-      echo "error: herdr returned no workspace id for '$LABEL'" >&2
+    TAB=$(printf '%s' "$OUT" | jq -r '.result.tab.tab_id // empty')
+    PANE=$(printf '%s' "$OUT" | jq -r '.result.root_pane.pane_id // empty')
+    [ -n "$WS" ] && [ -n "$TAB" ] && [ -n "$PANE" ] || {
+      echo "error: herdr returned no workspace, seeded tab, or pane id for '$LABEL'" >&2
       exit 1
     }
-    run_herdr workspace report-metadata "$WS" --source firstmate \
-      --token "project=$R_TOKEN" --token "kind=grill" >/dev/null || {
-      echo "error: could not tag the grill workspace $WS" >&2
+    # The same rule the packing decision applies to a pane it did not create:
+    # nothing is ever written into a pane that reports an agent. A fresh pane
+    # reports none, so this only fires if herdr changes what create returns.
+    SEEDED_AGENT=$(printf '%s' "$OUT" | jq -r '.result.root_pane.agent_status // "unknown"')
+    [ "$SEEDED_AGENT" = unknown ] || {
+      echo "error: herdr reported agent '$SEEDED_AGENT' on the pane it seeded workspace $WS with; refusing to write a grill into it" >&2
       exit 1
     }
   fi
-fi
-
-TABS=$(run_herdr tab list --workspace "$WS") || {
-  echo "error: could not list tabs in the grill workspace $WS" >&2
-  exit 1
-}
-if [ "$DRY_RUN" -eq 1 ]; then
-  TABS='{"result":{"tabs":[]}}'
-fi
-PLAN=$(fm_grill_plan_tab "$TABS")
-
-case "$PLAN" in
-reuse\ *)
-  TAB=${PLAN#reuse }
-  if [ "$DRY_RUN" -eq 1 ]; then
-    PANE='<new-pane>'
-  else
+  # run_herdr traces instead of calling herdr under --dry-run, so the tag every
+  # placement owes the workspace is part of what a dry run prints.
+  run_herdr workspace report-metadata "$WS" --source firstmate \
+    --token "project=$R_TOKEN" --token "kind=grill" >/dev/null || {
+    echo "error: could not tag the grill workspace $WS" >&2
+    exit 1
+  }
+  # herdr labels the tab it seeds a workspace with "1". This grill now lives
+  # there, so the tab takes the same label as every later grill tab; a label is
+  # display text only, so a failure to set it is reported and placement goes on.
+  run_herdr tab rename "$TAB" "grill-$R_TOKEN" >/dev/null || {
+    echo "note: could not label the grill tab $TAB as grill-$R_TOKEN; herdr keeps its own label and the grill is placed and tagged regardless" >&2
+  }
+  PLAN="fill $TAB $PANE"
+else
+  TABS=$(run_herdr tab list --workspace "$WS") || {
+    echo "error: could not list tabs in the grill workspace $WS" >&2
+    exit 1
+  }
+  PANES=$(run_herdr pane list --workspace "$WS") || {
+    echo "error: could not list panes in the grill workspace $WS" >&2
+    exit 1
+  }
+  PLAN=$(fm_grill_plan_tab "$TABS" "$PANES") || {
+    echo "error: could not read the grill workspace $WS state from herdr" >&2
+    exit 1
+  }
+  case "$PLAN" in
+  fill\ *)
+    TAB=${PLAN#fill }
+    PANE=${TAB#* }
+    TAB=${TAB%% *}
+    ;;
+  split\ *)
+    TAB=${PLAN#split }
+    SPLIT_FROM=${TAB#* }
+    TAB=${TAB%% *}
+    [ -n "$TAB" ] && [ -n "$SPLIT_FROM" ] || {
+      echo "error: herdr reported no splittable pane in the grill workspace $WS" >&2
+      exit 1
+    }
     # Split an EXISTING pane of that tab: herdr pane split addresses a pane, and
     # the new pane inherits the tab. The pane ids present before the split are
     # remembered so the new one can be identified even if the response shape
     # changes.
     BEFORE=$(run_herdr pane list --workspace "$WS" | jq -r --arg tab "$TAB" \
       '[ (.result.panes // [])[] | select(.tab_id == $tab) | .pane_id ] | join("\n")')
-    SPLIT_FROM=$(printf '%s\n' "$BEFORE" | head -n 1)
-    [ -n "$SPLIT_FROM" ] || {
-      echo "error: tab $TAB holds no pane to split; refusing to guess a target" >&2
-      exit 1
-    }
     OUT=$(run_herdr pane split --pane "$SPLIT_FROM" --direction right --cwd "$CWD") || {
       echo "error: could not add a second grill pane to tab $TAB" >&2
       exit 1
@@ -215,38 +241,34 @@ reuse\ *)
         '[ (.result.panes // [])[] | select(.tab_id == $tab) | .pane_id ] | join("\n")')
       PANE=$(printf '%s\n' "$AFTER" | grep -vxF -e "$BEFORE" | grep -v '^$' | head -n 1 || true)
     fi
-    [ -n "$PANE" ] || {
-      echo "error: could not identify the new grill pane in tab $TAB" >&2
-      exit 1
-    }
-  fi
-  ;;
-*)
-  if [ "$DRY_RUN" -eq 1 ]; then
-    TAB='<new-tab>'
-    PANE='<new-pane>'
-  else
+    ;;
+  new-tab)
     OUT=$(run_herdr tab create --workspace "$WS" --cwd "$CWD" --label "grill-$R_TOKEN" --no-focus) || {
       echo "error: could not create a grill tab in workspace $WS" >&2
       exit 1
     }
     TAB=$(printf '%s' "$OUT" | jq -r '.result.tab.tab_id // empty')
     PANE=$(printf '%s' "$OUT" | jq -r '.result.root_pane.pane_id // empty')
-    [ -n "$TAB" ] && [ -n "$PANE" ] || {
-      echo "error: herdr returned no tab/pane id for the new grill tab" >&2
-      exit 1
-    }
-  fi
-  ;;
-esac
-
-if [ "$DRY_RUN" -eq 0 ]; then
-  run_herdr pane report-metadata "$PANE" --source firstmate \
-    --token "project=$R_TOKEN" --token "kind=grill" >/dev/null || {
-    echo "error: could not tag the grill pane $PANE" >&2
+    ;;
+  *)
+    echo "error: could not decide where to place the grill in workspace $WS (herdr planned: ${PLAN:-nothing})" >&2
+    exit 1
+    ;;
+  esac
+  [ -n "$TAB" ] && [ -n "$PANE" ] || {
+    echo "error: could not identify the grill tab and pane in workspace $WS" >&2
     exit 1
   }
 fi
+
+# Every pane a grill lands in is tagged with the project token and the grill
+# kind, in every path: that tag is what the next placement reads back to decide
+# whether a tab is full.
+run_herdr pane report-metadata "$PANE" --source firstmate \
+  --token "project=$R_TOKEN" --token "kind=grill" >/dev/null || {
+  echo "error: could not tag the grill pane $PANE" >&2
+  exit 1
+}
 
 printf 'session=%s\nworkspace=%s\nlabel=%s\ntab=%s\npane=%s\nproject=%s\ntoken=%s\ntoken_source=%s\nplacement=%s\n' \
   "$SESSION" "$WS" "$LABEL" "$TAB" "$PANE" "$R_PROJECT" "$R_TOKEN" "$R_SOURCE" "$PLAN"

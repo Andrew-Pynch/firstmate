@@ -402,7 +402,7 @@ test_record_refuses_a_patch_that_breaks_the_series() {
   cmp -s "$dir/manifest.before" "$store/manifest" \
     || fail "a refused record must leave the manifest byte-identical"
   [ ! -e "$store/0003-never.patch" ] || fail "a refused record must not leave its patch file behind"
-  [ ! -e "$repo.fm-patch-scratch" ] || fail "a refused record must remove the scratch it made"
+  [ ! -e "$repo.fm-patch-record" ] || fail "a refused record must remove the scratch it made"
   [ ! -e "$store/expected.tsv" ] || cmp -s "$dir/expected.before" "$store/expected.tsv" \
     || fail "a refused record must not rewrite expected.tsv"
   [ -z "$(git -C "$repo" status --porcelain)" ] || fail "a refused record must not dirty the target"
@@ -465,7 +465,7 @@ test_record_reports_a_series_that_is_not_complete_yet() {
   [ "$(wc -l < "$store/manifest")" -eq "$before" ] || fail "replacing a patch must not add a record"
   cmp -s "$dir/expected.before" "$store/expected.tsv" \
     || fail "expected.tsv must be left as it was while the series cannot complete"
-  [ ! -e "$repo.fm-patch-scratch" ] || fail "a completed record must remove its scratch worktree"
+  [ ! -e "$repo.fm-patch-record" ] || fail "a completed record must remove its scratch worktree"
   [ -f "$store/0001-a2.patch" ] || fail "the recorded patch must stay in the store"
   pass "record keeps a usable patch and reports the series as incomplete"
 }
@@ -528,6 +528,164 @@ PATCH
   pass "record regenerates a patch without losing the description its record already carries"
 }
 
+# A conflicted replay keeps its scratch, and the resolution committed there is
+# recorded straight from it. Nothing on that path forces, stashes, or discards,
+# and the replay that follows lands the resolved set.
+test_conflict_resolution_is_recorded_without_discarding_it() {
+  local dir store repo target scratch base out rc resolution
+  dir="$TMP_ROOT/conflict-resolution"
+  make_store "$dir" > /dev/null
+  store=$(make_conflicting_store "$dir/bad")
+  repo="$dir/repo"
+  target="$dir/target"
+  scratch="$target.fm-patch-scratch"
+  base=$(cat "$dir/base")
+  git -C "$repo" worktree add --detach -q "$target" "$base"
+  fm_git_identity
+  out=$("$TOOL" --store "$store" --base "$base" replay "$target" 2>&1) && rc=0 || rc=$?
+  [ "$rc" -ne 0 ] || fail "the fixture patch must conflict: $out"
+  [ -d "$scratch" ] || fail "a conflicted replay must keep its scratch worktree"
+
+  printf '# patched\n' > "$scratch/README.md"
+  git -C "$scratch" commit -qam 'resolve never'
+  resolution=$(git -C "$scratch" rev-parse HEAD)
+
+  out=$("$TOOL" --store "$store" --base "$base" replay "$target" 2>&1) && rc=0 || rc=$?
+  [ "$rc" -ne 0 ] || fail "a replay must refuse while an earlier conflict's scratch exists: $out"
+  [ "$(git -C "$scratch" rev-parse HEAD)" = "$resolution" ] \
+    || fail "a refused replay must leave the committed resolution where it was"
+
+  out=$("$TOOL" --store "$store" --base "$base" record "$target" --id 0001 --slug never \
+    --repo "$scratch" --commit HEAD 2>&1) \
+    || fail "record must accept a resolution committed in the replay's scratch: $out"
+  assert_contains "$out" "expected	$store/expected.tsv" "the resolved set must be complete"
+  [ "$(git -C "$scratch" rev-parse HEAD)" = "$resolution" ] \
+    || fail "record must not move the scratch it read the resolution from"
+  [ ! -e "$target.fm-patch-record" ] || fail "record must remove only its own scratch"
+
+  git -C "$repo" worktree remove "$scratch"
+  "$TOOL" --store "$store" replay "$target" > "$dir/out" 2>&1 \
+    || fail "the recorded resolution must replay: $(cat "$dir/out")"
+  [ "$(cat "$target/README.md")" = '# patched' ] \
+    || fail "the replay must land the resolution: $(cat "$target/README.md")"
+  pass "a conflict resolution is recorded from the kept scratch and then replays"
+}
+
+where_field() {  # <where-output> <label> <field>
+  printf '%s\n' "$1" | awk -F'\t' -v l="$2" -v f="$3" '$1 == "where" && $2 == l { print $f; exit }'
+}
+
+test_where_names_each_root_and_whether_it_carries_the_set() {
+  local dir store repo reference plain base out rc content
+  dir="$TMP_ROOT/where"
+  store=$(make_store "$dir")
+  repo="$dir/repo"
+  reference="$dir/reference"
+  plain="$dir/plain"
+  base=$(cat "$dir/base")
+  git -C "$repo" worktree add --detach -q "$reference" "$base"
+  git -C "$repo" worktree add --detach -q "$plain" "$base"
+  fm_git_identity
+  "$TOOL" --store "$store" replay "$reference" > /dev/null 2>&1 || fail "the reference replay failed"
+
+  out=$("$TOOL" --store "$store" where "$reference") \
+    || fail "where must succeed for a root that carries the set: $out"
+  [ "$(where_field "$out" "$reference" 4)" = "$(cd "$reference" && pwd -P)" ] \
+    || fail "where must name the resolved root: $out"
+  [ "$(where_field "$out" "$reference" 5)" = "$(git -C "$reference" rev-parse HEAD | cut -c1-12)" ] \
+    || fail "where must name the root's HEAD: $out"
+  [ "$(where_field "$out" "$reference" 9)" = carries ] || fail "a replayed root must carry the set: $out"
+  content=$(where_field "$out" "$reference" 8)
+  [ "$content" = "$("$TOOL" --store "$store" check "$reference" | sed -n 's/^set	//p')" ] \
+    || fail "where must report the same content identity check prints: $out"
+  [ "$content" = "$("$TOOL" --store "$store" list | sed -n 's/^content	//p')" ] \
+    || fail "a carrying root's content must equal the store's own content line: $out"
+
+  out=$("$TOOL" --store "$store" where "$reference" "$plain" "$dir/nowhere") && rc=0 || rc=$?
+  [ "$rc" -ne 0 ] || fail "where must fail while any root does not carry the set: $out"
+  case "$(where_field "$out" "$plain" 9)" in
+    differs*) ;;
+    *) fail "an unpatched root must be reported as differing: $out" ;;
+  esac
+  [ "$(where_field "$out" "$dir/nowhere" 5)" = missing ] || fail "a root that does not exist must be named missing: $out"
+  [ "$(where_field "$out" "$reference" 9)" = carries ] || fail "one bad root must not hide a good one: $out"
+  pass "where names each root, its head, and whether it carries the set"
+}
+
+# The fleet form reads a remote mate through the ssh client, so a fake client
+# that runs the remote command string locally, under a separate HOME, drives
+# the real transport: the probe, its paths on stdin, and the entrypoint lookup.
+test_where_fleet_names_every_root_a_mate_could_run_from() {
+  local dir store repo base recorded other home remote_home out rc
+  dir="$TMP_ROOT/where-fleet"
+  store=$(make_store "$dir")
+  repo="$dir/repo"
+  base=$(cat "$dir/base")
+  recorded="$dir/recorded"
+  other="$dir/other"
+  home="$dir/home"
+  remote_home="$dir/remote-home"
+  git -C "$repo" worktree add --detach -q "$recorded" "$base"
+  git -C "$repo" worktree add --detach -q "$other" "$base"
+  git -C "$repo" worktree add --detach -q "$home" "$base"
+  fm_git_identity
+  "$TOOL" --store "$store" replay "$recorded" > /dev/null 2>&1 || fail "the recorded-root replay failed"
+  mkdir -p "$home/data" "$home/state" "$other/bin" "$remote_home/.local/bin"
+  printf '#!/bin/sh\n' > "$other/bin/fm-remote-entrypoint.sh"
+  chmod +x "$other/bin/fm-remote-entrypoint.sh"
+  ln -s "$other/bin/fm-remote-entrypoint.sh" "$remote_home/.local/bin/fm-remote-entrypoint.sh"
+  printf -- '- mate - test mate (host: fakehost; root: %s; home: /remote/home; scope: tests; projects: none; added 2026-09-23)\n' \
+    "$other" > "$home/data/secondmates.md"
+  printf 'code_root=%s\n' "$recorded" > "$home/state/mate.meta"
+  cat > "$dir/fake-ssh" <<'SSH'
+#!/usr/bin/env bash
+while [ $# -gt 1 ]; do
+  case "$1" in -o) shift 2 ;; *) printf '%s\n' "$1" >> "$FM_TEST_SSH_HOSTS"; shift ;; esac
+done
+HOME=$FM_TEST_REMOTE_HOME exec sh -c "$1"
+SSH
+  chmod +x "$dir/fake-ssh"
+
+  out=$(FM_FARM_PATCH_SSH="$dir/fake-ssh" FM_TEST_REMOTE_HOME="$remote_home" \
+    FM_TEST_SSH_HOSTS="$dir/hosts" "$TOOL" --store "$store" where --fleet "$home") && rc=0 || rc=$?
+  [ "$rc" -ne 0 ] || fail "a mate whose entrypoint runs another checkout must fail the fleet check: $out"
+  [ "$(where_field "$out" primary 4)" = "$(cd "$home" && pwd -P)" ] \
+    || fail "the fleet must name the home itself as the primary root: $out"
+  [ "$(where_field "$out" mate 3)" = fakehost ] || fail "the mate row must name its host: $out"
+  [ "$(where_field "$out" mate 4)" = "$(cd "$recorded" && pwd -P)" ] \
+    || fail "the mate row must read the recorded code root, not the registry root: $out"
+  [ "$(where_field "$out" mate 9)" = carries ] \
+    || fail "the remote probe must identify every path it was sent: $out"
+  assert_contains "$out" "disagree	mate	recorded $(cd "$recorded" && pwd -P)	entrypoint $(cd "$other" && pwd -P)" \
+    "the fleet must name a mate whose entrypoint resolves to another checkout"
+  case "$(where_field "$out" mate@entrypoint 9)" in
+    differs*) ;;
+    *) fail "the entrypoint's checkout must get its own row: $out" ;;
+  esac
+  assert_contains "$out" "disagree	mate	recorded $(cd "$recorded" && pwd -P)	registry $(cd "$other" && pwd -P)" \
+    "the fleet must name a registry root that parent calls would run from instead"
+  [ "$(where_field "$out" mate@registry 4)" = "$(cd "$other" && pwd -P)" ] \
+    || fail "the registry root must get its own row: $out"
+  grep -qx fakehost "$dir/hosts" || fail "the remote reads must go through the ssh client to the mate's host"
+
+  # One root everywhere, carrying the set: the fleet check passes.
+  local home2="$dir/home2" remote_home2="$dir/remote-home2"
+  git -C "$repo" worktree add --detach -q "$home2" "$base"
+  "$TOOL" --store "$store" replay "$home2" > /dev/null 2>&1 || fail "the primary replay failed"
+  mkdir -p "$home2/data" "$home2/state" "$remote_home2/.local/bin"
+  printf '#!/bin/sh\n' > "$dir/entry-agree"
+  mkdir -p "$recorded/bin"
+  ln -s "$recorded/bin/fm-remote-entrypoint.sh" "$remote_home2/.local/bin/fm-remote-entrypoint.sh"
+  cp "$dir/entry-agree" "$recorded/bin/fm-remote-entrypoint.sh"
+  printf -- '- mate - test mate (host: fakehost; root: %s; home: /remote/home; scope: tests; projects: none; added 2026-09-23)\n' \
+    "$recorded" > "$home2/data/secondmates.md"
+  out=$(FM_FARM_PATCH_SSH="$dir/fake-ssh" FM_TEST_REMOTE_HOME="$remote_home2" \
+    FM_TEST_SSH_HOSTS="$dir/hosts" "$TOOL" --store "$store" where --fleet "$home2") \
+    || fail "a fleet on one root that carries the set must pass: $out"
+  case "$out" in *disagree*|*@entrypoint*|*@registry*) fail "an agreeing fleet must print one row per mate: $out" ;; esac
+  pass "where --fleet names every root a mate could run from and passes only when they agree"
+}
+
 test_list_is_ordered_and_enumerable
 test_replay_lands_the_whole_set
 test_check_distinguishes_content
@@ -543,5 +701,8 @@ test_record_replaces_an_existing_patch
 test_record_reports_a_series_that_is_not_complete_yet
 test_record_accepts_a_diff_on_stdin
 test_record_keeps_an_existing_records_description
+test_conflict_resolution_is_recorded_without_discarding_it
+test_where_names_each_root_and_whether_it_carries_the_set
+test_where_fleet_names_every_root_a_mate_could_run_from
 
 echo "# fm-farm-patch.test.sh: all assertions passed"

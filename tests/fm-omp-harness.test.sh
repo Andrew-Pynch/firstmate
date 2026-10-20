@@ -1285,6 +1285,125 @@ EOF
   pass ".omp watch extension: one follow-up while the queue stays unacknowledged, successor and handshake preserved, delivery reopens after acknowledgement"
 }
 
+# The captain-visible defect: main sat in one long tool call (an `ask` waiting
+# on the captain) for 1h43m, omp held every follow-up until that run ended, and
+# the watcher's main-quiet watchdog queued six `wake-loop stalled` alarms behind
+# the unread wake. Main drained and acknowledged on return, then read all six
+# with their frozen drain record. A stalled alarm must not queue behind an
+# unconsumed wake, and one consumed after a later successful drain must reach
+# the model only as a superseded notice, while a still-owed one stays intact.
+test_watch_extension_never_delivers_a_stale_stall_alarm() {
+  local repo home out status
+  repo="$TMP_ROOT/watch-stall/repo"; home="$TMP_ROOT/watch-stall/home"
+  install_omp_extension_fixture "$repo"
+  mkdir -p "$home/state"
+  cat > "$repo/bin/fm-watch-arm.sh" <<'SH'
+#!/usr/bin/env bash
+set -u
+if [ "${1:-}" = --handling-delivered ]; then exit 0; fi
+n=$(cat "${FM_HOME:?}/state/.arm-count" 2>/dev/null || echo 0)
+n=$((n + 1))
+printf '%s\n' "$n" > "$FM_HOME/state/.arm-count"
+printf 'watcher: started pid=%s (beacon fresh) recovery-generation=gen-%s\n' "$$" "$n"
+# shellcheck source=/dev/null
+. "${FM_ROOT_OVERRIDE:?}/bin/fm-wake-lib.sh"
+i=0
+while [ ! -e "$FM_HOME/state/.go-$n" ] && [ "$i" -lt 150 ]; do sleep 0.1; i=$((i + 1)); done
+[ -e "$FM_HOME/state/.go-$n" ] || { sleep 30; exit 0; }
+case "$n" in
+  1)
+    fm_wake_append signal "alpha.status" "signal: alpha" || exit 1
+    printf 'signal: alpha\n'
+    ;;
+  *)
+    printf 'check: main wake-loop stalled: last_successful_drain=%s oldest_queued_wake_age=950s; drain and handle the durable queue\n' \
+      "$(cat "$FM_HOME/state/.last-successful-drain")"
+    ;;
+esac
+SH
+  chmod +x "$repo/bin/fm-watch-arm.sh"
+  out=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$repo" FM_MAIN_QUIET_SECS=1 FM_OMP_ARM_READY_TIMEOUT_MS=3000 FM_WATCH_REARM_RETRY_LIMIT=1 FM_WATCH_REARM_RETRY_BASE_MS=5 FM_WATCH_REARM_RETRY_MAX_MS=10 \
+    EXT="$repo/.omp/extensions/fm-primary-omp-watch.ts" node --input-type=module 2>&1 <<'EOF'
+import { pathToFileURL } from "node:url";
+import { writeFileSync, readFileSync, existsSync, unlinkSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+const state = `${process.env.FM_HOME}/state`;
+writeFileSync(`${state}/.lock`, `${process.pid}\n`);
+writeFileSync(`${state}/.last-successful-drain`, "1000\n");
+const handlers = new Map(); let tool = null; const sent = [];
+const pi = {
+  on(e, h) { handlers.set(e, h); },
+  registerCommand() {},
+  registerTool(t) { tool = t; },
+  sendMessage(m, o) { sent.push({ m, o }); return undefined; },
+};
+const mod = await import(pathToFileURL(process.env.EXT).href);
+mod.default(pi);
+const armCount = () => (existsSync(`${state}/.arm-count`) ? Number(readFileSync(`${state}/.arm-count`, "utf8").trim()) : 0);
+const settle = async (predicate, label) => {
+  for (let i = 0; i < 200; i += 1) {
+    if (predicate()) return;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  throw new Error(`${label}: gave up; sent=${sent.length} arms=${armCount()}`);
+};
+const go = (n) => writeFileSync(`${state}/.go-${n}`, "");
+const pause = (ms) => new Promise((r) => setTimeout(r, ms));
+const consume = (wake) => handlers.get("message_start")({ type: "message_start", message: { role: "custom", ...wake.m } }, {});
+const asContext = (wakes) => wakes.map((wake) => ({ role: "custom", ...wake.m, timestamp: 1 }));
+const replay = (message) => execFileSync("bash", [`${process.env.FM_ROOT_OVERRIDE}/bin/fm-wake-notify.sh`, "replay"], { input: message, encoding: "utf8" });
+await tool.execute();
+// Cycle 1: an ordinary wake main has not consumed yet (main is blocked).
+go(1);
+await settle(() => sent.length === 1 && armCount() >= 2, "the first wake was not delivered");
+// Cycle 2: the watchdog fires while that wake is unread; it must not queue.
+await pause(1200);
+go(2);
+await settle(() => armCount() >= 3, "the retired stall alarm did not arm its successor");
+await pause(400);
+if (sent.length !== 1) throw new Error(`a stall alarm queued behind an unconsumed wake: ${sent.length} follow-ups`);
+// Main returns and reads the wake; a later stall alarm reaches it again.
+await consume(sent[0]);
+await pause(1200);
+go(3);
+await settle(() => sent.length === 2, "a stall alarm with nothing unconsumed was not delivered");
+if (!sent[1].m.content.includes("check: main wake-loop stalled: last_successful_drain=1000 ")) throw new Error(`unexpected alarm: ${sent[1].m.content}`);
+// Main drains and acknowledges before omp hands it that alarm.
+writeFileSync(`${state}/.last-successful-drain`, "2000\n");
+await consume(sent[1]);
+// Cycle 4: an alarm raised after that drain is still owed when it is read.
+await pause(1200);
+go(4);
+await settle(() => sent.length === 3, "the fresh stall alarm was not delivered");
+await consume(sent[2]);
+const context = handlers.get("context");
+if (!context) throw new Error("no context handler was registered");
+const result = await context({ type: "context", messages: asContext([sent[0], sent[1], sent[2]]) }, {});
+const shown = result?.messages;
+if (!Array.isArray(shown) || shown.length !== 3) throw new Error(`the context hook did not return the conversation: ${JSON.stringify(result)}`);
+if (shown[0].content !== sent[0].m.content) throw new Error("an ordinary wake was rewritten");
+if (!shown[1].content.includes("FIRSTMATE WATCHER WAKE superseded:") || shown[1].content.includes("FIRSTMATE WATCHER WAKE: check:"))
+  throw new Error(`the stale alarm reached the model as an alarm: ${shown[1].content}`);
+if (shown[1].customType !== sent[1].m.customType || shown[1].display !== false) throw new Error("the superseded notice lost its message shape");
+if (shown[2].content !== sent[2].m.content) throw new Error("a still-owed alarm was rewritten");
+// The replay decision owns the rule for a restart's replay too.
+const alarm = (value) => `check: main wake-loop stalled: last_successful_drain=${value} oldest_queued_wake_age=9s; drain and handle the durable queue`;
+if (replay(alarm(1000)) !== "skip\n") throw new Error("a replayed alarm older than the latest drain was owed");
+if (replay(alarm(2000)) !== `deliver\n${alarm(2000)}\n`) throw new Error("a replayed alarm naming the current drain was dropped");
+unlinkSync(`${state}/.last-successful-drain`);
+if (replay(alarm("never")) !== `deliver\n${alarm("never")}\n`) throw new Error("an alarm raised before any drain was dropped while none happened");
+writeFileSync(`${state}/.wake-queue`, "");
+if (replay(alarm("never")) !== "skip\n") throw new Error("an alarm was owed with an empty queue");
+await handlers.get("session_shutdown")({}, {});
+process.exit(0);
+EOF
+)
+  status=$?
+  expect_code 0 "$status" "omp watch extension stale stall alarm contract: $out"
+  [ -z "$out" ] || fail "omp watch stale stall alarm test printed output: $out"
+  pass ".omp watch extension: a stall alarm never queues behind an unread wake, and one read after a later drain reaches the model only as a superseded notice"
+}
+
 # omp binds this module's already-imported factory again for every in-process
 # child session (the task tool, eval agent(), /tan): one module, two bindings,
 # one process pid, so the child also passes the session-lock check. A child must
@@ -1637,6 +1756,7 @@ test_watch_extension_keeps_the_arm_without_the_file_or_with_off
 test_watch_extension_replays_a_host_only_boundary_across_replacement
 test_watch_extension_delivers_a_split_host_close_whole
 test_watch_extension_coalesces_unacknowledged_wakes
+test_watch_extension_never_delivers_a_stale_stall_alarm
 test_watch_extension_child_session_never_owns_the_watch
 test_watch_extension_heals_shutdown_without_start
 test_watch_extension_restart_never_replays_a_cleaned_up_task

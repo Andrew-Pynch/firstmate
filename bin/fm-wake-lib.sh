@@ -2670,19 +2670,24 @@ fm_wake_notify_claim() {
 #   - A signal reason drops every status or turn-end file that no longer exists,
 #     which is how cleanup (bin/fm-teardown.sh) leaves a task; a reason left
 #     naming nothing is not owed.
-#   - Any other reason, including the check wakes that queue no row, replays
-#     unchanged.
+#   - A `check: main wake-loop stalled:` reason is owed only while the queue
+#     holds a row and state/.last-successful-drain still reads the value the
+#     reason names (`never` while it is absent): any later successful handling
+#     acknowledgement rewrites that record, so a changed value proves main
+#     drained after the alarm was raised and the alarm's numbers are stale.
+#   - Any other reason, including the other check wakes that queue no row,
+#     replays unchanged.
 # <message> is the replayed reason line, optionally followed by more lines,
 # which pass through untouched.
 # 0 = deliver the printed message; 1 = not owed, skip it; 2 = the decision
 # could not be made safely, which callers treat as delivering the original.
 fm_wake_notify_replay() {  # <message>
-  local message=$1 reason rest bounds token kept=""
+  local message=$1 reason rest bounds token kept="" named current
   local -a tokens
   reason=${message%%$'\n'*}
   rest=${message#"$reason"}
   case "$reason" in
-    signal:*|stale:*|heartbeat|heartbeat:*) ;;
+    signal:*|stale:*|heartbeat|heartbeat:*|'check: main wake-loop stalled: last_successful_drain='*) ;;
     *) printf '%s' "$message"; return 0 ;;
   esac
   if [ -e "$FM_WAKE_QUEUE" ] && [ ! -r "$FM_WAKE_QUEUE" ]; then return 2; fi
@@ -2691,6 +2696,15 @@ fm_wake_notify_replay() {  # <message>
   fm_lock_release "$FM_WAKE_QUEUE_LOCK"
   [ -n "$bounds" ] || return 1
   case "$reason" in
+    'check: main wake-loop stalled: last_successful_drain='*)
+      named=${reason#*last_successful_drain=}
+      named=${named%% *}
+      current=never
+      if [ -e "$STATE/.last-successful-drain" ]; then
+        current=$(cat "$STATE/.last-successful-drain" 2>/dev/null) || return 2
+      fi
+      [ "$current" = "$named" ] || return 1
+      ;;
     signal:*)
       read -r -a tokens <<< "${reason#signal:}"
       for token in "${tokens[@]+"${tokens[@]}"}"; do

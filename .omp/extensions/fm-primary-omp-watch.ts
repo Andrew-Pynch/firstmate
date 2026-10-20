@@ -75,6 +75,20 @@
 // before_agent_start; a streaming main consumes at the custom message_start
 // carrying the exact wake text; either event finishes the pending record, and
 // a still-unconsumed record rides the replacement handoff.
+//
+// Stalled alarms (stated once here):
+// The watcher's `check: main wake-loop stalled:` close carries the drain record
+// it read at emission, but omp holds a follow-up until main's current run ends,
+// and a run blocked in one long tool call (an `ask` waiting on the captain) can
+// hold it for hours. Two rules keep a held alarm from reaching main stale:
+//   - While this generation holds any unconsumed wake, a clean stalled close is
+//     retired without injecting: main has not read the earlier follow-up, which
+//     already sends it to the same drain, so another one only queues behind it.
+//   - At consumption, bin/fm-wake-notify.sh's `replay` decides whether the
+//     consumed alarm is still owed; when a later successful drain has replaced
+//     the record it names, the `context` hook shows the model a short
+//     superseded notice in its place. The decision is made once, before the
+//     first request that carries the message, so history never changes later.
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
@@ -183,6 +197,7 @@ const armRetireTimeoutMs = positiveInteger("FM_WATCH_ARM_RETIRE_TIMEOUT_MS", 100
 const repairOnlyHint = "call fm_watch_arm_omp again only after a later notification says the cycle is missing, failed, or unhealthy";
 const shuttingDownMessage = "watcher: not armed - omp session is shutting down";
 const watcherWakeCustomType = "firstmate-primary-omp-watcher-wake";
+const mainStallPrefix = "check: main wake-loop stalled: ";
 
 let nextHandoffId = 0;
 let replacementHandoff: PendingActionableClose[] | null = null;
@@ -200,6 +215,9 @@ type ReplacementCoordinator = {
   // the counter naming generations; see "Session-generation ownership" above.
   activeGeneration?: SessionGeneration | null;
   nextGenerationId?: number;
+  // Watcher-wake texts omp consumed after their stalled alarm stopped being
+  // owed, mapped to the text the model reads instead; see "Stalled alarms".
+  supersededWakes?: Map<string, string>;
 };
 type ReplacementCoordinatorGlobal = typeof globalThis & {
   __firstmateOmpWatchReplacements?: Map<string, ReplacementCoordinator>;
@@ -669,6 +687,7 @@ export default function (pi: ExtensionAPI) {
     for (const [token, wake] of owner.unconsumedWakes) {
       if (wake.content !== text) continue;
       owner.unconsumedWakes.delete(token);
+      supersedeStaleStall(wake);
       wake.pending.delivered = true;
       try {
         finishPendingActionable(owner, wake.pending);
@@ -677,6 +696,24 @@ export default function (pi: ExtensionAPI) {
         schedulePendingCleanup(owner);
       }
       return;
+    }
+  }
+
+  // See "Stalled alarms" above. Only a bare alarm qualifies: one carrying an
+  // appended restoration failure must still reach main unchanged. Any inability
+  // to decide or to encode the notice leaves the original alarm in place.
+  function supersedeStaleStall(wake: UnconsumedWake): void {
+    const message = wake.pending.message;
+    if (!message.startsWith(mainStallPrefix) || message.includes("\n")) return;
+    if (owedReplay(wake.pending) !== null) return;
+    try {
+      const notice = encodeFirstmateOperationalInput(
+        "watcher",
+        `FIRSTMATE WATCHER WAKE superseded: a successful drain acknowledged the queue after this alarm was raised, so it needs no action. Original alarm: ${message}`,
+      );
+      (replacementCoordinator.supersededWakes ??= new Map()).set(wake.content, notice);
+    } catch {
+      // The original alarm stays: a stale prompt is better than a lost one.
     }
   }
 
@@ -746,8 +783,10 @@ export default function (pi: ExtensionAPI) {
     // pipeline retires it instead of replaying it: its rows are durable and the
     // outstanding notification already sends main to the same drain. Any
     // inability to decide delivers, because a missed wake is worse than a
-    // duplicate one.
+    // duplicate one. A stalled alarm is also retired while main has not yet
+    // consumed an earlier follow-up (see "Stalled alarms" above).
     if (coalescible) {
+      if (message.startsWith(mainStallPrefix) && owner.unconsumedWakes.size > 0) return true;
       let claim = "";
       try {
         claim = (spawnSync("bash", [notifyScript, "claim"], {
@@ -1280,6 +1319,26 @@ export default function (pi: ExtensionAPI) {
       typeof message.content !== "string"
     ) return;
     consumeWake(generation, message.content);
+  });
+  // See "Stalled alarms" above: the model reads the superseded notice in place
+  // of an alarm decided stale at consumption. Nothing else is touched.
+  pi.on?.("context", (event) => {
+    const superseded = replacementCoordinator.supersededWakes;
+    const messages: unknown = event?.messages;
+    if (!superseded || superseded.size === 0 || !Array.isArray(messages)) return undefined;
+    let changed = false;
+    const next = messages.map((message) => {
+      if (
+        message?.role !== "custom" ||
+        message.customType !== watcherWakeCustomType ||
+        typeof message.content !== "string"
+      ) return message;
+      const notice = superseded.get(message.content);
+      if (notice === undefined) return message;
+      changed = true;
+      return { ...message, content: notice };
+    });
+    return changed ? { messages: next } : undefined;
   });
 
   pi.on?.("session_start", async () => {

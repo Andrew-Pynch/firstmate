@@ -530,16 +530,47 @@ window_label() {
 # `_` so a window name is usable as a filename suffix. Every per-window file the
 # watcher keeps is named by it (.hash-, .count-, .stale-, .stale-since-,
 # .wedge-escalations-, .wedge-permanent-, .wedge-terminal-queued-,
-# .wedge-rollback-failed-, .paused-*, .writing-*, .validating-*,
-# .waiting-*), and live homes
+# .wedge-rollback-failed-, .churn-since-, .dead-reported-, .paused-*,
+# .writing-*, .validating-*, .waiting-*), and live homes
 # hold those markers on disk under the current format, so the format lives here
 # alone: a second copy is how a future change to it silently orphans a window's
 # markers instead of clearing them. The helpers below take the derived key
 # rather than re-deriving it, so one poll of one window derives it once.
+# Each poll prunes only unrecorded windows through
+# prune_unrecorded_window_markers; recorded endpoints remain recovery evidence.
 window_key() {  # <window>
   local key=${1//:/_}
   key=${key//\//_}
   printf '%s' "${key//./_}"
+}
+
+# Retire only this watcher's per-window bookkeeping once no task records the
+# window. A missing or unreadable backend is not proof that its task is gone:
+# keep recorded windows' evidence for recovery, and never enumerate foreign
+# endpoints to decide ownership.
+prune_unrecorded_window_markers() {
+  local w key prefix marker keys=$'\n'
+  while IFS= read -r w; do
+    [ -n "$w" ] || continue
+    keys="$keys$(window_key "$w")"$'\n'
+  done < <(recorded_windows)
+  for marker in "$STATE"/.*; do
+    [ -f "$marker" ] || [ -L "$marker" ] || continue
+    key=''
+    # Longer prefixes precede their shorter parents (.stale-since vs .stale).
+    for prefix in stale-since paused-rechecked paused-resurfaced \
+        writing-since writing-resurfaced waiting-resurfaced wedge-escalations \
+        churn-since dead-reported hash count stale paused; do
+      case "$marker" in
+        "$STATE/.$prefix-"*) key=${marker#"$STATE/.$prefix-"}; break ;;
+      esac
+    done
+    [ -n "$key" ] || continue
+    case "$keys" in
+      *$'\n'"$key"$'\n'*) continue ;;
+    esac
+    rm -f -- "$marker" || return 1
+  done
 }
 
 inbox_steer_escalate_unavailable() {  # <window> <task> <record>
@@ -3654,6 +3685,7 @@ while :; do
   # Liveness beacon for fm-guard.sh: a fresh mtime here means a watcher is
   # alive. Supervision scripts warn when this goes stale with tasks in flight.
   touch "$STATE/.last-watcher-beat"
+  prune_unrecorded_window_markers || exit 1
 
   # Opt-in fleet activity ledger (docs/fleet-ledger.md): pick up newly appended
   # status lines before this cycle can exit on a wake. Off costs one file test.
@@ -4011,9 +4043,10 @@ EOF
   while IFS= read -r w; do
     kind=$(window_kind "$w")
     task=$(window_to_task "$w" "$STATE")
+    [ -n "$task" ] && [ -f "$STATE/$task.meta" ] || continue
     # Steering-inbox loss detection runs before the secondmate stale
     # exemption below, because a mate's steers land in an inbox too.
-    [ -z "$task" ] || inbox_steer_check "$w" "$task"
+    inbox_steer_check "$w" "$task"
     key=$(window_key "$w")
     last=$(status_declared_wait_line "$STATE/$task.status")
     if ! status_is_paused_or_captain_held "$last" && [ -e "$STATE/.paused-$key" ]; then

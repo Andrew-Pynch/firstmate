@@ -4683,6 +4683,7 @@ test_afk_paused_changed_pane_hands_off_plain_stale() {
 
 
 
+
 # The recorded Claude background-task exit picker. The footer is the last
 # non-blank row, which is what fm_composer_blocking_dialog requires.
 write_exit_picker() {  # <file>
@@ -4875,7 +4876,49 @@ if [ -n "${FM_TEST_ONLY:-}" ]; then
   exit 0
 fi
 
+test_removed_task_window_markers_are_pruned() {
+  local dir state fakebin out pid prefix
+  local prefixes='hash count stale stale-since wedge-escalations churn-since paused paused-rechecked paused-resurfaced writing-since writing-resurfaced waiting-resurfaced dead-reported'
+  dir=$(make_case removed-task-markers); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"
+  printf 'window=test:fm-survivor\nkind=secondmate\n' > "$state/survivor.meta"
+  for prefix in $prefixes; do
+    printf 'orphan' > "$state/.$prefix-default_w8V_p2"
+  done
+  for prefix in hash count churn-since dead-reported; do
+    printf 'preserved' > "$state/.$prefix-test_fm-survivor"
+  done
+  printf 'unrelated' > "$state/.seen-removed_status"
+  watch_bg "$state" "$fakebin" "$out" env
+  pid=$!
+  if ! wait_poll_cycle "$state" "$pid"; then
+    reap "$pid"; fail "watcher exited while pruning unrecorded windows: $(cat "$out")"
+  fi
+  for prefix in $prefixes; do
+    if [ -e "$state/.$prefix-default_w8V_p2" ]; then
+      reap "$pid"; fail "orphan $prefix marker survived a complete poll"
+    fi
+  done
+  for prefix in hash count churn-since dead-reported; do
+    if [ "$(cat "$state/.$prefix-test_fm-survivor")" != preserved ]; then
+      reap "$pid"; fail "pruning changed a recorded window's $prefix marker"
+    fi
+  done
+  rm "$state/survivor.meta"
+  if ! wait_poll_cycle "$state" "$pid"; then
+    reap "$pid"; fail "watcher exited after the last task record was removed: $(cat "$out")"
+  fi
+  reap "$pid"
+  for prefix in $prefixes; do
+    assert_absent "$state/.$prefix-test_fm-survivor" "removed task's $prefix marker survived a complete poll"
+  done
+  [ "$(cat "$state/.seen-removed_status")" = unrelated ] \
+    || fail "window cleanup touched a status suppressor"
+  [ ! -s "$state/.wake-queue" ] || fail "an unrecorded window produced a wake"
+  pass "each poll prunes removed task window markers without altering recorded windows or status suppressors"
+}
 fm_test_run \
+  test_removed_task_window_markers_are_pruned \
   test_status_span_actionable_classifier \
   test_status_span_survives_a_later_routine_append \
   test_status_span_respects_decision_closure \

@@ -4,13 +4,15 @@
 # Usage: fm-place.sh [--item <key>] [--handoff]
 #        fm-place.sh --help
 #
-# One decision for one queued ship or scout row, in this order:
+# One decision for one queued ship or scout row. Every candidate - this home
+# (the local firstmate home) and every registered secondmate in
+# data/secondmates.md - is probed concurrently, and:
 #
-#   1. This home (the local firstmate home) when it is under the captain's
-#      live-worker cap and above the memory floor.
-#   2. The first registered secondmate, in data/secondmates.md order, whose host
-#      passes every admission gate.
-#   3. A refusal naming every gate that failed on every candidate.
+#   1. Among the candidates that pass every admission gate, the one with the
+#      most worker headroom wins (bin/fm-host-probe-lib.sh owns the headroom
+#      rule). A tie prefers this home, then registry order.
+#   2. When none passes, a refusal names every gate that failed on every
+#      candidate.
 #
 # The captain's shape: the primary coordinates, idle machines take work, and
 # eligibility gates the choice. The captain never names a host, so no gate here
@@ -31,10 +33,11 @@
 #            unless it is confidently dead, so an endpoint that could not be
 #            observed can only move work to another machine, never overfill this
 #            one.
-#   memory   available memory on the candidate host, read locally or over ssh.
-#            FM_PLACE_MIN_FREE_GIB (default 4) is the placement floor; the
-#            captain raised the cap on 2026-09-15 with 20 GiB free, so 4 GiB is
-#            a conservative single-worker floor, not a derived ratio.
+#   memory   available memory on the candidate host, read locally or over ssh,
+#            as worker headroom: the host must have room for at least one more
+#            worker above FM_PLACE_MIN_FREE_GIB at FM_PLACE_PER_WORKER_GIB each.
+#            bin/fm-host-probe-lib.sh owns the rule and both defaults, and the
+#            same rule gates a local bin/fm-spawn.sh.
 #   laptop   packages/workstation-config/bin/laptop-worker-availability in
 #            personal-agent-monorepo owns lid, power, and household occupancy on
 #            the two macOS laptops, including Cassidy's active-use gate on
@@ -54,9 +57,10 @@
 #
 # Output is one line:
 #
-#   PLACE home=<local|mate-id> host=<host> <facts> reason=<what passed>
+#   PLACE home=<local|mate-id> host=<host> <facts> headroom_workers=<n> ranked=<id>:<n>... reason=<what passed>
 #   REFUSE <candidate>(<failed gates>); <candidate>(<failed gates>) ...
 #
+# ranked= lists every eligible candidate with its headroom, best first.
 # Exit status: 0 placed, 3 refused (every gate reason is printed), 2 usage or a
 # missing prerequisite to decide.
 #
@@ -73,11 +77,8 @@
 # is probed.
 #
 # Test seams (each one is an external observation, so tests drive the real
-# parsing and the real decision table rather than a second code path):
-#   FM_PLACE_SSH                  transport for remote probes (default ssh)
-#   FM_PLACE_SSH_CONNECT_TIMEOUT  ssh connect bound in seconds (default 8)
-#   FM_PLACE_HOST_TIMEOUT         whole-probe bound in seconds (default 45)
-#   FM_PLACE_MIN_FREE_GIB         memory floor in GiB (default 4)
+# parsing and the real decision table rather than a second code path): the
+# FM_PLACE_* probe settings bin/fm-host-probe-lib.sh documents, plus
 #   FM_PLACE_CAPTAIN_FILE         captain preference file owning the cap
 #   FM_PLACE_STATE_DIR            state directory holding task metadata
 # FM_ROOT_OVERRIDE, FM_HOME, FM_DATA_OVERRIDE and FM_STATE_OVERRIDE resolve the
@@ -93,10 +94,6 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 CAPTAIN_FILE="${FM_PLACE_CAPTAIN_FILE:-$DATA/captain.md}"
 REGISTRY="$DATA/secondmates.md"
 LOCAL_STATE="${FM_PLACE_STATE_DIR:-$STATE}"
-SSH_BIN="${FM_PLACE_SSH:-ssh}"
-SSH_CONNECT_TIMEOUT="${FM_PLACE_SSH_CONNECT_TIMEOUT:-8}"
-HOST_TIMEOUT="${FM_PLACE_HOST_TIMEOUT:-45}"
-MIN_FREE_GIB="${FM_PLACE_MIN_FREE_GIB:-4}"
 HANDOFF_CMD="$SCRIPT_DIR/fm-backlog-handoff.sh"
 SEND_CMD="$SCRIPT_DIR/fm-send.sh"
 TASKS_AXI="$SCRIPT_DIR/fm-tasks-axi.sh"
@@ -113,6 +110,9 @@ TASKS_AXI="$SCRIPT_DIR/fm-tasks-axi.sh"
 # shellcheck source=bin/fm-tasks-axi-lib.sh
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/fm-tasks-axi-lib.sh"
+# shellcheck source=bin/fm-host-probe-lib.sh
+# shellcheck disable=SC1091
+. "$SCRIPT_DIR/fm-host-probe-lib.sh"
 
 ITEM=
 HANDOFF=0
@@ -156,12 +156,7 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-case "$MIN_FREE_GIB" in
-  ''|*[!0-9]*) die_usage "FM_PLACE_MIN_FREE_GIB must be a non-negative integer" ;;
-esac
-case "$HOST_TIMEOUT" in
-  ''|*[!0-9]*|0) die_usage "FM_PLACE_HOST_TIMEOUT must be a positive integer" ;;
-esac
+fm_host_probe_config_valid || die_usage "$FM_HOST_PROBE_ERROR"
 
 # --- the row under consideration -------------------------------------------
 
@@ -213,124 +208,7 @@ fm_place_load_item() {
   return 0
 }
 
-# --- host probe -------------------------------------------------------------
-
-# The probe snippet runs on the candidate host (locally for this home, over ssh
-# for a mate) and reports what it observed, one key=value per line. It runs the
-# gate owners and prints each one's own verdict; it never reimplements a gate
-# and never invents a verdict it could not read. It runs before the tool PATH is
-# trusted, so it widens PATH for the macOS laptop's projected helpers and the
-# Docker CLI the Nucleus check needs.
-print_probe_snippet() {
-  cat <<'SNIPPET'
-place_home=${place_home:-}
-place_nucleus=${place_nucleus:-1}
-case ":$PATH:" in
-  *":/opt/homebrew/bin:"*) ;;
-  *) PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$PATH" ;;
-esac
-export PATH
-
-platform=$(uname -s 2>/dev/null) || platform=
-printf 'platform=%s\n' "${platform:-unobserved}"
-
-if [ "$platform" = Darwin ]; then
-  gate=
-  if command -v laptop-worker-availability >/dev/null 2>&1; then
-    gate=$(command -v laptop-worker-availability)
-  else
-    for candidate in \
-      "$HOME/.local/bin/laptop-worker-availability" \
-      "$HOME/personal/personal-agent-monorepo/packages/workstation-config/bin/laptop-worker-availability" \
-      "$HOME/work/personal-agent-monorepo/packages/workstation-config/bin/laptop-worker-availability"; do
-      [ -x "$candidate" ] && { gate=$candidate; break; }
-    done
-  fi
-  if [ -n "$gate" ]; then
-    gate_out=$("$gate" 2>&1)
-    gate_rc=$?
-    printf 'admission_verdict=%s\n' "$(printf '%s\n' "$gate_out" | sed -n 's/^\([A-Z][A-Z]*\):.*/\1/p' | head -1)"
-    printf 'admission_exit=%s\n' "$gate_rc"
-    printf 'admission_detail=%s\n' "$(printf '%s\n' "$gate_out" | head -1)"
-  else
-    printf 'admission_verdict=missing\n'
-    printf 'admission_exit=127\n'
-    printf 'admission_detail=%s\n' 'the laptop availability gate is not installed on this host'
-  fi
-else
-  printf 'admission_verdict=not-applicable\n'
-  printf 'admission_exit=0\n'
-  printf 'admission_detail=%s\n' "platform $platform is not a macOS laptop"
-fi
-
-if [ "$place_nucleus" = 1 ]; then
-  check=$place_home/data/nucleus-live-job-check.sh
-  if [ -f "$check" ]; then
-    if command -v bash >/dev/null 2>&1; then
-      check_out=$(bash "$check" 2>&1)
-    else
-      check_out=$(sh "$check" 2>&1)
-    fi
-    check_rc=$?
-    check_first=$(printf '%s\n' "$check_out" | head -1)
-    printf 'nucleus_verdict=%s\n' "$(printf '%s\n' "$check_first" | sed -n 's/^\([A-Z][A-Z]*\):.*/\1/p')"
-    printf 'nucleus_exit=%s\n' "$check_rc"
-    printf 'nucleus_detail=%s\n' "$check_first"
-  else
-    printf 'nucleus_verdict=missing\n'
-    printf 'nucleus_exit=127\n'
-    printf 'nucleus_detail=%s\n' "no Nucleus admission check at $check"
-  fi
-fi
-
-case "$platform" in
-  Darwin)
-    mem=$(vm_stat 2>/dev/null | awk '
-      /page size of/ && !size { for (i = 1; i <= NF; i++) if ($i == "of") size = $(i + 1) + 0 }
-      /^Pages free/ { free = $3 + 0 }
-      /^Pages inactive/ { inactive = $3 + 0 }
-      /^Pages speculative/ { speculative = $3 + 0 }
-      /^Pages purgeable/ { purgeable = $3 + 0 }
-      END { if (size > 0) printf "%d", (free + inactive + speculative + purgeable) * size / 1073741824 }')
-    ;;
-  *)
-    mem=$(awk '/^MemAvailable:/ { printf "%d", $2 / 1048576; exit }' /proc/meminfo 2>/dev/null)
-    ;;
-esac
-printf 'mem_gib=%s\n' "${mem:-unobserved}"
-SNIPPET
-}
-
-# fm_place_probe_local <home> <nucleus 0|1>: prints the report on stdout.
-#
-# The snippet travels as a command argument, never on stdin: bin/fm-timeout-lib.sh
-# runs the bounded command as a background job, so a here-document attached to
-# that call is not the child's stdin.
-fm_place_probe_local() {
-  local snippet
-  snippet=$(print_probe_snippet)
-  place_home=$1
-  place_nucleus=$2
-  export place_home place_nucleus
-  fm_run_timed "$HOST_TIMEOUT" sh -c "$snippet" </dev/null
-}
-
-# fm_place_probe_remote <host> <home> <nucleus 0|1>: prints the report on
-# stdout; transport failures land on stderr for the caller's refusal reason.
-fm_place_probe_remote() {
-  local host=$1 home=$2 nucleus=$3 snippet
-  snippet=$(print_probe_snippet)
-  fm_run_timed "$HOST_TIMEOUT" "$SSH_BIN" \
-    -o BatchMode=yes -o "ConnectTimeout=$SSH_CONNECT_TIMEOUT" \
-    "$host" "place_home=$home; place_nucleus=$nucleus; export place_home place_nucleus
-$snippet" </dev/null
-}
-
 # --- gate evaluation --------------------------------------------------------
-
-fm_place_field() {  # <key> <report>
-  printf '%s\n' "$2" | sed -n "s/^$1=//p" | head -1
-}
 
 # REASONS holds the gate failures of the candidate under evaluation, joined by
 # "; " and empty when it passes. It is a global rather than a return value
@@ -346,7 +224,7 @@ fm_place_note() {  # <reason>
 fm_place_eval_report() {
   local nucleus_gate=$1 report=$2 platform adm detail nv ne nd mem
   REASONS=
-  platform=$(fm_place_field platform "$report")
+  platform=$(fm_host_probe_field platform "$report")
   case "$platform" in
     ''|unobserved)
       fm_place_note 'platform: the host operating system could not be read'
@@ -354,8 +232,8 @@ fm_place_eval_report() {
       ;;
   esac
 
-  adm=$(fm_place_field admission_verdict "$report")
-  detail=$(fm_place_field admission_detail "$report")
+  adm=$(fm_host_probe_field admission_verdict "$report")
+  detail=$(fm_host_probe_field admission_detail "$report")
   case "$adm" in
     not-applicable | AVAILABLE) ;;
     '') fm_place_note 'laptop gate: the gate produced no verdict' ;;
@@ -363,9 +241,9 @@ fm_place_eval_report() {
   esac
 
   if [ "$nucleus_gate" = 1 ]; then
-    nv=$(fm_place_field nucleus_verdict "$report")
-    ne=$(fm_place_field nucleus_exit "$report")
-    nd=$(fm_place_field nucleus_detail "$report")
+    nv=$(fm_host_probe_field nucleus_verdict "$report")
+    ne=$(fm_host_probe_field nucleus_exit "$report")
+    nd=$(fm_host_probe_field nucleus_detail "$report")
     case "$nv" in
       IDLE)
         case "$ne" in
@@ -382,14 +260,14 @@ fm_place_eval_report() {
     esac
   fi
 
-  mem=$(fm_place_field mem_gib "$report")
+  mem=$(fm_host_probe_field mem_gib "$report")
   case "$mem" in
     ''|*[!0-9]*)
       fm_place_note 'memory: available memory could not be read on the host'
       ;;
     *)
-      [ "$mem" -ge "$MIN_FREE_GIB" ] || \
-        fm_place_note "memory: ${mem} GiB available, below the ${MIN_FREE_GIB} GiB placement floor"
+      [ "$(fm_host_probe_headroom "$mem")" -ge 1 ] || \
+        fm_place_note "memory: ${mem} GiB available leaves no room for a worker above the ${FM_HOST_PROBE_MIN_FREE_GIB} GiB floor at ${FM_HOST_PROBE_PER_WORKER_GIB} GiB per worker"
       ;;
   esac
 }
@@ -449,102 +327,15 @@ fm_place_cap_gate() {
   fi
 }
 
-# fm_place_local_reasons: sets REASONS to every reason this home may not take
-# work, and PLACE_REPORT to its probe report when the probe succeeded.
-fm_place_local_reasons() {
-  local report rc errfile
-  REASONS=
-  PLACE_REPORT=
-  CAP_VALUE=
-  LIVE_COUNTED=0
-  LIVE_ALIVE=0
-  LIVE_UNKNOWN=0
-  errfile=$(mktemp "${TMPDIR:-/tmp}/fm-place-probe.XXXXXX") || errfile=/dev/null
-  report=$(fm_place_probe_local "$FM_HOME" 0 2>"$errfile")
-  rc=$?
-  if [ "$rc" -ne 0 ] || [ -z "$report" ]; then
-    if [ -s "$errfile" ]; then
-      REASONS="probe: $(head -1 "$errfile")"
-    else
-      REASONS="probe: this home could not be read (exit $rc)"
-    fi
-    rm -f "$errfile"
-    return 0
-  fi
-  rm -f "$errfile"
-  PLACE_REPORT=$report
-  fm_place_eval_report 0 "$report"
-  fm_place_cap_gate
-}
-
-# --- mate candidates --------------------------------------------------------
-
-fm_place_mate_records() {  # prints "<id> <host> <home> <remote>" per registry record
-  local reg=$1 line id
-  [ -f "$reg" ] || return 0
-  while IFS= read -r line || [ -n "$line" ]; do
-    case "$line" in
-      '- '*) ;;
-      *) continue ;;
-    esac
-    secondmate_registry_parse_line "$line" || continue
-    id=$SECONDMATE_REGISTRY_ID
-    printf '%s %s %s %s\n' "$id" "${SECONDMATE_REGISTRY_HOST:-same-machine}" "$SECONDMATE_REGISTRY_HOME" "$SECONDMATE_REGISTRY_REMOTE"
-  done < "$reg"
-}
-
-# fm_place_remote_reasons <host> <home> <nucleus 0|1> <remote 0|1>: sets REASONS
-# to every reason the candidate may not take work, and PLACE_REPORT to its probe
-# report when the probe succeeded.
-fm_place_remote_reasons() {
-  local host=$1 home=$2 nucleus=$3 remote=$4 report rc errfile
-  REASONS=
-  PLACE_REPORT=
-  case "$home" in
-    /*) ;;
-    *)
-      REASONS='registry: the recorded home path is not absolute'
-      return 0
-      ;;
-  esac
-  case "$home" in
-    *[!A-Za-z0-9._/-]*)
-      REASONS='registry: the recorded home path cannot be quoted for the host'
-      return 0
-      ;;
-  esac
-  errfile=$(mktemp "${TMPDIR:-/tmp}/fm-place-probe.XXXXXX") || errfile=/dev/null
-  if [ "$remote" = 1 ]; then
-    report=$(fm_place_probe_remote "$host" "$home" "$nucleus" 2>"$errfile")
-  else
-    report=$(fm_place_probe_local "$home" "$nucleus" 2>"$errfile")
-  fi
-  rc=$?
-  if [ "$rc" -ne 0 ] || [ -z "$report" ]; then
-    if [ -s "$errfile" ]; then
-      REASONS="reach: $(head -1 "$errfile")"
-    elif [ "$rc" -eq 124 ]; then
-      REASONS="reach: the host did not answer within ${HOST_TIMEOUT}s, so its state is unknown"
-    else
-      REASONS="reach: the host could not be observed (probe exit $rc), so its state is unknown"
-    fi
-    rm -f "$errfile"
-    return 0
-  fi
-  rm -f "$errfile"
-  PLACE_REPORT=$report
-  fm_place_eval_report "$nucleus" "$report"
-}
-
 # --- decision ---------------------------------------------------------------
 
 # fm_place_positive_reason <report>: the passing facts behind a placement.
 fm_place_positive_reason() {
   local report=$1 platform adm nv mem facts
-  platform=$(fm_place_field platform "$report")
-  adm=$(fm_place_field admission_verdict "$report")
-  nv=$(fm_place_field nucleus_verdict "$report")
-  mem=$(fm_place_field mem_gib "$report")
+  platform=$(fm_host_probe_field platform "$report")
+  adm=$(fm_host_probe_field admission_verdict "$report")
+  nv=$(fm_host_probe_field nucleus_verdict "$report")
+  mem=$(fm_host_probe_field mem_gib "$report")
   facts="platform=$platform"
   case "$adm" in
     AVAILABLE) facts="$facts laptop=available" ;;
@@ -566,38 +357,60 @@ LIVE_COUNTED=0
 LIVE_ALIVE=0
 LIVE_UNKNOWN=0
 
+# fm_place_decide: probes every candidate at once, then ranks the eligible ones
+# by worker headroom. A strictly larger headroom is needed to displace an
+# earlier candidate, so a tie keeps this home (always first), then registry
+# order.
 fm_place_decide() {
-  local records id host home remote
-  fm_place_local_reasons
-  if [ -z "$REASONS" ]; then
-    PLACED_HOME=local
-    PLACED_HOST=$(hostname -s 2>/dev/null || hostname 2>/dev/null || printf 'this-home')
-    PLACED_REASON="under the live-worker cap with memory available"
-    PLACED_DETAIL="$(fm_place_positive_reason "$PLACE_REPORT") live=${LIVE_COUNTED}/${CAP_VALUE} (alive=${LIVE_ALIVE} unknown=${LIVE_UNKNOWN})"
-    return 0
-  fi
-  REFUSALS="local($REASONS)"
-
-  records=$(fm_place_mate_records "$REGISTRY")
-  if [ -z "$records" ]; then
-    REFUSALS="$REFUSALS; no secondmate is registered in $REGISTRY"
-    return 3
-  fi
-  while IFS=' ' read -r id host home remote; do
-    [ -n "$id" ] || continue
-    fm_place_remote_reasons "$host" "$home" 1 "$remote"
+  local dir n i id host home remote headroom best=-1 ranked='' tied='' mates=0
+  dir=$(mktemp -d "${TMPDIR:-/tmp}/fm-place.XXXXXX") || {
+    REFUSALS='probe: no scratch directory could be created'
+    return 2
+  }
+  n=$(fm_host_probe_run "$dir" 1 "$(fm_host_probe_candidates "$FM_HOME" "$REGISTRY")")
+  i=0
+  while [ "$i" -lt "$n" ]; do
+    i=$((i + 1))
+    read -r id host home remote < "$dir/$i.candidate"
+    [ "$id" = local ] || mates=$((mates + 1))
+    REASONS=$(cat "$dir/$i.reason")
+    PLACE_REPORT=$(cat "$dir/$i.report")
     if [ -z "$REASONS" ]; then
+      if [ "$id" = local ]; then
+        fm_place_eval_report 0 "$PLACE_REPORT"
+        fm_place_cap_gate
+      else
+        fm_place_eval_report 1 "$PLACE_REPORT"
+      fi
+    fi
+    if [ -n "$REASONS" ]; then
+      REFUSALS="${REFUSALS}${REFUSALS:+; }$id($REASONS)"
+      continue
+    fi
+    headroom=$(fm_host_probe_headroom "$(fm_host_probe_field mem_gib "$PLACE_REPORT")")
+    ranked="$ranked $id:$headroom"
+    if [ "$headroom" -gt "$best" ]; then
+      best=$headroom
+      tied=''
       PLACED_HOME=$id
       PLACED_HOST=$host
-      PLACED_REASON="the first registered mate whose host passed every admission gate"
-      PLACED_DETAIL=$(fm_place_positive_reason "$PLACE_REPORT")
-      return 0
+      PLACED_DETAIL="$(fm_place_positive_reason "$PLACE_REPORT") headroom_workers=$headroom"
+      [ "$id" != local ] || \
+        PLACED_DETAIL="$PLACED_DETAIL live=${LIVE_COUNTED}/${CAP_VALUE} (alive=${LIVE_ALIVE} unknown=${LIVE_UNKNOWN})"
+    elif [ "$headroom" -eq "$best" ]; then
+      tied="${tied}${tied:+,}$id"
     fi
-    REFUSALS="$REFUSALS; $id($REASONS)"
-  done <<EOF
-$records
-EOF
-  return 3
+  done
+  rm -rf "$dir"
+  if [ -z "$PLACED_HOME" ]; then
+    [ "$mates" -gt 0 ] || REFUSALS="$REFUSALS; no secondmate is registered in $REGISTRY"
+    return 3
+  fi
+  ranked=$(printf '%s' "$ranked" | tr ' ' '\n' | sed '/^$/d' | sort -t: -k2,2nr -s | tr '\n' ',' | sed 's/,$//')
+  PLACED_DETAIL="$PLACED_DETAIL ranked=$ranked"
+  PLACED_REASON="the eligible host with the most worker headroom ($best)"
+  [ -z "$tied" ] || PLACED_REASON="$PLACED_REASON, tied with $tied and kept by tie order (this home first, then registry order)"
+  return 0
 }
 
 # --- handoff ----------------------------------------------------------------

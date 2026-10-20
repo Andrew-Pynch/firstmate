@@ -5,7 +5,8 @@
 # informational status lines, latest captain-facing statuses not covered by a
 # newer branch outcome, OPEN DECISIONS, captain-call record divergence, and on
 # a supervision-host home the supervision session's new and unprocessed
-# outcomes (BRANCH OUTCOMES), then assert liveness.
+# outcomes (BRANCH OUTCOMES), print one fleet resources line when a heartbeat
+# was presented, then assert liveness.
 #
 # Keep sequence-bound row consumption independent from generation-bound episode
 # retirement; docs/watcher-continuity.md owns the recovery contract.
@@ -1202,5 +1203,11 @@ printf 'WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --a
 
 (print_status_presentation "$RAW_ROWS") || true
 print_branch_outcomes_section || BRANCH_OUTCOMES_RC=1
+# A heartbeat asks for a whole-fleet review, so it carries one fleet resources
+# line (bin/fm-fleet-resources.sh) for the placement half of that review.
+if printf '%s\n' "$RAW_ROWS" | awk -F '\t' '$3 == "heartbeat" { found = 1 } END { exit !found }'; then
+  FM_PLACE_HOST_TIMEOUT=${FM_PLACE_HOST_TIMEOUT:-15} \
+    "$SCRIPT_DIR/fm-fleet-resources.sh" --summary 2>/dev/null </dev/null || true
+fi
 assert_watcher_liveness
 exit "$BRANCH_OUTCOMES_RC"

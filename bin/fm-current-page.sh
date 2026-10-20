@@ -96,6 +96,17 @@
 #   4 Held calls: needs not re-checked within the window, older captain calls, and
 #     calls deferred to a later date.
 #
+# Share links: with answers_origin and share_origin both set (bin/fm-share.sh's
+# header), every artifact the page links inside its own folder - each task
+# document and each Wins card whose link opens a file, or a folder with an
+# index.html, under answers_origin - carries a share button. Like an answer, a
+# first tap arms it and a second publishes a snapshot through bin/fm-share.sh
+# (POST /share on the answer endpoint) and copies the link; an artifact already
+# shared shows a SHARED badge with its link instead. A Shared strip under Wins
+# lists every live share, including token folders made by hand, each with copy
+# and revoke. Each render publishes the artifacts it offered to
+# state/.current-page/shareables.json, and the endpoint shares nothing else.
+#
 # Keeper contract: exactly one keeper (an Opus worker) edits only the curated file
 # and the notes file, re-checking every need at least every FM_CURRENT_PAGE_CONFIRM_HOURS.
 #
@@ -156,8 +167,8 @@
 # The notes format is owned by fm-current-page.py's header; bin/fm_md.py renders all Markdown.
 #
 # Trigger. `watch` stays in the foreground and renders on every change to a
-# state/*.status or state/*.meta file, data/backlog.md, the notes file, or the
-# curated file, with
+# state/*.status or state/*.meta file, data/backlog.md, the notes file, the
+# curated file, or (with share links on) a share record, with
 # at most one render per FM_CURRENT_PAGE_DEBOUNCE_SECS (default 10; a quiet
 # change renders at once, a burst coalesces), plus an idle refresh every
 # FM_CURRENT_PAGE_IDLE_SECS (default 300). It uses inotifywait when installed

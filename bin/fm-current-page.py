@@ -27,11 +27,13 @@ import socket
 import subprocess
 import sys
 import time
+import urllib.parse
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, SCRIPT_DIR)
 import fm_md  # noqa: E402  (the one Markdown renderer and page theme, beside this file)
 import fm_current_answers as answers  # noqa: E402  (answer key, revision, token, decisions file)
+import fm_share  # noqa: E402  (share links: bin/fm-share.sh's header owns them)
 import zlib  # noqa: E402
 CODE_ROOT = os.path.dirname(SCRIPT_DIR)
 HOME = os.environ.get("FM_HOME") or CODE_ROOT
@@ -786,12 +788,39 @@ def task_docs(task, page_dir, cache):
     return out
 
 
-def docs_line(pairs):
-    """The inspector line linking a task's rendered documents, or '' when it has none."""
+def docs_line(pairs, share=None):
+    """The inspector line linking a task's rendered documents, each with its share control, or '' when it has none."""
     if not pairs:
         return ""
     return ('<p class="docs"><span class="lbl">Docs</span> '
-            + " ".join(f'<a href="{e(href)}" target="_blank" rel="noopener">{e(name)} &#8599;</a>' for name, href in pairs) + "</p>")
+            + " ".join(f'<a href="{e(href)}" target="_blank" rel="noopener">{e(name)} &#8599;</a>'
+                       + (share(href, name) if share else "") for name, href in pairs) + "</p>")
+
+
+def local_artifact(href, page_dir, origin, page_real):
+    """The file, or folder with an index.html, in the page's folder that a link opens: (artifact, real path).
+
+    None for anything else: another site, a hidden entry, a path outside the folder, or the page itself.
+    """
+    href = str(href or "").strip()
+    if origin and href.startswith(origin + "/"):
+        href = href[len(origin):]
+    elif re.match(r"^(?:[a-z][a-z0-9+.-]*:|//|#)", href, re.I):
+        return None
+    rel = urllib.parse.unquote(urllib.parse.urlsplit(href).path).strip("/")
+    if not rel or any(p.startswith(".") for p in rel.split("/")):
+        return None
+    root = os.path.realpath(page_dir)
+    real = os.path.realpath(os.path.join(root, rel))
+    if not real.startswith(root + os.sep):
+        return None
+    if os.path.isdir(real):
+        index = os.path.join(real, "index.html")
+        if not os.path.isfile(index) or os.path.realpath(index) == page_real:
+            return None
+    elif not os.path.isfile(real) or real == page_real:
+        return None
+    return rel, real
 
 
 def item_div(key, row, det, href="", task="", cls=""):
@@ -953,6 +982,18 @@ border-radius:var(--r);padding:5px 8px;outline:0}.ans-text input:focus{border-co
 .gl{font:700 11px var(--mono);color:var(--data);margin-right:4px}.gl.wait{color:var(--fg2)}.gl.err{color:var(--alert)}
 .rc-reply{margin:4px 0 2px;padding:6px 8px;border-left:3px solid var(--link);background:rgba(124,196,255,.07);color:var(--fg);
 font:13px/1.5 var(--sans);white-space:pre-wrap;overflow-wrap:anywhere}
+#shared{flex:none;display:flex;align-items:center;gap:10px;padding:8px 10px 0}#shared>.lbl{color:var(--link);flex:none}
+#shared>.lbl b{color:var(--fg);margin-left:6px}
+.shr{flex:0 0 300px;display:flex;flex-direction:column;gap:2px;min-width:0;padding:5px 10px;background:var(--pane);
+border:1px solid rgba(124,196,255,.25);border-left:3px solid var(--link);border-radius:var(--r)}.shr.busy{opacity:.5;pointer-events:none}
+.shr>b{font:600 13px var(--sans);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.shr .m{font:10.5px var(--mono);color:var(--fg2)}
+.shr-l{display:flex;gap:10px;overflow:hidden;white-space:nowrap;font:11px var(--mono)}.shr-a{display:flex;gap:6px;margin-top:2px}
+.win-c{flex:0 0 250px;display:flex;flex-direction:column;gap:3px;min-width:0}.win-c>.win{flex:1 1 auto}
+.share{display:inline-flex;align-items:center;gap:6px;margin-left:6px;min-width:0;max-width:100%;vertical-align:middle}.win-c>.share{margin:0 0 0 2px}
+.sh-btn,.sh-copy,.sh-rev{flex:none;font-size:10px;padding:0 6px;white-space:nowrap}.sh-rev{color:var(--alert);border-color:var(--alert-dim)}
+.sh-btn.armed,.sh-rev.armed{background:var(--data);border-color:var(--data);color:#0a0a0f}
+.sh-badge{flex:none;font:700 10px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:#0a0a0f;background:var(--link);border-radius:var(--r);padding:0 6px}
+.sh-url{font:11px var(--mono);min-width:0;max-width:340px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #factory{flex:none;margin:8px 10px 0;padding:5px 10px;border:1px solid var(--alert);border-left:4px solid var(--alert);
 background:linear-gradient(90deg,var(--alert-dim),rgba(255,51,102,.04));border-radius:var(--r)}
 #factory>.lbl{display:block;color:var(--alert);margin-bottom:1px}#factory>.lbl b{color:var(--fg);margin-left:8px}
@@ -1005,10 +1046,11 @@ white-space:normal;font-size:12px}
 #hud .out a{display:inline-flex;align-items:center;min-height:44px;margin:0!important;font-size:14px}
 .mob{display:inline-flex;align-items:center;justify-content:center}#logbtn{margin-left:auto}
 #warn p{font-size:14px;padding:8px 12px}
-#wins,#mine{display:block;padding:12px 10px 0}#wins>.lbl,#mine>.lbl{display:block;margin:0 2px 6px;font-size:12px}
+#wins,#mine,#shared{display:block;padding:12px 10px 0}#wins>.lbl,#mine>.lbl,#shared>.lbl{display:block;margin:0 2px 6px;font-size:12px}
 .wins-row{overflow-x:auto;scroll-snap-type:x mandatory;gap:10px;padding-bottom:6px}
 .win{flex:0 0 84%;scroll-snap-align:start;padding:10px 12px;min-height:56px}
 .mine-list{overflow-x:auto;scroll-snap-type:x mandatory;gap:10px;padding-bottom:6px}.mine{flex:0 0 84%;scroll-snap-align:start;padding:8px 12px}
+.win-c,.shr{flex:0 0 84%;scroll-snap-align:start}.sh-url{max-width:60vw}
 .win b{font-size:16px;white-space:normal}.win .why{font-size:14px;white-space:normal}.win .m{font-size:12px}
 .mine .mh b{font-size:15px}.rc{font-size:13px}.rc>summary{min-height:32px;padding-top:4px}
 #cols{display:block;padding:12px 10px}.stack{display:block}
@@ -1147,6 +1189,31 @@ async function send(box,pick){const key=box.dataset.ans,said=pick.option||pick.t
  setTimeout(()=>{if(S.sending[key]&&S.sending[key].state==="error"){delete S.sending[key];paint();}},15000);return false;}
 async function sendText(box){const i=$("input",box),t=i.value.trim();if(!t){toast("TYPE AN ANSWER FIRST","acc");i.focus();return;}
  if(await send(box,{text:t}))inputs().forEach(([k,x])=>{if(k===box.dataset.ans)x.value="";});}
+// Share links: a first tap arms a share or revoke button and a second sends it to the answers server, which runs
+// bin/fm-share.sh; every copy of that artifact's control (pane item and inspector) then shows the badge and link.
+async function postJSON(path,data){let r=null,j={};for(let i=0;i<3&&!r;i++){try{r=await fetch(path,{method:"POST",credentials:"same-origin",
+  headers:{"Content-Type":"application/json","X-FM-Answer-Token":($("#hud").dataset.token||"")},body:JSON.stringify(data)});}
+  catch{await new Promise(z=>setTimeout(z,800));}}
+ try{j=r?await r.json():{};}catch{}return[r,j];}
+function armed(b,label){if(b.classList.contains("armed")){b.classList.remove("armed");return true;}
+ $$(".sh-btn.armed,.sh-rev.armed").forEach(x=>{x.classList.remove("armed");x.textContent=x.dataset.l;});
+ b.dataset.l=b.textContent;b.classList.add("armed");b.textContent=label;
+ setTimeout(()=>{if(b.classList.contains("armed")){b.classList.remove("armed");b.textContent=b.dataset.l;}},4000);return false;}
+function sharedCtl(url){return'<span class="sh-badge">shared</span><a class="sh-url" href="'+esc(url)+'" target="_blank" rel="noopener" title="'
+ +esc(url)+'">'+esc(url)+'</a><button type="button" class="sh-copy" data-url="'+esc(url)+'">copy link</button>';}
+function shareFail(r,j,what){toast(what+": "+(j.detail||j.error||(r?"HTTP "+r.status:"offline")),"acc");
+ if(r&&r.status===409)refresh();else if(r&&r.status===403&&j.error==="token")setTimeout(()=>location.reload(),900);}
+async function share(box){const art=box.dataset.art,b=$(".sh-btn",box);b.disabled=true;b.textContent="sharing…";
+ const[r,j]=await postJSON("/api/share",{rid:rid(),artifact:art});
+ if(r&&r.ok){$$(".share").filter(s=>s.dataset.art===art).forEach(s=>{s.classList.add("on");s.innerHTML=sharedCtl(j.url);});
+  try{await copyText(j.url);toast("SHARED, LINK COPIED");}catch{toast("SHARED");}setTimeout(refresh,1500);return;}
+ b.disabled=false;b.textContent=b.dataset.l||"share";shareFail(r,j,"NOT SHARED");}
+async function unshare(card){const t=card.dataset.token;card.classList.add("busy");
+ const[r,j]=await postJSON("/api/share/revoke",{rid:rid(),token:t});
+ if(r&&(r.ok||r.status===404)){card.remove();toast("LINK REVOKED");
+  $$(".share.on").filter(s=>($(".sh-url",s)||{}).href?.includes("/"+t+"/")).forEach(s=>{s.classList.remove("on");
+   s.innerHTML='<button type="button" class="sh-btn">share</button>';});setTimeout(refresh,1500);return;}
+ card.classList.remove("busy");shareFail(r,j,"NOT REVOKED");}
 async function poll(){if(!$("#hud").dataset.token)return;try{const r=await fetch("/api/answers",{cache:"no-store"});if(!r.ok)return;
  const j=await r.json(),prev=S.ans;S.ans={};(j.answers||[]).forEach(a=>{S.ans[a.key]=a;const p=prev[a.key];if(!S.fed||!p)return;
   if(a.state==="answered"&&p.state!=="answered")toast("MAIN REPLIED");else if(a.state==="seen"&&p.state==="received")toast("MAIN READ IT");});
@@ -1186,6 +1253,9 @@ document.addEventListener("click",ev=>{const b=ev.target.closest("button.copy-co
    setTimeout(()=>ab.classList.remove("armed"),4000);return;}
   ab.classList.remove("armed");send(ab.closest(".answer"),{option:ab.dataset.opt});return;}
  const sb=ev.target.closest(".ans-send");if(sb){sendText(sb.closest(".answer"));return;}
+ const shb=ev.target.closest(".sh-btn");if(shb){if(armed(shb,"tap to share"))share(shb.closest(".share"));return;}
+ const shc=ev.target.closest(".sh-copy");if(shc){copyText(shc.dataset.url).then(()=>toast("LINK COPIED"),()=>toast("COPY FAILED","acc"));return;}
+ const shr=ev.target.closest(".sh-rev");if(shr){if(armed(shr,"tap to revoke"))unshare(shr.closest(".shr"));return;}
  const it=ev.target.closest(".pane .it");if(it&&!ev.target.closest("a,button,input,.det")){const i=panes.indexOf(it.closest(".pane"));
   if(MOB.matches){if(it.classList.toggle("open"))S.open.add(it.dataset.key);else S.open.delete(it.dataset.key);}
   S.pane=i;S.sel[i]=it.dataset.key;show(false);}});
@@ -1281,8 +1351,33 @@ def render(paths, reason):
     page_dir = os.path.dirname(os.path.abspath(paths["out"]))
     doc_cache = {}
 
+    # Share links (bin/fm-share.sh): only with the answer endpoint on and a share origin set. Every artifact the page
+    # links in its own folder gets a share control; one already shared shows its badge and link instead.
+    share_on = answers_on and fm_share.origin() is not None
+    live_shares = fm_share.shares() if share_on else []
+    shared_by_source = {}
+    for s in live_shares:
+        if s.get("source"):
+            shared_by_source.setdefault(s["source"], s)   # newest first, so the newest link wins
+    shareables = {}
+    page_real = os.path.realpath(paths["out"])
+
+    def share_ctl(href, label):
+        found = local_artifact(href, page_dir, paths.get("answers_origin"), page_real) if share_on else None
+        if not found:
+            return ""
+        art, real = found
+        shareables[art] = {"path": real, "label": label}
+        rec = shared_by_source.get(real)
+        if not rec:
+            return f'<span class="share" data-art="{e(art)}"><button type="button" class="sh-btn">share</button></span>'
+        return (f'<span class="share on" data-art="{e(art)}"><span class="sh-badge">shared</span>'
+                f'<a class="sh-url" href="{e(rec["url"])}" target="_blank" rel="noopener" title="{e(rec["url"])}">{e(rec["url"])}</a>'
+                f'<button type="button" class="sh-copy" data-url="{e(rec["url"])}">copy link</button></span>')
+
     def docs(*tasks):
-        return docs_line([p for t in dict.fromkeys(t for t in tasks if t) for p in task_docs(t, page_dir, doc_cache)])
+        return docs_line([p for t in dict.fromkeys(t for t in tasks if t) for p in task_docs(t, page_dir, doc_cache)],
+                         lambda href, name: share_ctl(href, href[:-5] if href.endswith(".html") else href))
 
     def answer_for(task, title, text, options, rec, compact=False, derive=True):
         """Register one answerable decision for the answer endpoint and return its buttons; '' when answers are off."""
@@ -1474,10 +1569,27 @@ def render(paths, reason):
         return (f'<div class="overlay bt" id="batch-{bid}" hidden data-swap><div class="box">{"".join(parts)}'
                 f'<p class="bt-close"><a href="#">close (Esc)</a></p></div></div>')
     batches = "".join(batch_overlay(b) for b in cur["batches"])
-    wins = "".join(
-        f'<a class="win" href="{e(str(w["url"]))}" target="_blank" rel="noopener"><b>{e(str(w["t"]))}</b>'
-        f'<span class="why">{e(str(w.get("why", "")))}</span>'
-        f'<span class="m">{e(str(w.get("kind") or fm_md.link_label(str(w["url"]))))} &#8599;</span></a>' for w in cur["wins"])
+
+    def win_card(w):
+        card = (f'<a class="win" href="{e(str(w["url"]))}" target="_blank" rel="noopener"><b>{e(str(w["t"]))}</b>'
+                f'<span class="why">{e(str(w.get("why", "")))}</span>'
+                f'<span class="m">{e(str(w.get("kind") or fm_md.link_label(str(w["url"]))))} &#8599;</span></a>')
+        ctl = share_ctl(str(w["url"]), str(w["t"]))
+        return f'<div class="win-c">{card}{ctl}</div>' if ctl else card
+    wins = "".join(win_card(w) for w in cur["wins"])
+
+    def shared_card(s):
+        title = s["label"] or s["name"] or "made by hand"
+        links = "".join(f'<a href="{e(u)}" target="_blank" rel="noopener" title="{e(u)}">{e(u.rsplit("/", 1)[-1])} &#8599;</a>'
+                        for u in s["urls"])
+        copy = f'<button type="button" class="sh-copy" data-url="{e(s["url"])}">copy link</button>' if s["url"] else ""
+        return (f'<div class="shr" data-token="{e(s["token"])}"><b title="{e(title)}">{e(title)}</b>'
+                f'<span class="m">{age(s["created"], now, "shared ")}{" · made by hand" if s["kind"] == "by hand" else ""}</span>'
+                f'<span class="shr-l">{links or "no files"}</span>'
+                f'<span class="shr-a">{copy}<button type="button" class="sh-rev">revoke</button></span></div>')
+    shared = (f'<section id="shared" data-swap aria-label="Shared"{"" if live_shares else " hidden"}>'
+              f'<span class="lbl">Shared<b>{len(live_shares)}</b></span>'
+              f'<div class="wins-row">{"".join(shared_card(s) for s in live_shares)}</div></section>') if share_on else ""
     write_pwa_assets(page_dir, paths.get("page_url") or os.path.basename(paths["out"]))
     page_url = paths.get("page_url") or ""
     inbox = ('<section id="inbox" hidden aria-label="Inbox to Main"><header><b>Inbox</b><span class="k">to Main</span>'
@@ -1517,6 +1629,7 @@ def render(paths, reason):
         + (f'<section id="factory" data-swap aria-label="Factory blocked on you"{"" if factory else " hidden"}>'
            f'<span class="lbl">Factory blocked on you<b>{len(factory)}</b></span><div class="fx-list">{"".join(factory)}</div></section>')
         + f'<nav id="wins" data-swap aria-label="Wins"{"" if wins else " hidden"}><span class="lbl">Wins</span><div class="wins-row">{wins}</div></nav>'
+        + shared
         + ('<section id="mine" hidden><span class="lbl">Your answers<span class="n"></span></span><div class="mine-list"></div></section>' if answers_on else "")
         + '<div id="cols">'
         + pane("needs", 1, "Needs you", len(needs_now), f'<div id="needs-now">{needs_body}</div>')
@@ -1539,6 +1652,7 @@ def render(paths, reason):
         f"<script>{PAGE_JS}</script>{fm_md.LINEAR_CARD}</body></html>")
     if answers_on:   # decisions first, so a tap on the new page never meets the previous render's revisions
         answers.write_decisions(decisions, now)
+        answers.write_shareables(shareables, now)
     write_atomic(paths["out"], page)
     return {"needs": len(needs_now), "stale_needs": len(needs_stale), "running": len(running),
             "done_today": len(done_today), "older_calls": len(older_calls), "forge": forge_state}
@@ -1653,9 +1767,19 @@ def locked_render(paths, reason):
         return render(paths, reason)
 
 
+def share_records(paths):
+    """The share records folder when the page shows share controls (created so it can be watched), else None."""
+    if not (paths.get("answers_origin") and fm_share.origin()):
+        return None
+    os.makedirs(fm_share.records_dir(), mode=0o700, exist_ok=True)
+    return fm_share.records_dir()
+
+
 def watched_signature(paths):
     sig = []
-    for d, suffixes in ((STATE, (".status", ".meta")), (DATA, ("backlog.md", "done-archive.md"))):
+    recs = share_records(paths)
+    for d, suffixes in ((STATE, (".status", ".meta")), (DATA, ("backlog.md", "done-archive.md")),
+                        *(((recs, (".json",)),) if recs else ())):
         try:
             names = sorted(os.listdir(d))
         except OSError:
@@ -1677,17 +1801,18 @@ def watched_signature(paths):
 
 
 def watch(paths):
-    """Render on every status, meta, backlog, notes, or curated change; at most one render per debounce window."""
+    """Render on every status, meta, backlog, notes, curated, or share record change; at most one render per debounce window."""
     debounce = env_int("FM_CURRENT_PAGE_DEBOUNCE_SECS", 10)
     idle = env_int("FM_CURRENT_PAGE_IDLE_SECS", 300)
     poll = env_int("FM_CURRENT_PAGE_POLL_SECS", 2)
     inputs = "|".join(re.escape(os.path.basename(paths[k])) for k in ("notes", "curated"))
     names = re.compile(r"(\.status|\.meta|^backlog\.md|^(?:" + inputs + r"))$")
+    recs = share_records(paths)
     notify = None
     if shutil.which("inotifywait") and not os.environ.get("FM_CURRENT_PAGE_POLL"):
-        dirs = list(dict.fromkeys([STATE, DATA] + [os.path.dirname(paths[k]) for k in ("notes", "curated")]))
+        dirs = list(dict.fromkeys([STATE, DATA] + [os.path.dirname(paths[k]) for k in ("notes", "curated")] + ([recs] if recs else [])))
         notify = subprocess.Popen(["inotifywait", "-m", "-q", "-e", "close_write,modify,moved_to,create,delete",
-                                   "--format", "%f", *dirs], stdout=subprocess.PIPE, text=True, bufsize=1)
+                                   "--format", "%w%f", *dirs], stdout=subprocess.PIPE, text=True, bufsize=1)
         os.set_blocking(notify.stdout.fileno(), False)
     last_render = 0.0
     pending = "watch start"
@@ -1702,8 +1827,8 @@ def watch(paths):
                 line = notify.stdout.readline()
                 if not line:
                     break
-                name = line.strip()
-                if names.search(name):
+                where, name = os.path.split(line.rstrip("\n"))
+                if names.search(name) or (recs and os.path.abspath(where) == recs and name.endswith(".json")):
                     pending = pending or f"change to {name}"
         else:
             time.sleep(poll)

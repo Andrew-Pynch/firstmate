@@ -42,9 +42,11 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `fm-fleet-resources.sh`  | Print each host's memory, load, live workers, and worker headroom for this home and every registered secondmate |
 | `fm-current-page.sh`     | Render and keep fresh the captain's current page (wins, needs, running, done today, held calls): one keyboard-driven screen on a desktop, stacked panes on a phone, installable as a home-screen app |
 | `fm-current-answers.sh`  | The current page's answer endpoint: a tapped option reaches Main as one inbox note, and the page shows its receipt and Main's reply |
+| `fm-share.sh`            | Explicit share links: publish a snapshot of one artifact under an unguessable revocable link, list and revoke them, and serve only the shared files |
 | `fm-md-page.sh`          | Render a Markdown report, or upgrade an older `<pre>` wrapper page, into one keyboard-driven HTML page |
 | `fm_md.py`               | The one Markdown renderer and shared page theme behind both captain pages             |
 | `fm_current_answers.py`  | The answer key, revision, page token, and decisions file the current page shares with its answer endpoint |
+| `fm_share.py`            | Share links and the share server behind fm-share.sh, which the current page and its answer endpoint also call |
 | `fm-brief.sh`            | Scaffold ship (explicit `--mode`, plus the project's registered `--forge`), scout, secondmate-charter, and Herdr-lab briefs, with Captain's intent and Firstmate spec subsections on ship/scout |
 | [`fm-dod-lib.sh`](../bin/fm-dod-lib.sh) | Own ship/scout worker role scope, ship definitions of done, the named-head reachability gate on ship `done:` acceptance, and the no-mistakes `--intent` contract |
 | `fm-brief-heading-lib.sh` | Single owner of reading a brief's sections, shared by the `--intent` contract, spawn and promotion validation, and `fm-dispatch-resolve.sh` |

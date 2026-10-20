@@ -46,8 +46,17 @@
 #                   completion, as done or as outstanding; "counted" says which.
 #                   200, 404 when Linear has no such issue, 502 upstream, 503 no key.
 #   GET  /health
+#   POST /share     {"rid", "artifact"}: publish one artifact the latest render offered a
+#                   share button on (state/.current-page/shareables.json maps the
+#                   artifact to its file) through bin/fm-share.sh's add, labelled with
+#                   its title -> 200 {"state":"shared","token","url"}; a retried rid
+#                   returns the same link. 409 when the artifact left the page, 503
+#                   without share_origin.
+#   POST /share/revoke {"rid", "token"}: bin/fm-share.sh's revoke -> 200, or 404 for
+#                   an unknown token.
 #
-# Security contract for POST /answer and POST /note, each check refusing before anything is queued:
+# Security contract for every POST (/answer, /note, /share, /share/revoke), each check
+# refusing before anything is queued or published:
 #   - same origin: Origin must equal answers_origin (Referer under it when no Origin
 #     is sent), and Sec-Fetch-Site, when sent, must be same-origin -> else 403;
 #   - Content-Type application/json only -> else 415, so a plain HTML form cannot post;

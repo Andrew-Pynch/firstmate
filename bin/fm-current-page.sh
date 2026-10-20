@@ -44,14 +44,21 @@
 #
 # Curated file (keeper-maintained JSON object):
 #   next   {"do", "why", "unblocks"}            the NEXT box
-#   needs  [{"t", "why", "who", "machine"}]     Needs you cards; "who" is a task
-#                                               or secondmate id and sets filters
+#   needs  [{"t", "why", "who", "machine", "do", "options", "rec"}]
+#          "t": bold question/action title; "why": one-line reason.
+#          "who": task or secondmate id for machine/worker meta and filters.
+#          "machine": optional machine override.
+#          "do": optional highlighted action; wrap each command in single
+#                backticks for monospace text and its Copy button.
+#          "options": optional array of option strings shown as chips.
+#          "rec": optional exact option string marked Recommended.
+#          Missing "do", "options", and "rec" preserves the old title/reason card.
 #   why    {"<task-id>": "<one-line title>"}    card titles
 #   plain  {"<task-id>": "<plain status>"}      card text instead of the status line
 #   hide   ["<task-id>", ...]                   rows left off the page
 #   mates  {"<id>": {"machine", "scope"}}       secondmate host and scope
 # A missing or malformed file shows an empty NEXT with the problem named.
-# The notes file is free Markdown rendered above the filters.
+# The notes format and legacy Markdown fallback are owned by fm-current-page.py's header.
 #
 # Trigger. `watch` stays in the foreground and renders on every change to a
 # state/*.status or state/*.meta file, data/backlog.md, the notes file, or the

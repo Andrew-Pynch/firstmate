@@ -670,7 +670,10 @@ test_entry_without_spend_records_the_live_worker_count_never_below_the_floor() {
   local home out i PATH=$PATH
   # The count is live workers: each task record's tmux session answers present.
   mkdir -p "$TMP_ROOT/live-workers-bin"
-  printf '#!/usr/bin/env bash\ncase "$1" in has-session) exit 0 ;; *) exit 1 ;; esac\n' > "$TMP_ROOT/live-workers-bin/tmux"
+  cat > "$TMP_ROOT/live-workers-bin/tmux" <<'SH'
+#!/usr/bin/env bash
+case "$1" in has-session) exit 0 ;; *) exit 1 ;; esac
+SH
   chmod +x "$TMP_ROOT/live-workers-bin/tmux"
   PATH="$TMP_ROOT/live-workers-bin:$PATH"
   home=$(make_home spend-live-above)

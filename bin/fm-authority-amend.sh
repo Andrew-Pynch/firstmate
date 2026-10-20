@@ -379,7 +379,7 @@ for i in "${!P_TASKS[@]}"; do
     enqueued)
       if fm_authority_record_acknowledged "${R_RECORDS[$i]}"; then ack=acknowledged; else ack=pending; fi
       ;;
-    remote) ack=owner-status-reply ;;
+    remote) ack='owner-status-reply' ;;
     failed) ack=not-applicable ;;
   esac
   case "${R_INTENT[$i]}" in

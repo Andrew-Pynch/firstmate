@@ -39,9 +39,7 @@ FORGE_CACHE = os.path.join(PRIVATE, "merged.json")
 LOCK = os.path.join(PRIVATE, "render.lock")
 
 KNOWN_VERBS = {"working", "needs-decision", "blocked", "paused", "done", "failed", "resolved", "note"}
-ACTIVE_VERBS = {"working", "needs-decision", "blocked", "none", "note", "resolved"}
-BADGE = {"working": "#238636", "needs-decision": "#9e6a03", "blocked": "#da3633", "failed": "#da3633",
-         "paused": "#57606a", "done": "#8957e5", "resolved": "#238636", "note": "#57606a", "none": "#57606a"}
+PARKED_VERBS = {"paused", "done", "failed"}
 LINE_RE = re.compile(r"^\s*([A-Za-z][\w-]*)((?:\s*\[[^\]]*\])*)\s*:?\s*(.*)$", re.S)
 AT_RE = re.compile(r"\[at=(\d+)\]")
 PR_RE = re.compile(r"https://github\.com/[\w.-]+/[\w.-]+/pull/\d+")
@@ -309,7 +307,7 @@ def open_decisions():
 
 def parse_curated(path):
     """The keeper's curated JSON; bin/fm-current-page.sh's header owns the field list."""
-    empty = {"next": None, "needs": [], "why": {}, "mates": {}, "plain": {}, "hide": set(),
+    empty = {"checked": None, "needs": [], "why": {}, "mates": {}, "plain": {}, "hide": set(),
              "initiatives": [], "completed": [], "error": ""}
     try:
         with open(path, encoding="utf-8") as fh:
@@ -320,15 +318,15 @@ def parse_curated(path):
         return {**empty, "error": f"{os.path.basename(path)} unreadable ({str(exc)[:120]})"}
     if not isinstance(data, dict):
         return {**empty, "error": f"{os.path.basename(path)} is not a JSON object"}
-
-    def strmap(key):
-        val = data.get(key)
-        return {str(k): str(v) for k, v in val.items()} if isinstance(val, dict) else {}
-    nx = data.get("next")
+    why = data.get("why")
+    plain = data.get("plain")
     hide = data.get("hide")
-    return {"next": nx if isinstance(nx, dict) else None,
-            "needs": [n for n in data.get("needs") or [] if isinstance(n, dict)],
-            "why": strmap("why"), "plain": strmap("plain"),
+    return {"checked": ts_of(data.get("checked")),
+            "needs": [n for n in data.get("needs") or [] if isinstance(n, dict) and str(n.get("t", "")).strip()],
+            "why": {str(k): str(v) for k, v in why.items()} if isinstance(why, dict) else {},
+            "plain": {str(k): {"text": str(v.get("text", "")), "at": ts_of(v.get("at"))}
+                      for k, v in plain.items() if isinstance(v, dict) and str(v.get("text", "")).strip()}
+            if isinstance(plain, dict) else {},
             "hide": {str(h) for h in hide} if isinstance(hide, list) else set(),
             "mates": data.get("mates") if isinstance(data.get("mates"), dict) else {},
             "initiatives": [n for n in data.get("initiatives") or [] if isinstance(n, dict) and n.get("id")],
@@ -408,8 +406,26 @@ def block_md(text):
     return "".join(html_out)
 
 
+def link_label(url):
+    """A short label for a full URL: PR #n, a Linear key, Slack, a design slug, or host plus last path part."""
+    if PR_RE.fullmatch(url):
+        return f'PR #{url.rsplit("/", 1)[1]}'
+    linear = re.match(r"https://linear\.app/[^/]+/issue/([A-Za-z]+-\d+)", url)
+    if linear:
+        return linear.group(1).upper()
+    if re.match(r"https://[\w.-]*slack\.com/", url):
+        return "Slack"
+    path = url.split("?", 1)[0].split("#", 1)[0].rstrip("/")
+    host = path.split("/")[2] if path.count("/") >= 2 else path
+    tail = path.rsplit("/", 1)[-1] if path.count("/") >= 3 else ""
+    if re.search(r"/designs?/", path) and tail:
+        return tail.removesuffix(".html")
+    short = host.split(".")[0]
+    return f"{short}/{tail.removesuffix('.html')}" if tail else short
+
+
 def note_links(text):
-    """Keep inline Markdown while shortening full PR and design URLs."""
+    """Keep inline Markdown while giving every full URL a short label."""
     out, end = [], 0
     for match in re.finditer(r"\[[^\]]+\]\(https?://[^)\s]+\)|https?://[^\s<>]+", text):
         out.append(inline_md(text[end:match.start()]))
@@ -420,12 +436,7 @@ def note_links(text):
         else:
             url = token.rstrip(".,;:!?)")
             trailing = token[len(url):]
-            label = url
-            if PR_RE.fullmatch(url):
-                label = f'PR #{url.rsplit("/", 1)[1]}'
-            elif re.search(r"/designs?/", url):
-                label = url.split("?", 1)[0].split("#", 1)[0].rstrip("/").rsplit("/", 1)[-1]
-                label = label.removesuffix(".html")
+            label = link_label(url)
         out.append(f'<a href="{e(url)}">{e(label)}</a>{e(trailing)}')
         end = match.end()
     out.append(inline_md(text[end:]))
@@ -465,14 +476,14 @@ def notes_timeline(notes, today):
 
 
 def need_message(need):
-    """Optional recipient-ready message: verbatim text, inline code shown as code, one Copy for the raw text."""
+    """Optional recipient-ready message: a Copy button holding the exact raw text, and the text folded below."""
     message = need.get("message")
     if not isinstance(message, str) or not message.strip():
-        return ""
+        return "", ""
     to = need.get("to")
     if isinstance(to, list):
         to = ", ".join(str(x) for x in to if str(x).strip())
-    head = f'<b>Message{" to " + e(to) if isinstance(to, str) and to.strip() else ""}</b>'
+    head = f'Message{" to " + e(to) if isinstance(to, str) and to.strip() else ""}'
     parts, end = [], 0
     for match in re.finditer(r"`([^`\n]+)`", message):
         parts.append(e(message[end:match.start()]))
@@ -481,37 +492,36 @@ def need_message(need):
     parts.append(e(message[end:]))
     # The parser folds a raw CR into LF, so a character reference keeps the copied text byte-exact.
     raw = e(message).replace("\r", "&#13;")
-    return (f'<div class="need-message"><div class="need-message-head">{head}'
-            f'<button type="button" class="copy-message" data-copy="{raw}" aria-label="Copy message">Copy message</button></div>'
-            f'<blockquote>{"".join(parts)}</blockquote></div>')
+    button = f'<button type="button" class="copy-message" data-copy="{raw}">Copy message</button>'
+    return button, f'<details class="need-message"><summary>{head}</summary><blockquote>{"".join(parts)}</blockquote></details>'
 
 
-def need_details(need):
-    """Optional action, message, and recommendation, leaving legacy needs unchanged."""
-    out = []
-    action = need.get("do")
-    if isinstance(action, str) and action.strip():
+def need_actions(need):
+    """The direct link, exact commands with Copy, message, and option chips of one curated need."""
+    acts = []
+    link = str(need.get("link") or "").strip()
+    if re.match(r"https?://", link):
+        acts.append(f'<a class="go" href="{e(link)}">Open {e(str(need.get("link_label") or link_label(link)))}</a>')
+    action = str(need.get("do") or "").strip()
+    if action:
         parts, end = [], 0
         for match in re.finditer(r"`([^`]+)`", action):
-            parts.append(inline_md(action[end:match.start()]))
-            parts.append(f'<span class="need-command"><code>{e(match.group(1))}</code>'
-                         '<button type="button" class="copy-command" aria-label="Copy command">Copy</button></span>')
+            parts.append(note_links(action[end:match.start()]))
+            parts.append(f'<span class="cmd"><code>{e(match.group(1))}</code>'
+                         '<button type="button" class="copy-command">Copy</button></span>')
             end = match.end()
-        parts.append(inline_md(action[end:]))
-        out.append(f'<div class="need-action"><b>Do</b><div>{"".join(parts)}</div></div>')
-    out.append(need_message(need))
+        parts.append(note_links(action[end:]))
+        acts.append(f'<span class="do">{"".join(parts)}</span>')
+    button, folded = need_message(need)
+    if button:
+        acts.append(button)
     options = need.get("options")
     if isinstance(options, list):
-        chips = []
         for option in options:
-            if not isinstance(option, str) or not option.strip():
-                continue
-            recommended = option == need.get("rec")
-            chips.append(f'<span class="need-option{" recommended" if recommended else ""}">{e(option)}'
-                         f'{" <b>Recommended</b>" if recommended else ""}</span>')
-        if chips:
-            out.append(f'<div class="need-options" aria-label="Options">{"".join(chips)}</div>')
-    return "".join(out)
+            if isinstance(option, str) and option.strip():
+                rec = option == need.get("rec")
+                acts.append(f'<span class="opt{" rec" if rec else ""}">{e(option)}{" (recommended)" if rec else ""}</span>')
+    return (f'<div class="acts">{"".join(acts)}</div>' if acts else "") + folded
 
 
 # ---------- model ----------
@@ -525,8 +535,7 @@ def build_rows(mates, titles, why):
         task = name[:-5]
         meta = read_meta(os.path.join(STATE, name))
         status = os.path.join(STATE, task + ".status")
-        line = last_line(status)
-        verb, note, at = parse_line(line)
+        verb, note, at = parse_line(last_line(status))
         updated = at or mtime(status) or mtime(os.path.join(STATE, name))
         kind = meta.get("kind", "ship")
         project_path = meta.get("project", "")
@@ -537,57 +546,79 @@ def build_rows(mates, titles, why):
             base = os.path.basename(project_path.rstrip("/"))
             projects.append("firstmate" if os.path.realpath(project_path) == os.path.realpath(HOME) else base)
         if kind == "secondmate":
-            mate = task
             info = mates.get(task, {})
             host = meta.get("remote_host") or info.get("host") or here
             projects = list(dict.fromkeys(info.get("projects") or meta.get("projects", "").split(",")))
             title = why.get(task) or info.get("scope") or task
         else:
-            mate = "Main"
             host = meta.get("remote_host") or here
-            title = why.get(task) or titles.get(task) or task
+            title = why.get(task) or plain_words(titles.get(task, ""), 120) or task
         pr = meta.get("pr", "")
         found = PR_RE.findall(note)
         if found:
             pr = found[-1]
-        rows.append({"task": task, "kind": kind, "mate": mate, "host": host, "projects": [p for p in dict.fromkeys(projects) if p],
-                     "model": meta.get("model", ""), "worktree": meta.get("worktree", ""), "verb": verb, "note": note,
-                     "updated": updated, "pr": pr, "title": title,
-                     "linear_project": meta.get("linear_project_id") or meta.get("linear_project", ""),
-                     "subtitle": titles.get(task, "") if titles.get(task, "") != title else ""})
+        rows.append({"task": task, "kind": kind, "host": host, "projects": [p for p in dict.fromkeys(projects) if p],
+                     "verb": verb, "note": note, "updated": updated, "pr": pr, "title": title,
+                     "backend": meta.get("backend", ""), "target": meta.get("window", ""),
+                     "remote": bool(meta.get("remote_host")),
+                     "linear_project": meta.get("linear_project_id") or meta.get("linear_project", "")})
     return rows
 
 
+def live_tasks(rows):
+    """Ids whose recorded local endpoint is present, by the backend's cheap presence read; None when unreadable."""
+    args = []
+    for r in rows:
+        if r["backend"] and r["target"] and not r["remote"]:
+            args += [r["task"], r["backend"], r["target"]]
+    if not args:
+        return set()
+    script = ('source "$1/fm-backend.sh" || exit 3; shift; while [ "$#" -ge 3 ]; do '
+              'fm_backend_target_exists "$2" "$3" "fm-$1" >/dev/null 2>&1 && printf "%s\\n" "$1"; shift 3; done; exit 0')
+    try:
+        res = subprocess.run(["bash", "-c", script, "fm-current-page", SCRIPT_DIR, *args], capture_output=True,
+                             text=True, timeout=120, env={**os.environ, "FM_HOME": HOME})
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return set(res.stdout.split()) if res.returncode == 0 else None
+
+
+def ts_of(value):
+    """Epoch seconds from an epoch number or an ISO date or timestamp (naive means local); None otherwise."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    text = str(value or "").strip()
+    if re.fullmatch(r"\d{9,11}", text):
+        return float(text)
+    try:
+        stamp = dt.datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except (ValueError, TypeError, OverflowError):
+        return None
+    return stamp.timestamp()
+
+
 def ago(ts, now):
-    if not ts:
-        return "never"
+    if ts is None:
+        return "at an unknown time"
     s = max(0, int(now - ts))
-    if s < 90:
-        return f"{s}s ago"
+    if s < 60:
+        return "just now"
     if s < 3600:
         return f"{s // 60}m ago"
-    if s < 86400:
-        return f"{s // 3600}h{(s % 3600) // 60:02d}m ago"
+    if s < 172800:
+        return f"{s // 3600}h ago"
     return f"{s // 86400}d ago"
 
 
-def clock(ts):
-    return dt.datetime.fromtimestamp(ts).strftime("%a %H:%M") if ts else "-"
-
-
-def attrs(host, mate, projects):
-    out = []
-    if host:
-        out.append(f'data-m="{e(host)}"')
-    if mate:
-        out.append(f'data-g="{e(mate)}"')
-    if projects:
-        out.append(f'data-p="{e(" ".join(projects))}"')
-    return " ".join(out)
-
-
-def badge(verb):
-    return f'<span class="b" style="background:{BADGE.get(verb, "#57606a")}">{e(verb)}</span>'
+def age(ts, now, prefix=""):
+    """An age the page script keeps current between renders."""
+    if ts is None:
+        return f'<span class="age">{e(prefix)}at an unknown time</span>'
+    stamp = dt.datetime.fromtimestamp(ts)
+    return (f'<time class="age" data-ts="{int(ts)}" data-prefix="{e(prefix)}" datetime="{stamp.isoformat(timespec="seconds")}"'
+            f' title="{stamp.strftime("%a %d %b %H:%M")}">{e(prefix)}{ago(ts, now)}</time>')
 
 
 def clip(text, n):
@@ -602,12 +633,12 @@ def plain_words(text, n=200):
     return clip(re.sub(r"\s+", " ", text).strip(), n)
 
 
-def completion_time(value):
-    try:
-        stamp = dt.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-        return stamp.timestamp()
-    except (ValueError, TypeError, OverflowError):
-        return None
+def linked_words(text, n=220):
+    """Plain words that keep full URLs as short links; a URL cut by the clip is dropped."""
+    text = re.sub(r"\S*data/\S+", "", text)
+    text = re.sub(r"\[[a-z_]+=[^\]]*\]\s*", "", text)
+    text = clip(re.sub(r"\s+", " ", text).strip(), n)
+    return note_links(re.sub(r"https?://\S*…$", "…", text))
 
 
 def archived_done():
@@ -660,121 +691,156 @@ def initiative_for(item, initiatives):
     return winner
 
 
-def initiative_cards(cur, merged, done, rows, repos, now):
-    """Build an executive view from plain curated data and observed completions."""
-    initiatives = [i for i in cur["initiatives"] if i["id"] != "other"]
-    initiatives.append({"id": "other", "title": "Other", "goal": "Keep useful work visible.",
-                        "why": "This work does not yet have an initiative.", "next": [], "waiting": []})
-    buckets = {str(i["id"]): {"merged": [], "done": [], "next": [], "waiting": []} for i in initiatives}
+def completions(cur, merged, done, rows, repos, viewer, now):
+    """One item per finished piece of work in the last 7 d, each tagged with its initiative.
+
+    A Done record that links a merged PR absorbs that PR, so one task never shows twice. Merged PRs
+    by another author than the fleet's forge identity are returned separately.
+    """
+    initiatives = cur["initiatives"]
     by_task = {r["task"]: r for r in rows}
     pr_rows = {r["pr"]: r for r in rows if r["pr"]}
+    today = dt.date.fromtimestamp(now).isoformat()
+    week_start = dt.date.fromtimestamp(now - 7 * 86400).isoformat()
+    prs = {}
     for pr in merged:
-        ts = completion_time(pr.get("merged"))
-        if ts is None or not now - 7 * 86400 <= ts <= now:
-            continue
-        url = pr.get("url", "")
-        parts = url.split("/")
-        if not PR_RE.fullmatch(url):
-            continue
-        row = pr_rows.get(url, {})
-        project = repos.get("/".join(parts[3:5]), parts[4])
-        item = {**pr, "projects": row.get("projects") or [project],
-                "linear_project": row.get("linear_project", ""),
-                "match_title": pr.get("title", "") + " " + row.get("title", ""), "ts": ts}
-        buckets[initiative_for(item, initiatives)]["merged"].append(item)
-    seen = set()
+        url, ts = pr.get("url", ""), ts_of(pr.get("merged"))
+        if PR_RE.fullmatch(url) and ts is not None and now - 7 * 86400 <= ts <= now:
+            prs[url] = {**pr, "ts": ts}
+    items, used, seen = [], set(), set()
     for ticket in [*(done or []), *cur["completed"], *archived_done()]:
         task = str(ticket.get("id", ""))
         closed = str(ticket.get("completed") or ticket.get("closed") or "")
-        ts = completion_time(closed)
-        date_only = bool(re.fullmatch(r"\d{4}-\d{2}-\d{2}", closed))
-        in_week = (dt.datetime.fromtimestamp(now - 7 * 86400).date().isoformat() <= closed
-                   <= dt.datetime.fromtimestamp(now).date().isoformat()) if date_only else ts is not None and now - 7 * 86400 <= ts <= now
+        title = str(ticket.get("title") or task)
+        links = PR_RE.findall(" ".join(str(ticket.get(k, "")) for k in ("links", "title", "url")))
+        linked = next((u for u in links if u in prs and u not in used), "")
+        date_only = bool(re.fullmatch(r"\d{4}-\d{2}-\d{2}", closed)) and not linked
+        ts = prs[linked]["ts"] if linked else ts_of(closed)
+        in_week = week_start <= closed <= today if date_only else ts is not None and now - 7 * 86400 <= ts <= now
         if not task or task in seen or not in_week:
             continue
         seen.add(task)
+        if linked:
+            used.add(linked)
         row = by_task.get(task, {})
-        title = str(ticket.get("title") or task)
-        links = PR_RE.findall(str(ticket.get("links", "")) + " " + title)
-        item = {"id": task, "title": cur["why"].get(task) or title,
-                "match_title": title + " " + task, "projects": row.get("projects") or
-                [ticket.get("project_token") or ticket.get("repo") or ""],
+        url = linked or str(ticket.get("url") or "") or (links[0] if links else "")
+        item = {"title": cur["why"].get(task) or plain_words(re.sub(r"^Done:\s*", "", title), 120) or task,
+                "match_title": title + " " + task, "url": url if url.startswith("https://") else "",
+                "projects": row.get("projects") or [ticket.get("project_token") or ticket.get("repo") or ""],
                 "linear_project": ticket.get("linear_project") or row.get("linear_project", ""),
-                "url": ticket.get("url") or (links[0] if links else ""), "closed": closed, "ts": ts,
-                "date_only": date_only}
-        buckets[initiative_for(item, initiatives)]["done"].append(item)
-    for need in cur["needs"]:
-        row = by_task.get(str(need.get("who", "")), {})
-        item = {**row, "title": str(need.get("t", "")), "match_title":
-                " ".join(str(need.get(k, "")) for k in ("t", "why", "who"))}
-        buckets[initiative_for(item, initiatives)]["waiting"].append(str(need.get("do") or need.get("t") or ""))
-    for row in rows:
-        if (row["kind"] == "secondmate" or row["verb"] not in ACTIVE_VERBS or row["task"] in cur["hide"]
-                or now - (row["updated"] or 0) >= env_int("FM_CURRENT_PAGE_QUIET_HOURS", 48) * 3600):
+                "ts": ts, "date_only": date_only, "closed": closed[:10],
+                "today": closed == today if date_only else ts >= now - 86400}
+        item["initiative"] = initiative_for(item, initiatives)
+        items.append(item)
+    others = []
+    for url, pr in prs.items():
+        if url in used:
             continue
-        text = cur["plain"].get(row["task"])
-        if text:
-            buckets[initiative_for(row, initiatives)]["next"].append(text)
-    nx = cur["next"]
-    if nx and nx.get("do"):
-        item = {"title": " ".join(str(nx.get(k, "")) for k in ("do", "why", "unblocks"))}
-        buckets[initiative_for(item, initiatives)]["waiting"].append(str(nx["do"]))
+        parts = url.split("/")
+        row = pr_rows.get(url, {})
+        item = {"title": re.sub(r"^(?:fix|feat|chore|docs|perf|test|refactor|ci)(?:\([^)]*\))?!?:\s*", "",
+                                str(pr.get("title", ""))) or url,
+                "match_title": str(pr.get("title", "")) + " " + str(row.get("title", "")), "url": url,
+                "projects": row.get("projects") or [repos.get("/".join(parts[3:5]), parts[4])],
+                "linear_project": row.get("linear_project", ""), "ts": pr["ts"], "date_only": False,
+                "today": pr["ts"] >= now - 86400, "author": pr.get("author", "")}
+        item["initiative"] = initiative_for(item, initiatives)
+        (items if not viewer or item["author"] == viewer else others).append(item)
+    return items, others
 
-    def lines(items, empty):
-        texts = list(dict.fromkeys(str(x) for x in items if x))
-        return "<ul>" + "".join(f"<li>{inline_md(x)}</li>" for x in texts) + "</ul>" if texts else f'<p class="k">{empty}</p>'
 
-    def completed_list(prs, tickets):
-        out = []
-        for pr in prs:
-            number = pr["url"].rsplit("/", 1)[1]
-            title = re.sub(r"^(?:fix|feat|chore|docs|perf|test)(?:\([^)]*\))?:\s*", "", pr["title"])
-            out.append(f'<li>{e(title)} <a href="{e(pr["url"])}">PR #{e(number)}</a></li>')
-        for ticket in tickets:
-            url = str(ticket["url"])
-            title = plain_words(ticket["title"])
-            label = f'Done: {e(title)}'
-            if url.startswith("https://"):
-                label += f' <a href="{e(url)}">{e(ticket["id"])}</a>'
-            out.append(f'<li>{label}</li>')
-        if not out:
-            return '<p class="k">No completed work recorded.</p>'
-        visible = "<ul>" + "".join(out[:4]) + "</ul>"
-        if len(out) > 4:
-            visible += (f'<details><summary>{len(out) - 4} more completed items</summary>'
-                        "<ul>" + "".join(out[4:]) + "</ul></details>")
-        return visible
+def done_li(item, now, by=False):
+    link = f' <a href="{e(item["url"])}">{e(link_label(item["url"]))}</a>' if item["url"] else ""
+    who = f' <span class="meta">by {e(item.get("author", ""))}</span>' if by else ""
+    when = (f'<span class="age">{"today" if item["today"] else e(item["closed"])}</span>' if item["date_only"]
+            else age(item["ts"], now))
+    return f'<li>{e(clip(item["title"], 140))}{link}{who} <span class="meta">{when}</span></li>'
 
-    cards = []
-    today = dt.datetime.fromtimestamp(now).date().isoformat()
-    for initiative in initiatives:
-        bucket = buckets[str(initiative["id"])]
-        prs = sorted(bucket["merged"], key=lambda p: p["ts"], reverse=True)
-        tickets = sorted(bucket["done"], key=lambda t: t["closed"], reverse=True)
-        recent_prs = [p for p in prs if p["ts"] >= now - 86400]
-        recent_tickets = [t for t in tickets if (t["closed"] == today if t["date_only"] else t["ts"] >= now - 86400)]
-        older_prs = [p for p in prs if p not in recent_prs]
-        older_tickets = [t for t in tickets if t not in recent_tickets]
-        cards.append(
-            f'<article class="card initiative" data-initiative="{e(str(initiative["id"]))}">'
-            f'<h3>{e(str(initiative.get("title", initiative["id"])))}</h3>'
-            f'<p class="initiative-goal">{e(str(initiative.get("goal", "")))}</p>'
-            f'<p class="why"><b>Why it matters:</b> {e(str(initiative.get("why", "")))}</p>'
-            f'<div class="initiative-counts"><b>{len(recent_prs)} merged in 24 h</b> · {len(recent_tickets)} tasks finished'
-            f' <span class="k">/ 7 d: {len(prs)} merged · {len(tickets)} Done</span></div>'
-            f'<h4>What got done</h4>{completed_list(recent_prs, recent_tickets)}'
-            f'<details><summary>Earlier in the last 7 d ({len(older_prs)} merged, {len(older_tickets)} Done)</summary>'
-            f'{completed_list(older_prs, older_tickets)}</details>'
-            f'<h4>Next</h4>{lines([*(initiative.get("next") or []), *bucket["next"]], "No next step recorded.")}'
-            f'<h4 class="initiative-waiting">Waits on Andrew</h4>'
-            f'{lines([*(initiative.get("waiting") or []), *bucket["waiting"]], "Nothing recorded as waiting on Andrew.")}</article>')
-    return ('<section id="initiatives" aria-labelledby="initiatives-title"><h2 id="initiatives-title">Initiatives</h2>'
-            '<p class="k">Goals first. Merged PRs use exact times; Done tickets use their recorded completion date '
-            '(today and the past week), unless a time is supplied. A merge is not proof of a live change.</p>'
-            '<div class="initiative-grid">' + "".join(cards) + "</div></section>")
+
+def grouped(items, initiatives, now, cap, key):
+    """Items under their initiative's title, curated order then Other; each group shows `cap` items and folds the rest."""
+    names = {str(i["id"]): str(i.get("title") or i["id"]) for i in initiatives}
+    order = [*names, "other"]
+    names["other"] = "Other"
+    groups = {}
+    for item in sorted(items, key=lambda x: x["ts"] or 0, reverse=True):
+        groups.setdefault(item["initiative"], []).append(item)
+    out = []
+    for gid in order:
+        rows = groups.get(gid)
+        if not rows:
+            continue
+        lis = [done_li(x, now) for x in rows]
+        body = "<ul>" + "".join(lis[:cap]) + "</ul>"
+        if len(lis) > cap:
+            body += (f'<details id="{e(key)}-{e(gid)}"><summary>{len(lis) - cap} more</summary>'
+                     "<ul>" + "".join(lis[cap:]) + "</ul></details>")
+        out.append(f'<div class="group" data-initiative="{e(gid)}"><h3>{e(names[gid])} <span class="n">{len(rows)}</span></h3>{body}</div>')
+    return "".join(out)
+
+
+def captain_calls(held, today):
+    """Captain-held backlog rows keyed by id, with the hold-set time as the ask time and future-dated holds marked deferred."""
+    calls = {}
+    for h in held or []:
+        if h.get("hold_kind") != "captain" or not h.get("id"):
+            continue
+        until = "" if h.get("hold_until") in (None, "", "-") else h["hold_until"]
+        stamp = re.search(r"Captain hold set:\s*(\S+)", h.get("body", ""))
+        asked = (ts_of(stamp.group(1)) if stamp else None) or ts_of(h.get("created"))
+        calls[h["id"]] = {**h, "until": until, "asked": asked, "deferred": bool(until and until > today)}
+    return calls
+
+
+PAGE_CSS = """
+body{font:16px/1.45 system-ui;background:#0d1117;color:#e6edf3;max-width:980px;margin:1.2em auto;padding:0 1em}
+a{color:#58a6ff}h1{margin:.1em 0;font-size:26px}h2{margin:1.4em 0 .4em;font-size:21px;border-bottom:1px solid #30363d;padding-bottom:.2em}
+h2 .n,h3 .n,summary .n{color:#8b949e;font-weight:400}h3{margin:.8em 0 .2em;font-size:16px;color:#79c0ff}
+.k,.meta{color:#8b949e;font-size:13px}.age{white-space:nowrap}code{font-size:13px;color:#c9d1d9}
+.warn{background:#2d1517;border:1px solid #da3633;color:#ffa198;border-radius:8px;padding:.4em .8em;margin:.4em 0}
+ol.needs,ul.runs{list-style:none;padding:0;margin:0}
+.need{background:#161b22;border:1px solid #30363d;border-left:5px solid #d29922;border-radius:10px;padding:.6em .9em;margin:.5em 0}
+.need.new{border-left-color:#388bfd}.need.stale{border-left-color:#57606a;opacity:.75}
+.head{display:flex;justify-content:space-between;gap:1em;align-items:baseline}.head b{font-size:17px}.head .meta{text-align:right}
+.why{color:#c9d1d9;font-size:14px;margin:.15em 0;overflow-wrap:anywhere}
+.acts{display:flex;flex-wrap:wrap;gap:.5em;align-items:center;margin:.4em 0 .1em}
+a.go{background:#1f6feb;color:#fff;text-decoration:none;font-weight:600;border-radius:6px;padding:.25em .8em}
+.do{font-size:14px;overflow-wrap:anywhere}.cmd code{font-family:ui-monospace,monospace;background:#0d1117;border:1px solid #30363d;border-radius:5px;padding:.1em .4em;color:#f0f6fc}
+button{font:12px system-ui;color:#c9d1d9;background:#21262d;border:1px solid #57606a;border-radius:5px;padding:.25em .7em;margin-left:.3em;cursor:pointer}
+.opt{background:#21262d;border:1px solid #30363d;border-radius:20px;padding:.1em .7em;font-size:13px}.opt.rec{border-color:#2ea043;color:#7ee787}
+.need-message summary{font-size:13px;color:#8b949e}.need-message blockquote{margin:.4em 0;padding:.5em .8em;border-left:3px solid #388bfd;background:#0d1117;white-space:pre-wrap;overflow-wrap:anywhere}
+.run{border-top:1px solid #21262d;padding:.45em 0}.run .st{color:#adbac7;font-size:14px;overflow-wrap:anywhere}
+.tag{font-size:12px;border:1px solid #9e6a03;color:#e3b341;border-radius:5px;padding:0 .4em;margin-left:.3em}
+.group ul{margin:.1em 0;padding-left:1.2em}.group li{margin:.15em 0;font-size:15px}
+details.more{background:#161b22;border:1px solid #30363d;border-radius:10px;padding:.4em .9em;margin:.5em 0}details.more>summary{font-weight:600}
+summary{cursor:pointer}li{margin:.25em 0}.timeline{list-style:none;padding:0}.timeline li{display:flex;gap:.6em}
+.note-kind{font-size:12px;color:#8b949e;min-width:5em}
+"""
+
+PAGE_JS = """
+function ago(s){s=Math.max(0,Math.floor(s));if(s<60)return"just now";if(s<3600)return Math.floor(s/60)+"m ago";
+  if(s<172800)return Math.floor(s/3600)+"h ago";return Math.floor(s/86400)+"d ago";}
+function tick(){const now=Date.now()/1000;
+  document.querySelectorAll("time.age[data-ts]").forEach(t=>{t.textContent=(t.dataset.prefix||"")+ago(now-Number(t.dataset.ts));});
+  const stale=document.getElementById("render-stale");if(stale)stale.hidden=now-RENDERED<600;}
+async function copyText(text){
+  try{await navigator.clipboard.writeText(text);return;}catch{}
+  const area=document.createElement("textarea");area.value=text;area.setAttribute("readonly","");area.style.cssText="position:fixed;opacity:0";
+  document.body.appendChild(area);area.select();const ok=document.execCommand("copy");area.remove();if(!ok)throw new Error("copy refused");}
+function copier(button,text){button.onclick=async()=>{try{await copyText(text());button.textContent="Copied";}catch{button.textContent="Copy failed, select it by hand";}};}
+document.querySelectorAll(".copy-command").forEach(b=>copier(b,()=>b.previousElementSibling.textContent));
+document.querySelectorAll(".copy-message").forEach(b=>copier(b,()=>b.dataset.copy));
+const OPEN="current-page-open";const opened=new Set(JSON.parse(sessionStorage.getItem(OPEN)||"[]"));
+document.querySelectorAll("details[id]").forEach(d=>{if(opened.has(d.id))d.open=true;
+  d.addEventListener("toggle",()=>{d.open?opened.add(d.id):opened.delete(d.id);sessionStorage.setItem(OPEN,JSON.stringify([...opened]));});});
+tick();setInterval(tick,30000);setTimeout(()=>location.reload(),60000);
+"""
+
 
 def render(paths, reason):
     now = time.time()
+    today = dt.date.fromtimestamp(now).isoformat()
+    confirm = env_int("FM_CURRENT_PAGE_CONFIRM_HOURS", 2) * 3600
     notes = parse_notes(paths["notes"])
     cur = parse_curated(paths["curated"])
     mates = parse_secondmates()
@@ -784,217 +850,147 @@ def render(paths, reason):
             mates[mid]["scope"] = info.get("scope") or mates[mid]["scope"]
     backlog = tasks_axi("list", "--limit", "2000")
     titles = {r["id"]: r.get("title", "") for r in (backlog or []) if r.get("id")}
-    held = tasks_axi("list", "--state", "held", "--limit", "2000", "--fields", "hold_kind,hold_until,hold_reason")
+    held = tasks_axi("list", "--state", "held", "--limit", "2000", "--fields", "hold_kind,hold_until,hold_reason,created,body")
     done = tasks_axi("list", "--state", "done", "--limit", "2000", "--fields", "closed,links")
     rows = build_rows(mates, titles, cur["why"])
     by_task = {r["task"]: r for r in rows}
-    decisions = open_decisions()
+    open_by_task = {}
+    for d in open_decisions():
+        open_by_task.setdefault(d["task"], []).append(d)
+    live = live_tasks(rows)
     repos = registry_repos()
-    landed, fetched, viewer, forge_state = merged_prs(repos)
+    merged, fetched, viewer, forge_state = merged_prs(repos)
     here = local_host()
+    calls = captain_calls(held, today)
 
-    machines = list(dict.fromkeys([here] + [m["host"] for m in mates.values() if m["host"]] + [r["host"] for r in rows]))
-    mate_names = list(dict.fromkeys(["Main"] + list(mates) + [r["mate"] for r in rows]))
-    project_names = sorted({p for r in rows for p in r["projects"]} | set(repos.values()))
-
-    def chips(dim, label, values):
-        btn = [f'<button class="chip on" data-dim="{dim}" data-v="all">All</button>']
-        btn += [f'<button class="chip" data-dim="{dim}" data-v="{e(v)}">{e(v)}</button>' for v in values]
-        return f'<div class="chips"><span class="lbl">{label}</span>{"".join(btn)}</div>'
-
-    # Needs you and NEXT come only from the curated file; raw status lines never reach them.
-    need_cards = []
+    # Needs you now: curated needs the keeper re-checked inside the confirm window, minus any whose
+    # backlog row is no longer an open captain call, plus captain calls Main opened inside that window.
+    def need_li(n, cls, asked, checked):
+        who = str(n.get("who") or "")
+        host = n.get("machine") or (by_task[who]["host"] if who in by_task else mates.get(who, {}).get("host") or here)
+        rechecked = f' · {age(checked, now, "checked ")}' if cls == "stale" else ""
+        return (f'<li class="need {cls}" data-task="{e(str(n.get("task") or ""))}"><div class="head"><b>{e(str(n["t"]))}</b>'
+                f'<span class="meta">{age(asked, now, "asked ")} · {e(host)}{rechecked}</span></div>'
+                f'<div class="why">{note_links(str(n.get("why", "")))}</div>{need_actions(n)}</li>')
+    needs_now, needs_stale, curated_tasks = [], [], set()
     for n in cur["needs"]:
-        who = str(n.get("who", ""))
-        row = by_task.get(who)
-        mate = row["mate"] if row else (who if who in mates else "Main")
-        host = n.get("machine") or (row["host"] if row else mates.get(who, {}).get("host") or here)
-        projects = row["projects"] if row else mates.get(who, {}).get("projects", [])
-        need_cards.append(
-            f'<div class="card need f" {attrs(host, mate, projects)}><b>{e(str(n.get("t", "")))}</b>'
-            f'{need_details(n)}'
-            f'<div class="why">{inline_md(str(n.get("why", "")))}</div>'
-            f'<div class="k">{e(host)} / {e(mate)}{" / <code>" + e(who) + "</code>" if who else ""}</div></div>')
-    nx = cur["next"]
-    if nx and nx.get("do"):
-        unblocks = f' Unblocks: {inline_md(str(nx["unblocks"]))}.' if nx.get("unblocks") else ""
-        next_html = (f'<p><b>{inline_md(str(nx["do"]))}</b></p>'
-                     f'<p class="k">{inline_md(str(nx.get("why", "")))}{unblocks}</p>')
-    else:
-        next_html = "<p><b>Nothing curated as next.</b></p>"
+        task = str(n.get("task") or "")
+        if task:
+            curated_tasks.add(task)
+            if held is not None and (task not in calls or calls[task]["deferred"]):
+                continue
+        asked = ts_of(n.get("asked")) or calls.get(task, {}).get("asked")
+        checked = ts_of(n.get("checked")) or cur["checked"]
+        if checked is not None and now - checked < confirm:
+            needs_now.append(need_li(n, "", asked, checked))
+        else:
+            needs_stale.append(need_li(n, "stale", asked, checked))
+    fresh_calls, older_calls, deferred_calls = [], [], []
+    for c in sorted(calls.values(), key=lambda c: c["asked"] or 0, reverse=True):
+        if c["id"] in curated_tasks and not c["deferred"]:
+            continue
+        if c["deferred"]:
+            deferred_calls.append(c)
+        elif c["asked"] is not None and now - c["asked"] < confirm:
+            fresh_calls.append(c)
+        else:
+            older_calls.append(c)
+    for c in fresh_calls:
+        needs_now.append(
+            f'<li class="need new" data-task="{e(c["id"])}"><div class="head"><b>{e(plain_words(c.get("title", ""), 120) or c["id"])}</b>'
+            f'<span class="meta">{age(c["asked"], now, "asked ")} · new, not summarized yet</span></div>'
+            f'<div class="why">{linked_words(c.get("hold_reason", ""), 260)}</div></li>')
+
+    def call_li(c):
+        until = f' · until {e(c["until"])}' if c["until"] else ""
+        return (f'<li data-task="{e(c["id"])}"><b>{e(plain_words(c.get("title", ""), 120) or c["id"])}</b> <span class="meta">'
+                f'{age(c["asked"], now, "asked ")}{until} · <code>{e(c["id"])}</code></span>'
+                f'<div class="why">{linked_words(c.get("hold_reason", ""))}</div></li>')
+
+    # Running: workers whose endpoint is present right now; second mates always, by their routed status.
+    def run_li(r):
+        plain = cur["plain"].get(r["task"])
+        if plain and plain["at"] is not None and now - plain["at"] < confirm and plain["at"] >= (r["updated"] or 0) - 60:
+            text, as_of = plain["text"], plain["at"]
+        else:
+            text, as_of = plain_words(r["note"], 180) or "No report yet.", r["updated"]
+        pr = f' <a href="{e(r["pr"])}">{e(link_label(r["pr"]))}</a>' if r["pr"] else ""
+        tags = ""
+        if r["task"] in open_by_task:
+            tags += '<span class="tag">waiting on a decision from Main</span>'
+        if r["verb"] == "paused":
+            tags += '<span class="tag">paused</span>'
+        return (f'<li class="run" data-task="{e(r["task"])}"><div class="head"><b>{e(r["title"])}{pr}</b>'
+                f'<span class="meta">{e(r["host"])}</span></div>'
+                f'<div class="st">{e(text)} <span class="meta">{age(as_of, now)}</span>{tags}</div></li>')
+    shown = [r for r in rows if r["task"] not in cur["hide"]]
+    shown.sort(key=lambda r: -(r["updated"] or 0))
+    second = [r for r in shown if r["kind"] == "secondmate"]
+    alive = [r for r in shown if r["kind"] != "secondmate" and live is not None and r["task"] in live]
+    running = [r for r in alive if r["verb"] not in PARKED_VERBS]
+    parked = [r for r in alive if r["verb"] in PARKED_VERBS]
+
+    # Done today and earlier this week, by initiative.
+    items, others = completions(cur, merged, done, rows, repos, viewer, now)
+    done_today = [x for x in items if x["today"]]
+    week = [x for x in items if not x["today"]]
+    others_today = sorted((x for x in others if x["today"]), key=lambda x: -x["ts"])
+
+    banners = []
     if cur["error"]:
-        next_html += f'<p class="k">Curated file problem: {e(cur["error"])}</p>'
-
-    # Still-open decision records (resolved keys already folded away) show as a count on each live card.
-    grouped = {}
-    for d in decisions:
-        grouped.setdefault(d["task"], []).append(d)
-
-    # Live workstreams: active first, then parked/finished in a fold. Card text is the curated
-    # plain line when one exists, else the last status line reduced to plain words.
-    def card(r):
-        pr = (f'<a href="{e(r["pr"])}">PR #{e(r["pr"].rsplit("/", 1)[1])}</a>' if r["pr"] else "")
-        bits = [e(r["host"]), e(r["mate"]), f'<code>{e(r["task"])}</code>', e(r["kind"])]
-        if r["projects"]:
-            bits.append(e(" · ".join(r["projects"])))
-        if r["model"]:
-            bits.append(e(r["model"].split("/")[-1]))
-        sub = f'<div class="why">{e(r["subtitle"])}</div>' if r["subtitle"] else ""
-        text = cur["plain"].get(r["task"]) or plain_words(r["note"])
-        n_open = len(grouped.get(r["task"], []))
-        opened = f' · {n_open} open decision{"s" if n_open > 1 else ""}' if n_open else ""
-        wt = f' · <span title="{e(r["worktree"])}">{e(clip(r["worktree"], 60))}</span>' if r["worktree"] else ""
-        foot = " · ".join(x for x in (pr, f'updated {clock(r["updated"])} ({ago(r["updated"], now)})') if x)
-        return (f'<div class="card f" {attrs(r["host"], r["mate"], r["projects"])}><div class="top"><b>{e(r["title"])}</b>{badge(r["verb"])}</div>'
-                f'<div class="k">{" / ".join(bits)}</div>{sub}{f"<div class=st>{e(text)}</div>" if text else ""}'
-                f'<div class="k">{foot}{opened}{wt}</div></div>')
-    rows = [r for r in rows if r["task"] not in cur["hide"]]
-    mate_rank = {m: i for i, m in enumerate(mate_names)}
-    rows.sort(key=lambda r: (mate_rank.get(r["mate"], 99), -(r["updated"] or 0)))
-    quiet_after = env_int("FM_CURRENT_PAGE_QUIET_HOURS", 48) * 3600
-    active = [r for r in rows if r["kind"] == "secondmate" or r["task"] in grouped
-              or (r["verb"] in ACTIVE_VERBS and now - (r["updated"] or 0) < quiet_after)]
-    parked = [r for r in rows if r not in active]
-
-    # Landed: fleet PRs (authored by the forge identity the workers use), then everyone else folded.
-    pr_task = {r["pr"]: r for r in rows if r["pr"]}
-    landed.sort(key=lambda x: x.get("merged") or "", reverse=True)
-
-    def landed_li(x):
-        url = x.get("url", "")
-        if not url.startswith("https://"):
-            return ""
-        parts = url.split("/")
-        repo = "/".join(parts[3:5])
-        project = repos.get(repo, parts[4])
-        r = pr_task.get(url)
-        try:
-            ts = dt.datetime.fromisoformat(x["merged"].replace("Z", "+00:00")).timestamp()
-        except (KeyError, ValueError, AttributeError):
-            ts = None
-        who = "" if x.get("author") == viewer else f' <span class="k">by {e(x.get("author", ""))}</span>'
-        return (f'<li class="f" {attrs(r["host"] if r else "", r["mate"] if r else "", [project])}>'
-                f'<a href="{e(url)}">{e(project)} #{e(parts[-1])}</a> {e(x.get("title", ""))}{who}'
-                f' <span class="k">{clock(ts)}</span></li>')
-    daily = [x for x in landed if (completion_time(x.get("merged")) or 0) >= now - 86400]
-    fleet = [landed_li(x) for x in daily if x.get("author") == viewer]
-    others = [landed_li(x) for x in daily if x.get("author") != viewer]
-    forge_note = {"fresh": "", "cached": "", "skipped": " (GitHub read skipped)"}.get(
-        forge_state, f" (GitHub read failed, showing {clock(fetched)}: {forge_state[7:]})")
-    landed_html = (f'<p class="k">Last 24 h across {len(repos)} registered repos, as of {clock(fetched)}{e(forge_note)}.</p>'
-                   f'<ul>{"".join(fleet) or "<li class=k>none from the fleet</li>"}</ul>'
-                   + (f'<details><summary>{len(others)} by others</summary><ul>{"".join(others)}</ul></details>' if others else ""))
-
-    # Held: backlog rows held for a reason, captain calls first, deferred ones folded.
-    held_html = ""
+        banners.append(f"The keeper's file has a problem ({e(cur['error'])}); Needs you shows only new backlog calls.")
+    if cur["checked"] is None or now - cur["checked"] >= confirm:
+        banners.append(f"The page keeper last checked {age(cur['checked'], now)}; anything not re-checked is folded.")
     if held is None:
-        held_html = '<p class="k">Backlog unreadable this render.</p>'
-    else:
-        today = dt.date.today().isoformat()
-        now_rows, later_rows = [], []
-        for h in held:
-            until = h.get("hold_until", "")
-            until = "" if until == "-" else until
-            r = by_task.get(h.get("id", ""))
-            projects = [h.get("repo")] if h.get("repo") not in ("", "-", None) else []
-            li = (f'<li class="f" {attrs(r["host"] if r else here, "Main", projects)}>'
-                  f'<code>{e(h.get("id", ""))}</code> {e(h.get("title", ""))} <span class="k">{e(h.get("hold_kind", ""))}'
-                  f'{" until " + e(until) if until else ""}</span>'
-                  f'<div class="k">{e(plain_words(h.get("hold_reason", ""), 220))}</div></li>')
-            (later_rows if until and until > today else now_rows).append((h.get("hold_kind") != "captain", li))
-        now_rows.sort(key=lambda x: x[0])
-        held_html = (f'<ul>{"".join(li for _, li in now_rows) or "<li class=k>none</li>"}</ul>'
-                     + (f'<details><summary>{len(later_rows)} deferred to a later date</summary>'
-                        f'<ul>{"".join(li for _, li in later_rows)}</ul></details>' if later_rows else ""))
+        banners.append("The backlog could not be read, so answered calls may still show.")
+    if live is None:
+        banners.append("Could not check which workers are running.")
+    if forge_state.startswith("stale"):
+        banners.append(f"GitHub read failed; merged work is as of {age(fetched, now)}.")
+    warn = "".join(f'<p class="warn">{b}</p>' for b in banners)
 
-    notes_html = ""
-    if notes["missing"]:
-        notes_html = f'<p class="k">No notes yet ({e(os.path.basename(paths["notes"]))}).</p>'
-    elif notes["free"] or notes["events"]:
-        notes_html = f'<section class="notes" aria-label="Context from Main">{notes_timeline(notes, dt.date.today())}</section>'
-
-    initiatives_html = initiative_cards(cur, landed, done, rows, repos, now)
-    coverage = f'GitHub as of {clock(fetched)}{forge_note}.'
-    if done is None:
-        coverage += " Done backlog unreadable this render."
-    initiatives_html += f'<p class="k">{e(coverage)}</p>'
-
-    stamp = dt.datetime.fromtimestamp(now).strftime("%a %H:%M:%S %Z").strip()
-    page = f'''<!doctype html><meta charset="utf-8"><title>Current</title><meta name="viewport" content="width=device-width,initial-scale=1">
-<style>body{{font:16px/1.45 system-ui;background:#0d1117;color:#e6edf3;max-width:1100px;margin:1.5em auto;padding:0 1em}}a{{color:#58a6ff}}h1{{margin:.2em 0}}h2{{margin-top:1.6em;border-bottom:1px solid #30363d;padding-bottom:.2em}}h3{{margin:.6em 0 .2em}}.k{{color:#8b949e;font-size:13px}}code{{font-size:13px;color:#c9d1d9}}
-.next{{border:3px solid #f85149;border-radius:12px;padding:1em 1.3em;background:#2d1517;font-size:18px}}.next h2{{margin:.1em 0;border:0;color:#ff7b72}}.next p{{margin:.3em 0}}.notes{{background:#161b22;border:1px solid #30363d;border-radius:12px;padding:.4em 1.1em;margin:.8em 0}}
-.timeline{{list-style:none;margin:.5em 0;padding:0}}.timeline .note-event{{display:grid;grid-template-columns:5ch 5.5em minmax(0,1fr);align-items:baseline;gap:.8em;border-top:1px solid #30363d;padding:.65em 0;margin:0}}.note-event time{{font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}}.note-kind{{font-size:12px;font-weight:700;text-align:center;border:1px solid;border-radius:5px;padding:2px 6px}}.note-kind.merged,.note-kind.fixed,.note-kind.live{{color:#7ee787;background:#12261e;border-color:#238636}}.note-kind.decided{{color:#79c0ff;background:#10233f;border-color:#1f6feb}}.note-kind.needs{{color:#e3b341;background:#2b2110;border-color:#9e6a03}}.note-kind.blocked{{color:#ff7b72;background:#2d1517;border-color:#da3633}}.note-kind.info{{color:#c9d1d9;background:#21262d;border-color:#57606a}}.note-text{{overflow-wrap:anywhere}}.notes details{{margin:.7em 0;color:#c9d1d9}}@media(max-width:480px){{.timeline .note-event{{gap:.5em;grid-template-columns:5ch 5em minmax(0,1fr);font-size:14px}}.notes{{padding:.4em .7em}}}}
-.card{{background:#161b22;border:1px solid #30363d;border-radius:12px;padding:.9em 1.1em;margin:.7em 0}}.need{{border-left:6px solid #d29922}}.top{{display:flex;justify-content:space-between;gap:1em;font-size:17px}}
-.initiative-grid{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1em;align-items:start}}.initiative{{margin:0;border-top:3px solid #388bfd;overflow-wrap:anywhere}}.initiative h3{{font-size:20px;color:#79c0ff;margin:0 0 .3em}}.initiative-goal{{font-size:18px;font-weight:600;margin:.4em 0}}.initiative h4{{margin:1em 0 .3em;font-size:14px}}.initiative ul{{padding-left:1.2em;font-size:14px}}.initiative-counts{{color:#7ee787;font-size:14px;margin:.8em 0}}.initiative-waiting{{color:#e3b341}}@media(max-width:760px){{.initiative-grid{{grid-template-columns:1fr}}}}
-.need-action{{display:flex;align-items:baseline;gap:.8em;background:#2b2110;border:1px solid #9e6a03;border-radius:8px;padding:.7em .9em;margin:.7em 0;color:#e6edf3}}.need-action>div{{min-width:0;overflow-wrap:anywhere}}.need-action>b{{color:#e3b341}}.need-command code{{font-family:ui-monospace,monospace;white-space:pre-wrap;color:#f0f6fc}}.copy-command{{font:12px system-ui;color:#c9d1d9;background:#21262d;border:1px solid #57606a;border-radius:5px;padding:.2em .6em;margin-left:.5em;cursor:pointer}}.copy-command:focus-visible{{outline:2px solid #58a6ff;outline-offset:2px}}.need-options{{display:flex;flex-wrap:wrap;gap:.5em;margin:.6em 0}}.need-option{{background:#21262d;border:1px solid #57606a;border-radius:20px;padding:.3em .8em;font-size:14px;overflow-wrap:anywhere;min-width:0}}.need-option.recommended{{background:#12261e;border-color:#238636;color:#7ee787}}.need-option b{{font-size:11px;margin-left:.4em}}
-.need-message{{background:#10233f;border:1px solid #1f6feb;border-radius:8px;padding:.7em .9em;margin:.7em 0}}.need-message-head{{display:flex;justify-content:space-between;align-items:center;gap:.8em}}.need-message-head>b{{color:#79c0ff}}.need-message blockquote{{margin:.6em 0 0;padding:.5em .9em;border-left:4px solid #388bfd;background:#0d1117;border-radius:4px;white-space:pre-wrap;overflow-wrap:anywhere;color:#f0f6fc}}.need-message blockquote code{{font-family:ui-monospace,monospace;background:#21262d;border-radius:4px;padding:0 .3em}}.copy-message{{font:600 15px system-ui;color:#fff;background:#1f6feb;border:1px solid #388bfd;border-radius:6px;padding:.45em 1.1em;cursor:pointer;white-space:nowrap}}.copy-message:hover{{background:#388bfd}}.copy-message:focus-visible{{outline:2px solid #f0f6fc;outline-offset:2px}}
-.b{{color:#fff;padding:2px 8px;border-radius:5px;font-size:12px;height:fit-content;white-space:nowrap;margin-right:.4em}}.why{{color:#c9d1d9;margin:.3em 0}}.st{{color:#adbac7;font-size:14px;margin:.3em 0;word-break:break-word}}summary{{cursor:pointer}}
-ul.dl{{list-style:none;padding-left:0}}ul.dl li{{margin:.5em 0}}ul.dl .st{{display:inline}}
-#filters{{position:sticky;top:0;background:#0d1117;padding:.4em 0;border-bottom:1px solid #30363d;z-index:1}}.chips{{margin:.15em 0}}.lbl{{display:inline-block;width:5.5em;color:#8b949e;font-size:13px}}
-.chip{{background:#21262d;color:#e6edf3;border:1px solid #30363d;border-radius:20px;padding:.25em .8em;margin:.15em .2em .15em 0;font-size:14px;cursor:pointer}}.chip.on{{background:#1f6feb;border-color:#1f6feb}}li{{margin:.3em 0}}</style>
-<h1>Current</h1>
-<p class="k">Live. Rendered {e(stamp)} after {e(reason)}. <span id="nlive">{len(active)}</span> live · <span id="nneed">{len(need_cards)}</span> need you · {len(fleet)} fleet PRs landed in 24 h. Reloads every minute.</p>
-{initiatives_html}
-<div class="next"><h2>NEXT for Andrew</h2>{next_html}</div>
-{notes_html}
-<div id="filters">{chips("m", "Machine", machines)}{chips("g", "Mate", mate_names)}{chips("p", "Project", project_names)}</div>
-<h2>Needs you (<span class="cnt">{len(need_cards)}</span>)</h2><div class="sec">{"".join(need_cards) or '<p class="k">Nothing open.</p>'}</div>
-<h2>Live workstreams (<span class="cnt">{len(active)}</span>)</h2><div class="sec">{"".join(card(r) for r in active)}</div>
-<details><summary class="k">{len(parked)} paused, finished, or quiet for {quiet_after // 3600} h, still recorded</summary><div class="sec">{"".join(card(r) for r in parked)}</div></details>
-<h2>Landed today (<span class="cnt">{len(fleet)}</span>)</h2><div class="sec">{landed_html}</div>
-<h2>Held (<span class="cnt">{len(held or [])}</span>)</h2><div class="sec">{held_html}</div>
-<script>
-const sel={{m:"all",g:"all",p:"all"}};
-function apply(){{
-  document.querySelectorAll(".chip").forEach(c=>c.classList.toggle("on",sel[c.dataset.dim]==c.dataset.v));
-  document.querySelectorAll(".f").forEach(el=>{{
-    let ok=true;
-    for(const d of ["m","g","p"]){{if(sel[d]=="all")continue;const v=(el.dataset[d]||"").split(" ");if(!v.includes(sel[d]))ok=false;}}
-    el.style.display=ok?"":"none";
-  }});
-  document.querySelectorAll(".sec").forEach(s=>{{const h=s.previousElementSibling;const c=h&&h.querySelector(".cnt");
-    if(c)c.textContent=[...s.querySelectorAll(":scope > .f, :scope > ul > .f")].filter(x=>x.style.display!="none").length;}});
-  history.replaceState(null,"","#"+new URLSearchParams(sel).toString());
-}}
-function fromHash(){{new URLSearchParams(location.hash.slice(1)).forEach((v,k)=>{{if(k in sel)sel[k]=v;}});}}
-fromHash();
-window.addEventListener("hashchange",()=>{{fromHash();apply();}});
-document.querySelectorAll(".chip").forEach(c=>c.onclick=()=>{{sel[c.dataset.dim]=c.dataset.v;apply();}});
-async function copyText(text){{
-  try{{await navigator.clipboard.writeText(text);return;}}catch{{}}
-  const area=document.createElement("textarea");
-  area.value=text;area.setAttribute("readonly","");area.style.cssText="position:fixed;opacity:0";
-  document.body.appendChild(area);area.select();
-  const ok=document.execCommand("copy");area.remove();
-  if(!ok)throw new Error("copy refused");
-}}
-document.querySelectorAll(".copy-command").forEach(button=>button.onclick=async()=>{{
-  try{{
-    await copyText(button.previousElementSibling.textContent);
-    button.textContent="Copied";
-    button.setAttribute("aria-label","Command copied");
-  }}catch{{
-    button.textContent="Copy failed";
-    button.setAttribute("aria-label","Copy failed, select the command to copy it manually");
-  }}
-}});
-document.querySelectorAll(".copy-message").forEach(button=>button.onclick=async()=>{{
-  try{{
-    await copyText(button.dataset.copy);
-    button.textContent="Copied";
-    button.setAttribute("aria-label","Message copied");
-  }}catch{{
-    button.textContent="Copy failed";
-    button.setAttribute("aria-label","Copy failed, select the message to copy it manually");
-  }}
-}});
-apply();
-setTimeout(()=>location.reload(),60000);
-</script>
-'''
+    def more(key, title, count, body):
+        return (f'<details class="more" id="{key}"><summary>{e(title)} <span class="n">{count}</span></summary>{body}</details>'
+                if count else "")
+    notes_html = notes_timeline(notes, dt.date.fromtimestamp(now)) if not notes["missing"] else ""
+    rest = "".join([
+        more("more-older-calls", "Older open calls in the backlog", len(older_calls),
+             '<p class="k">Captain-held backlog rows the keeper has not re-checked. Answer one by telling Main.</p>'
+             "<ul>" + "".join(call_li(c) for c in older_calls) + "</ul>"),
+        more("more-deferred-calls", "Calls deferred to a later date", len(deferred_calls),
+             "<ul>" + "".join(call_li(c) for c in deferred_calls) + "</ul>"),
+        more("more-parked", "Workers alive but parked", len(parked),
+             '<ul class="runs">' + "".join(run_li(r) for r in parked) + "</ul>"),
+        more("more-week", "Earlier this week, by initiative", len(week), grouped(week, cur["initiatives"], now, 3, "week")),
+        more("more-others", "Merged by others today", len(others_today),
+             "<ul>" + "".join(done_li(x, now, by=True) for x in others_today) + "</ul>"),
+        more("more-notes", "Keeper notes", len(notes["events"]) + (1 if notes["free"] else 0), notes_html),
+    ])
+    stale_html = (f'<details class="more" id="needs-stale"><summary>Not re-checked in {confirm // 3600} h, may be answered '
+                  f'<span class="n">{len(needs_stale)}</span></summary><ol class="needs">{"".join(needs_stale)}</ol></details>'
+                  if needs_stale else "")
+    second_html = f'<h3>Second mates</h3><ul class="runs" id="second-mates">{"".join(run_li(r) for r in second)}</ul>' if second else ""
+    page = (
+        '<!doctype html><meta charset="utf-8"><title>Current</title>'
+        '<meta name="viewport" content="width=device-width,initial-scale=1">'
+        f"<style>{PAGE_CSS}</style>"
+        f'<h1>Current</h1><p class="k" title="{e(reason)}">Updated {age(now, now)} · {len(needs_now)} need you · '
+        f'{len(running)} running · {len(done_today)} done today. Reloads every minute.</p>'
+        '<p class="warn" id="render-stale" hidden>This page stopped updating; everything below may be old.</p>'
+        f"{warn}"
+        f'<section id="needs"><h2>Needs you now <span class="n">{len(needs_now)}</span></h2>'
+        f'<ol class="needs" id="needs-now">{"".join(needs_now) or "<li class=k>Nothing waiting on you.</li>"}</ol>{stale_html}</section>'
+        f'<section id="running"><h2>Running <span class="n">{len(running)}</span></h2>'
+        f'<ul class="runs" id="running-now">{"".join(run_li(r) for r in running) or "<li class=k>No workers running.</li>"}</ul>'
+        f'{second_html}</section>'
+        f'<section id="done"><h2>Done today <span class="n">{len(done_today)}</span></h2>'
+        '<p class="k">Merged fleet PRs and finished tasks from the last 24 h.</p>'
+        f'{grouped(done_today, cur["initiatives"], now, 5, "today") or "<p class=k>Nothing finished yet today.</p>"}</section>'
+        f'<section id="more"><h2>Everything else</h2>{rest or "<p class=k>Nothing else.</p>"}</section>'
+        f"<script>const RENDERED={int(now)};{PAGE_JS}</script>")
     write_atomic(paths["out"], page)
-    return {"live": len(active), "needs": len(need_cards), "decisions": len(decisions), "landed": len(fleet),
-            "held": len(held or []), "forge": forge_state}
+    return {"needs": len(needs_now), "stale_needs": len(needs_stale), "running": len(running),
+            "done_today": len(done_today), "older_calls": len(older_calls), "forge": forge_state}
 
 
 # ---------- plumbing ----------

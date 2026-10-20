@@ -15,72 +15,78 @@
 # reading the page never sees a partial file.
 #
 # Sources, read only: every state/*.meta (task, kind, project and token, host,
-# model, worktree, recorded PR) with the last line of its state/*.status;
+# backend endpoint, recorded PR) with the last line of its state/*.status;
 # data/secondmates.md for each secondmate's host, scope, and projects (a remote
 # secondmate's routed lines arrive in its local state/<mate>.status);
-# bin/fm-tasks-axi.sh for backlog titles and held rows; the still-open
-# decisions fold of bin/fm-classify-lib.sh; and GitHub (gh) for PRs merged in
-# the last 7 d across the GitHub repositories data/projects.md names, cached
-# under state/.current-page for FM_CURRENT_PAGE_FORGE_TTL seconds (default 300)
-# and skipped entirely with FM_CURRENT_PAGE_NO_FORGE=1. A failed GitHub read
-# keeps the last good list and says so on the page.
+# bin/fm-tasks-axi.sh for backlog titles, captain-held rows (with the
+# `Captain hold set:` stamp bin/fm-captain-hold.sh writes), and Done rows; the
+# configured markdown done archive; the still-open decisions fold of
+# bin/fm-classify-lib.sh; bin/fm-backend.sh's cheap endpoint-presence read for
+# each local endpoint; and GitHub (gh) for PRs merged in the last 7 d across the
+# GitHub repositories data/projects.md names, cached under state/.current-page
+# for FM_CURRENT_PAGE_FORGE_TTL seconds (default 300) and skipped entirely with
+# FM_CURRENT_PAGE_NO_FORGE=1. A failed GitHub read keeps the last good list and
+# says so on the page.
 #
 # The open-decision fold runs over a private mirror (state/.current-page/fold,
 # hard links to each status log plus its task kind), so its incremental cursors
 # stay private: the wake drain's own cursors and presentation records are never
 # read or written, and rendering never claims or acknowledges a wake.
 #
-# Page sections: Initiatives (goals, grouped completions, next and waiting),
-# then NEXT for Andrew and Needs you, both taken only from the curated
-# file and never from raw status lines; free notes; Live workstreams, each card
-# showing the curated plain line or else its last status line reduced to plain
-# words (home data/ paths, links, and [name=value] tags removed) plus a count of
-# its still-open decisions (a blocked or needs-decision key drops out once a
-# resolved line with that key lands), with rows paused, finished, or quiet for
-# FM_CURRENT_PAGE_QUIET_HOURS (default 48) folded below unless a decision is
-# open on them; Landed today (fleet PRs first, others folded); and Held. Filter
-# chips select by machine, by mate (Main or a secondmate id), and by project;
-# the selection lives in the URL fragment and survives the page's one-minute
-# reload.
+# Page, in order, built to be read in 30 seconds. Every item carries an age that
+# the page's own script keeps current between renders, and a banner appears when
+# the page itself stops updating for 10 minutes.
+#   Needs you now: curated needs re-checked within FM_CURRENT_PAGE_CONFIRM_HOURS
+#     (default 2), plus captain calls Main held within that window that no need
+#     covers yet. A need tied to a backlog row ("task") leaves the page the moment
+#     that row stops being an open captain hold (answered, released, done, or
+#     deferred). A need not re-checked within the window folds below as stale.
+#     Raw status lines never reach this section.
+#   Running: workers whose recorded local endpoint is present now and whose last
+#     status is not paused, done, or failed, each with its PR link and the
+#     curated plain line (used only while re-checked within the window and newer
+#     than the worker's last status) or else that status reduced to plain words;
+#     then second mates by their routed status.
+#   Done today: merged PRs by the fleet's GitHub identity and finished tasks from
+#     the last 24 h, grouped by initiative. A Done record that links a merged PR
+#     absorbs it, so one piece of work shows once.
+#   Everything else, folded: older and deferred captain calls, live but parked
+#     workers, earlier this week by initiative, PRs merged by others today, and
+#     the keeper notes.
 #
 # Curated file (keeper-maintained JSON object):
-#   next   {"do", "why", "unblocks"}            the NEXT box
-#   needs  [{"t", "why", "who", "machine", "do", "message", "to", "options", "rec"}]
-#          "t": bold question/action title; "why": one-line reason.
-#          "who": task or secondmate id for machine/worker meta and filters.
-#          "machine": optional machine override.
-#          "do": optional highlighted action; wrap each command in single
+#   checked "<ISO time>" or epoch               the keeper's last full re-check
+#   needs  [{"t", "why", "task", "link", "link_label", "do", "message", "to",
+#            "options", "rec", "asked", "checked", "who", "machine"}]
+#          "t": one-line title; "why": one line on why it matters.
+#          "task": the backlog id this need answers; omit only for asks that
+#                have no backlog row.
+#          "link": the direct URL to act on; "link_label" overrides its short
+#                label. "do": optional exact action; wrap each command in single
 #                backticks for monospace text and its Copy button.
-#          "options": optional array of option strings shown as chips.
-#          "rec": optional exact option string marked Recommended.
-#          "message": optional recipient-ready text (newlines and backticks
-#                kept) shown as a quote with a Copy message button that
-#                copies the exact raw string; `inline code` renders as code.
-#          "to": optional recipient string (or array of names) for "message".
-#          Missing "do", "message", "options", and "rec" preserves the old
-#          title/reason card.
-#   why    {"<task-id>": "<one-line title>"}    card titles
-#   plain  {"<task-id>": "<plain status>"}      card text instead of the status line
-#   hide   ["<task-id>", ...]                   rows left off the page
+#          "asked": when it was asked (default: the row's hold-set stamp).
+#          "checked": this need's own re-check time (default: top-level checked).
+#          "options", "rec": option chips, with the recommended one marked.
+#          "message", "to": recipient-ready text with a Copy message button that
+#                copies the exact raw string, its text folded below.
+#          "who", "machine": the worker or second mate it concerns and its host.
+#   why    {"<task-id>": "<one-line title>"}    worker titles
+#   plain  {"<task-id>": {"text", "at"}}        worker line and when it was written
+#   hide   ["<task-id>", ...]                   workers left off the page
 #   mates  {"<id>": {"machine", "scope"}}       secondmate host and scope
-#   initiatives [{"id", "title", "goal", "why", "match", "next", "waiting"}]
+#   initiatives [{"id", "title", "match"}]
 #          "match": {"project_tokens": [...], "linear_projects": [...],
 #                    "title_keywords": [...]} uses OR within and across lists.
 #          Literal, case-insensitive title keywords take priority (longest wins),
 #          then Linear project id/name, then exact project token; ties use array
 #          order. Give broad repositories narrow title keywords. Unmatched work
-#          goes to Other. "next" and "waiting" are arrays of plain sentences.
-#          Existing curated needs and active plain lines also join their card.
+#          goes to Other.
 #   completed [{"id", "title", "completed", "url", "project_token", "linear_project"}]
 #          Optional Done tickets from Linear or another source, with an ISO date
 #          or timestamp and an evidence URL. Only explicit completion records
 #          count, never an In Review or cancelled item.
-# Initiatives read Done rows and the configured markdown done archive, including
-# items after worker cleanup. PR and Done totals are separate, not additive:
-# one task can have both records. Merged timestamps give rolling 24 h and 7 d;
-# date-only Done records show today and the past week, with that limit named.
-# The existing Landed today section still shows only the last 24 h.
-# A missing or malformed file shows an empty NEXT with the problem named.
+# A date-only completion counts as today on its own date. A missing or
+# malformed file is named in a banner, and Needs you then shows only new calls.
 # The notes format and legacy Markdown fallback are owned by fm-current-page.py's header.
 #
 # Trigger. `watch` stays in the foreground and renders on every change to a

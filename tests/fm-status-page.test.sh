@@ -136,5 +136,39 @@ try:
 finally:
     server.terminate()
     server.wait(timeout=5)
+# Exercise the production collector rather than the synthetic snapshot seam.
+# The same active-away home refuses the ordinary digest and renders its held
+# decision on the read-only answer page without ending the away window.
+away_home = home / 'away'
+for name in ('state', 'data', 'config', 'projects'):
+    (away_home / name).mkdir(parents=True)
+(away_home / '.tasks.toml').write_text((root / '.tasks.toml').read_text())
+(away_home / 'data/backlog.md').write_text('## In flight\n\n## Queued\n\n## Done\n')
+away_env = {key:value for key,value in os.environ.items()
+            if key not in ('FM_STATUS_SNAPSHOT', 'FM_BEARINGS_AWAY_OK')}
+away_env.update(FM_HOME=str(away_home), FM_ROOT_OVERRIDE=str(root),
+                FM_STATE_OVERRIDE=str(away_home / 'state'),
+                FM_DATA_OVERRIDE=str(away_home / 'data'),
+                FM_CONFIG_OVERRIDE=str(away_home / 'config'))
+for args in (['add', 'away-choice', 'Choose the away release', '--repo', 'firstmate', '--queue'],
+             ['hold', 'away-choice', '--kind', 'captain', '--reason', 'Review the release']):
+    result = subprocess.run([root / 'bin/fm-tasks-axi.sh', *args], env=away_env,
+                            capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+(away_home / 'state/.afk').write_text(str(int(time.time())) + '\n')
+digest = subprocess.run([root / 'bin/fm-bearings-snapshot.sh', '--json'], env=away_env,
+                        capture_output=True, text=True)
+assert digest.returncode == 3, (digest.returncode, digest.stderr)
+rendered = subprocess.run([root / 'bin/fm-status-page.sh'], env=away_env,
+                          capture_output=True, text=True)
+assert rendered.returncode == 0, rendered.stderr
+away_page = (away_home / 'state/status-page-public/index.html').read_text()
+assert 'Choose the away release' in away_page and 'Review the release' in away_page
+assert 'needs you <small>1</small>' in away_page
+assert (away_home / 'state/.afk').exists(), 'read-only page ended the away window'
+digest_again = subprocess.run([root / 'bin/fm-bearings-snapshot.sh', '--json'], env=away_env,
+                              capture_output=True, text=True)
+assert digest_again.returncode == 3, 'page collection leaked its bypass into the digest'
+print('PASS: production answer page collects during active away; ordinary digest remains guarded')
 print('PASS: owner and origin checks; stale-tab window, redirect banner, recorded receipt, replay and reopened-call capture')
 PY

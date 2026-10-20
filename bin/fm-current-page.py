@@ -997,7 +997,15 @@ border:1px solid rgba(124,196,255,.25);border-left:3px solid var(--link);border-
 .win-c{flex:0 0 250px;display:flex;flex-direction:column;gap:3px;min-width:0}.win-c>.win{flex:1 1 auto}
 .share{display:inline-flex;align-items:center;gap:6px;margin-left:6px;min-width:0;max-width:100%;vertical-align:middle}.win-c>.share{margin:0 0 0 2px}
 .sh-btn,.sh-copy,.sh-rev{flex:none;font-size:10px;padding:0 6px;white-space:nowrap}.sh-rev{color:var(--alert);border-color:var(--alert-dim)}
-.sh-btn.armed,.sh-rev.armed{background:var(--data);border-color:var(--data);color:#0a0a0f}
+.sh-btn.armed,.sh-rev.armed,.ss-btn.armed{background:var(--data);border-color:var(--data);color:#0a0a0f}
+.ss{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:10px 0 0;padding:8px 10px;border:1px solid rgba(124,196,255,.25);
+border-left:3px solid var(--link);border-radius:var(--r);min-width:0}.ss>.lbl{color:var(--link);flex:none}
+.ss-to{flex:1 1 160px;min-width:0;font:12px var(--mono);background:var(--surface);color:var(--fg);border:1px solid var(--acc-dim);
+border-radius:var(--r);padding:3px 8px;outline:0}.ss-to:focus{border-color:var(--acc)}
+.ss-btn{flex:none;font-size:10px;padding:0 8px;white-space:nowrap}.ss>.k{flex-basis:100%;margin:0;font-size:11px}
+.ss-out{flex-basis:100%;display:flex;flex-direction:column;gap:4px;min-width:0}.ss-out p{margin:0}.win-c .ss>.k{display:none}
+.ss-out pre{margin:0;padding:6px 8px;font:11px/1.4 var(--mono);white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);
+border:1px solid var(--dim);border-radius:var(--r)}.ss-out .copy-message{align-self:flex-start;font-size:10px;padding:0 6px}
 .sh-badge{flex:none;font:700 10px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:#0a0a0f;background:var(--link);border-radius:var(--r);padding:0 6px}
 .sh-url{font:11px var(--mono);min-width:0;max-width:340px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #factory{flex:none;margin:8px 10px 0;padding:5px 10px;border:1px solid var(--alert);border-left:4px solid var(--alert);
@@ -1094,7 +1102,7 @@ button,a.go{min-height:44px;padding:8px 14px;font-size:14px}a.go{display:inline-
 PAGE_JS = r"""
 const $=(s,r=document)=>r.querySelector(s),$$=(s,r=document)=>[...r.querySelectorAll(s)];
 const S={pane:0,sel:{},q:"",cleared:+(sessionStorage.getItem("fm-cleared")||0),open:new Set(),ans:{},sending:{},fed:false,
- fold:new Set(["p-done","p-held"]),rcOpen:new Set(),read:JSON.parse(localStorage.getItem("fm-read")||"{}")};
+ fold:new Set(["p-done","p-held"]),rcOpen:new Set(),read:JSON.parse(localStorage.getItem("fm-read")||"{}"),slot:{},ssTo:{}};
 let panes=[],pend="";const body=$("#insp .body"),q=$("#q"),MOB=matchMedia("(max-width:760px)");
 function ago(s){s=Math.max(0,Math.floor(s));if(s<60)return"just now";if(s<3600)return Math.floor(s/60)+"m ago";
  if(s<172800)return Math.floor(s/3600)+"h ago";return Math.floor(s/86400)+"d ago";}
@@ -1164,7 +1172,7 @@ function receipt(a,bare){const g=bare?"":glyph(a);
  return'<details class="rc" data-rc="'+esc(a.note||a.key)+'"'+(S.rcOpen.has(a.note||a.key)?" open":"")+"><summary>"+g+you
   +" &#183; Main: "+esc(a.reply.split("\n")[0])+'</summary><div class="rc-reply">'+esc(a.reply)+"</div></details>";}
 function tsOf(a){return(Date.parse(a.reply_at||a.at||"")||0)/1000;}
-function paint(){const shown=new Set(),now=Date.now()/1000;
+function paint(){const shown=new Set(),now=Date.now()/1000;paintSlots();
  // A receipt belongs to the question it answered: an earlier answer on the same backlog row with another title goes to Your answers.
  $$(".answer[data-ans]").forEach(b=>{const k=b.dataset.ans,t=b.dataset.title,a0=S.sending[k]||S.ans[k];
   const a=a0&&(S.sending[k]||!t||!a0.title||a0.title===t)?a0:null,r=$(".receipt",b);if(a&&b.closest(".pane,#factory"))shown.add(k);
@@ -1202,7 +1210,7 @@ async function postJSON(path,data){let r=null,j={};for(let i=0;i<3&&!r;i++){try{
   catch{await new Promise(z=>setTimeout(z,800));}}
  try{j=r?await r.json():{};}catch{}return[r,j];}
 function armed(b,label){if(b.classList.contains("armed")){b.classList.remove("armed");return true;}
- $$(".sh-btn.armed,.sh-rev.armed").forEach(x=>{x.classList.remove("armed");x.textContent=x.dataset.l;});
+ $$(".sh-btn.armed,.sh-rev.armed,.ss-btn.armed").forEach(x=>{x.classList.remove("armed");x.textContent=x.dataset.l;});
  b.dataset.l=b.textContent;b.classList.add("armed");b.textContent=label;
  setTimeout(()=>{if(b.classList.contains("armed")){b.classList.remove("armed");b.textContent=b.dataset.l;}},4000);return false;}
 function sharedCtl(url){return'<span class="sh-badge">shared</span><a class="sh-url" href="'+esc(url)+'" target="_blank" rel="noopener" title="'
@@ -1220,6 +1228,31 @@ async function unshare(card){const t=card.dataset.token;card.classList.add("busy
   $$(".share.on").filter(s=>($(".sh-url",s)||{}).href?.includes("/"+t+"/")).forEach(s=>{s.classList.remove("on");
    s.innerHTML='<button type="button" class="sh-btn">share</button>';});setTimeout(refresh,1500);return;}
  card.classList.remove("busy");shareFail(r,j,"NOT REVOKED");}
+// Pilot slots: "share slot" asks the answers server to run bin/fm-share.sh share-slot, which serves the slot's web and
+// Convex on the tailnet; the grant and test it returns are pasted into the tailnet policy by hand (no policy API).
+// Results and typed accounts live in S, so a re-render or a new selection repaints them.
+// A result shows where it was asked for: the Wins and Factory strips, or a pane item with its inspector copy.
+function ssKey(box){return(box.closest(".win-c,.fx")?"strip ":"item ")+box.dataset.slot+" "+box.dataset.path;}
+function slotOut(j){const c=(t,l)=>'<button type="button" class="copy-message" data-copy="'+esc(t).replace(/"/g,"&quot;")+'">'+l+"</button>";
+ const g=JSON.stringify(j.grant),t=JSON.stringify(j.test);
+ return"<p><b>Served on the tailnet</b> for "+esc(j.to)+": "+j.serve.map(s=>":"+s.port+" "+esc(s.state)).join(", ")
+  +"; answered over the tailnet name: "+Object.entries(j.checks||{}).map(([k,v])=>esc(k)+" "+esc(v)).join(", ")+".</p>"
+  +'<p class="k">Now by hand, in the tailnet policy file (Tailscale has no policy API here): add the grant under "grants" and the test'
+  +' under "tests", keep the existing grants, save, then send the link.</p>'
+  +'<span class="lbl">grants</span><pre>'+esc(g)+"</pre>"+c(g,"copy grant")
+  +'<span class="lbl">tests</span><pre>'+esc(t)+"</pre>"+c(t,"copy test")
+  +'<span class="lbl">link to send</span><pre>'+esc(j.url)+"</pre>"+c(j.url,"copy link");}
+function paintSlots(){$$(".ss").forEach(box=>{const k=ssKey(box),j=S.slot[k],o=$(".ss-out",box),i=$(".ss-to",box);
+ if(S.ssTo[k]!==undefined&&i!==document.activeElement)i.value=S.ssTo[k];
+ if(j&&!o.dataset.k){o.innerHTML=slotOut(j);o.dataset.k=k;o.hidden=false;}});}
+async function shareSlot(box){const k=ssKey(box),i=$(".ss-to",box),to=i.value.trim();
+ if(!to){toast("TYPE AN ACCOUNT FIRST","acc");i.focus();return;}
+ const b=$(".ss-btn",box);b.disabled=true;b.textContent="serving…";
+ const[r,j]=await postJSON("/api/share/slot",{rid:rid(),slot:+box.dataset.slot,path:box.dataset.path,to});
+ b.disabled=false;b.textContent=b.dataset.l||"share slot";
+ if(r&&r.ok){S.slot[k]=j;$$(".ss-out").forEach(o=>{delete o.dataset.k;});paintSlots();toast("SLOT SERVED, PASTE THE GRANT");return;}
+ shareFail(r,j,"NOT SERVED");}
+document.addEventListener("input",ev=>{const i=ev.target.closest&&ev.target.closest(".ss-to");if(i)S.ssTo[ssKey(i.closest(".ss"))]=i.value;});
 async function poll(){if(!$("#hud").dataset.token)return;try{const r=await fetch("/api/answers",{cache:"no-store"});if(!r.ok)return;
  const j=await r.json(),prev=S.ans;S.ans={};(j.answers||[]).forEach(a=>{S.ans[a.key]=a;const p=prev[a.key];if(!S.fed||!p)return;
   if(a.state==="answered"&&p.state!=="answered")toast("MAIN REPLIED");else if(a.state==="seen"&&p.state==="received")toast("MAIN READ IT");});
@@ -1227,8 +1260,9 @@ async function poll(){if(!$("#hud").dataset.token)return;try{const r=await fetch
 async function refresh(){try{const r=await fetch(location.href,{cache:"no-cache"});if(!r.ok)throw 0;const t=await r.text();
  const m=t.match(/data-rendered="(\d+)"/);if(m&&m[1]!==document.body.dataset.rendered)apply(t);}catch{$("#live").classList.add("off");}}
 document.addEventListener("keydown",ev=>{const i=ev.target.closest&&ev.target.closest(".answer input");
- if(i&&ev.key==="Enter"&&!ev.isComposing){ev.preventDefault();sendText(i.closest(".answer"));}});
-addEventListener("keydown",ev=>{if(ev.target.closest&&ev.target.closest(".answer"))return;
+ if(i&&ev.key==="Enter"&&!ev.isComposing){ev.preventDefault();sendText(i.closest(".answer"));}
+ const s=ev.target.closest&&ev.target.closest(".ss-to");if(s&&ev.key==="Enter"&&!ev.isComposing){ev.preventDefault();shareSlot(s.closest(".ss"));}});
+addEventListener("keydown",ev=>{if(ev.target.closest&&ev.target.closest(".answer,.ss"))return;
  if(ev.target===q){if(ev.key==="Escape"){q.value="";filter("");q.blur();}
   else if(ev.key==="Enter"||ev.key==="ArrowDown"){q.blur();}return;}
  if(ev.metaKey||ev.altKey||(ev.ctrlKey&&!"du".includes(ev.key)))return;
@@ -1262,6 +1296,7 @@ document.addEventListener("click",ev=>{const b=ev.target.closest("button.copy-co
  const shb=ev.target.closest(".sh-btn");if(shb){if(armed(shb,"tap to share"))share(shb.closest(".share"));return;}
  const shc=ev.target.closest(".sh-copy");if(shc){copyText(shc.dataset.url).then(()=>toast("LINK COPIED"),()=>toast("COPY FAILED","acc"));return;}
  const shr=ev.target.closest(".sh-rev");if(shr){if(armed(shr,"tap to revoke"))unshare(shr.closest(".shr"));return;}
+ const ssb=ev.target.closest(".ss-btn");if(ssb){if(armed(ssb,"tap to serve"))shareSlot(ssb.closest(".ss"));return;}
  const it=ev.target.closest(".pane .it");if(it&&!ev.target.closest("a,button,input,.det")){const i=panes.indexOf(it.closest(".pane"));
   if(MOB.matches){if(it.classList.toggle("open"))S.open.add(it.dataset.key);else S.open.delete(it.dataset.key);}
   S.pane=i;S.sel[i]=it.dataset.key;show(false);}});
@@ -1381,6 +1416,42 @@ def render(paths, reason):
                 f'<a class="sh-url" href="{e(rec["url"])}" target="_blank" rel="noopener" title="{e(rec["url"])}">{e(rec["url"])}</a>'
                 f'<button type="button" class="sh-copy" data-url="{e(rec["url"])}">copy link</button></span>')
 
+    # Share a local Pilot slot (bin/fm-share.sh share-slot): a card that names a link to a Pilot slot's web on this
+    # machine (its own port, or a tailnet port a serve entry proxies to it) gets a control that serves that slot on
+    # the tailnet for one account and shows the grant to paste.
+    slot_offers, slot_accounts, served_cache = {}, [], []
+
+    def served():
+        if not served_cache:
+            served_cache.append(fm_share.served_slot_ports())
+        return served_cache[0]
+
+    def slot_ctl(*texts):
+        if not answers_on:
+            return ""
+        found = {}
+        for text in texts:
+            for url in fm_md.URL_RE.findall(html.unescape(str(text or ""))):
+                hit = fm_share.pilot_link(url.rstrip(".,;:!?*)"), here, served)
+                if hit:
+                    found.setdefault(hit[0], hit[1])
+        if found and not slot_offers:
+            slot_accounts.extend(fm_share.tailnet_accounts())
+        out = []
+        for slot, path in sorted(found.items()):
+            offered = slot_offers.setdefault(str(slot), [])
+            if path not in offered:
+                offered.append(path)
+            to = f' value="{e(slot_accounts[0])}"' if len(slot_accounts) == 1 else ""
+            out.append(f'<div class="ss" data-slot="{slot}" data-path="{e(path)}"><span class="lbl">Pilot slot {slot}</span>'
+                       f'<input class="ss-to" list="ss-accounts" placeholder="account, like name@github"{to} '
+                       'autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Tailnet account to share with">'
+                       '<button type="button" class="ss-btn">share slot</button>'
+                       '<p class="k">Serves this slot\'s web and Convex on the tailnet and shows the grant for that account. '
+                       'Pasting the grant into the tailnet policy stays a step you do by hand: Tailscale has no policy API here.</p>'
+                       '<div class="ss-out" hidden></div></div>')
+        return "".join(out)
+
     def docs(*tasks):
         return docs_line([p for t in dict.fromkeys(t for t in tasks if t) for p in task_docs(t, page_dir, doc_cache)],
                          lambda href, name: share_ctl(href, href[:-5] if href.endswith(".html") else href))
@@ -1411,7 +1482,7 @@ def render(paths, reason):
                + chips(age(asked, now, "asked "), e(str(host)), e(who) if who != task else "", f"<code>{e(key)}</code>" if key else "",
                        f'not re-checked · {age(checked, now, "checked ")}' if stale else "")
                + f'<div class="why">{fm_md.inline(str(n.get("why", "")))}</div>{need_actions(n, bool(ans))}{ans}'
-               + docs(task, who))
+               + docs(task, who) + slot_ctl(n.get("why"), link, n.get("do")))
         return item_div("need:" + (task or str(n["t"])), row, det, href=link if re.match(r"https?://", link) else "",
                         task=task, cls=heat(asked) + (" dim" if stale else ""))
     needs_now, needs_stale, curated_tasks, asks = [], [], set(), []
@@ -1448,7 +1519,7 @@ def render(paths, reason):
         row = f'<span class="mk"></span><span class="t">{e(title)}</span><span class="m">{until or age(c["asked"], now)}</span>'
         det = (f"<h2>{e(title)}</h2>" + chips(age(c["asked"], now, "asked "), note, until, f'<code>{e(c["id"])}</code>')
                + f'<div class="why">{linked_words(reason, 260)}</div>'
-               + (ans or '<p class="k">Answer it by telling Main.</p>') + docs(c["id"]))
+               + (ans or '<p class="k">Answer it by telling Main.</p>') + docs(c["id"]) + slot_ctl(reason))
         return item_div("call:" + c["id"], row, det, href=fm_md.first_url(re.sub(r"\S*data/\S+", "", reason)), task=c["id"],
                         cls=cls or heat(c["asked"]))
     for c in fresh_calls:
@@ -1491,7 +1562,7 @@ def render(paths, reason):
             ('<span class="tag">paused</span>' if r["verb"] == "paused" else "")
         row = f'<span class="mk"></span><span class="t">{e(r["title"])}</span><span class="m">{age(as_of, now)}</span>'
         det = (f'<h2>{e(r["title"])}</h2>' + chips(pr, e(r["host"]), age(as_of, now, "said "), f'<code>{e(r["task"])}</code>')
-               + f'<div class="st">{tags}{e(text)}</div>' + docs(r["task"]))
+               + f'<div class="st">{tags}{e(text)}</div>' + docs(r["task"]) + slot_ctl(r["note"], text))
         cls = "dim" if r["verb"] in PARKED_VERBS else "heat2" if r["task"] in open_by_task else "heat1"
         return item_div("run:" + r["task"], row, det, href=r["pr"], task=r["task"], cls=cls)
     shown = [r for r in rows if r["task"] not in cur["hide"]]
@@ -1505,7 +1576,7 @@ def render(paths, reason):
     items, _others = completions(cur, merged, done, rows, repos, viewer, now)
     done_today = [x for x in items if x["today"]]
     for x in done_today:
-        x["docs"] = docs(x.get("task", ""))
+        x["docs"] = docs(x.get("task", "")) + slot_ctl(x.get("url"))
 
     banners = []
     if cur["error"]:
@@ -1567,7 +1638,8 @@ def render(paths, reason):
                         if isinstance(lk, dict) and re.match(r"https://|#batch-[\w-]+$", str(lk.get("url", ""))))
         inline, below = (ans, "") if opts else ("", ans)
         step = do_block(str(f.get("do") or ""), "fx-do")
-        detail = f'<div class="fx-w">{fm_md.inline(why)}{step}{below}</div>' if why or below or step else ""
+        ss = slot_ctl(why, *[lk.get("url") for lk in f.get("links") or [] if isinstance(lk, dict)])
+        detail = f'<div class="fx-w">{fm_md.inline(why)}{step}{below}{ss}</div>' if why or below or step or ss else ""
         key = str(f.get("key") or task or answers.answer_key(task, title))
         return (f'<div class="fx" data-task="{e(task)}" data-k="{e(answers.answer_key(task, title))}">'
                 f'<span class="fx-q{" has-w" if detail else ""}" title="{e(why or title)}">{e(title)}</span>'
@@ -1604,7 +1676,7 @@ def render(paths, reason):
         card = (f'<a class="win" href="{e(str(w["url"]))}" target="_blank" rel="noopener"><b>{e(str(w["t"]))}</b>'
                 f'<span class="why">{e(str(w.get("why", "")))}</span>'
                 f'<span class="m">{e(str(w.get("kind") or fm_md.link_label(str(w["url"]))))} &#8599;</span></a>')
-        ctl = share_ctl(str(w["url"]), str(w["t"]))
+        ctl = share_ctl(str(w["url"]), str(w["t"])) + slot_ctl(w["url"], w.get("why"))
         return f'<div class="win-c">{card}{ctl}</div>' if ctl else card
     wins = "".join(win_card(w) for w in cur["wins"])
 
@@ -1677,12 +1749,14 @@ def render(paths, reason):
         '<span class="sp"></span><span class="lbl">cleared this session <b id="cleared">0</b></span></div>'
         f'<div class="overlay" id="help" hidden><div class="box"><h2>Keys</h2><div class="keys">{keys_help}</div></div></div>'
         f'<div class="overlay" id="log" hidden data-swap><div class="box"><h2>Keeper log</h2>{notes_html}</div></div>'
-        + batches + inbox +
-        '<div id="toasts"></div>'
+        + batches + inbox
+        + ('<datalist id="ss-accounts" data-swap>' + "".join(f'<option value="{e(a)}">' for a in slot_accounts) + "</datalist>"
+           if slot_offers else "")
+        + '<div id="toasts"></div>'
         f"<script>{PAGE_JS}</script>{fm_md.LINEAR_CARD}</body></html>")
     if answers_on:   # decisions first, so a tap on the new page never meets the previous render's revisions
         answers.write_decisions(decisions, now)
-        answers.write_shareables(shareables, now)
+        answers.write_shareables(shareables, now, slot_offers)
     write_atomic(paths["out"], page)
     return {"needs": len(needs_now), "stale_needs": len(needs_stale), "running": len(running),
             "done_today": len(done_today), "older_calls": len(older_calls), "forge": forge_state}

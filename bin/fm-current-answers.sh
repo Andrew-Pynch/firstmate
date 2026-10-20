@@ -54,8 +54,14 @@
 #                   without share_origin.
 #   POST /share/revoke {"rid", "token"}: bin/fm-share.sh's revoke -> 200, or 404 for
 #                   an unknown token.
+#   POST /share/slot {"rid", "slot", "path", "to"}: bin/fm-share.sh's share-slot for a
+#                   Pilot slot and path a card on the latest render offered (the
+#                   "slots" map in shareables.json) and one tailnet account -> 200
+#                   {"state":"served", "url", "grant", "test", "serve", ...}. 409 when
+#                   that link left the page, 400 for a bad account, 502 when the slot
+#                   cannot be shared (not up, port served another way, no answer).
 #
-# Security contract for every POST (/answer, /note, /share, /share/revoke), each check
+# Security contract for every POST (/answer, /note, /share, /share/revoke, /share/slot), each check
 # refusing before anything is queued or published:
 #   - same origin: Origin must equal answers_origin (Referer under it when no Origin
 #     is sent), and Sec-Fetch-Site, when sent, must be same-origin -> else 403;

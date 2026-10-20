@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """fm_share.py - explicit share links: publish a snapshot of one artifact under an unguessable token, list the
-live shares, revoke one, and serve only the shared files.
+live shares, revoke one, and serve only the shared files; and share one running local Pilot slot with one
+tailnet account (share-slot).
 
 bin/fm-share.sh's header owns usage, configuration, layout, and the serving contract. The Deck renderer
 (bin/fm-current-page.py) and its endpoint (bin/fm_current_answers.py) import this module, so the page, its
@@ -14,9 +15,13 @@ import os
 import re
 import secrets
 import shutil
+import socket
+import subprocess
 import sys
 import time
+import urllib.error
 import urllib.parse
+import urllib.request
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 CODE_ROOT = os.path.dirname(SCRIPT_DIR)
@@ -311,6 +316,245 @@ def serve():
     return 0
 
 
+# ---------- Pilot slots ----------
+# The local Pilot stack (pilot/scripts/up.sh in the monorepo) runs slot N, N in 0..4, on fixed ports: web
+# 5173 + 100 * N and Convex 3210 + 100 * N. Its web app gives the browser a Convex URL; a loopback one is
+# rewritten to the page's own host name with the same scheme and port (pilot/apps/web/src/convexUrl.ts), so a
+# viewer on the tailnet reaches both only when both ports answer on this machine's tailnet name over plain http.
+
+PILOT_SLOTS = range(5)
+ACCOUNT_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]{0,63}@[A-Za-z0-9][A-Za-z0-9.-]{0,63}")
+LOOPBACK = ("127.0.0.1", "localhost", "::1")
+DENY_PORTS = (22, 443, 8449)   # the policy tests: SSH, the tailnet https front, and the Deck stay closed to the account
+
+
+class SlotError(ShareError):
+    """The slot cannot be shared: it is not up, a port is served another way, or the tailnet path does not answer."""
+
+
+def slot_ports(slot):
+    """(web, Convex) ports of one Pilot slot. FM_SHARE_PILOT_PORT_OFFSET moves both, for tests only."""
+    offset = int(os.environ.get("FM_SHARE_PILOT_PORT_OFFSET") or 0)
+    return offset + 5173 + 100 * slot, offset + 3210 + 100 * slot
+
+
+def pilot_link(url, host, served=None):
+    """(slot, path) when url opens a Pilot slot's web on this machine, else None.
+
+    A slot's web port on loopback or this host's name counts, and so does another port on this host's name that a
+    tailscale serve entry proxies to a slot's web port; served() returns that {port: slot} map and is only called
+    for such a link.
+    """
+    try:
+        parts = urllib.parse.urlsplit(str(url).strip())
+        port = parts.port
+    except ValueError:
+        return None
+    name, host = (parts.hostname or "").lower(), str(host or "").lower()
+    if parts.scheme not in ("http", "https") or port is None:
+        return None
+    named = bool(host) and (name == host or name.startswith(host + "."))
+    if name not in LOOPBACK and not named:
+        return None
+    path = (parts.path or "/") + ("?" + parts.query if parts.query else "") + ("#" + parts.fragment if parts.fragment else "")
+    for slot in PILOT_SLOTS:
+        if slot_ports(slot)[0] == port:
+            return slot, path
+    slot = (served() or {}).get(port) if named and served else None
+    return (slot, path) if slot is not None else None
+
+
+def served_slot_ports():
+    """{tailnet port: slot} for each tailscale serve entry whose / proxies a Pilot slot's web port; {} on any failure."""
+    try:
+        status = _serve_status()
+    except ShareError:
+        return {}
+    webs = {slot_ports(s)[0]: s for s in PILOT_SLOTS}
+    out = {}
+    for hostport, cfg in (status.get("Web") or {}).items() if isinstance(status, dict) else ():
+        target = str((((cfg or {}).get("Handlers") or {}).get("/") or {}).get("Proxy") or "")
+        m = re.fullmatch(r"http://(?:127\.0\.0\.1|localhost):(\d+)/?", target)
+        port = str(hostport).rsplit(":", 1)[-1]
+        if m and int(m.group(1)) in webs and port.isdigit():
+            out[int(port)] = webs[int(m.group(1))]
+    return out
+
+
+def _tailscale(*args):
+    exe = shutil.which("tailscale")
+    if not exe:
+        raise SlotError("tailscale is not installed on this machine")
+    try:
+        res = subprocess.run([exe, *args], capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise SlotError(f"tailscale {' '.join(args)}: {exc}")
+    if res.returncode != 0:
+        raise SlotError(f"tailscale {' '.join(args)} failed: {(res.stderr or res.stdout).strip()[:300]}")
+    return res.stdout
+
+
+def tailnet_self():
+    """This machine on the tailnet: its MagicDNS name and its machine name (the policy's host name for it)."""
+    try:
+        dns = str(json.loads(_tailscale("status", "--self", "--json"))["Self"]["DNSName"]).rstrip(".").lower()
+    except (ValueError, KeyError, TypeError):
+        raise SlotError("tailscale status gave no MagicDNS name for this machine")
+    if not dns:
+        raise SlotError("this machine has no MagicDNS name; turn MagicDNS on for the tailnet")
+    return {"dns": dns, "name": dns.split(".")[0]}
+
+
+def tailnet_accounts():
+    """The login names tailscale knows besides this machine's own user, sorted; [] when tailscale cannot say."""
+    try:
+        d = json.loads(_tailscale("status", "--json"))
+        me = str(d["Self"]["UserID"])
+        return sorted({str(u.get("LoginName")) for k, u in (d.get("User") or {}).items()
+                       if str(k) != me and ACCOUNT_RE.fullmatch(str(u.get("LoginName") or ""))})
+    except (ShareError, ValueError, KeyError, TypeError, AttributeError):
+        return []
+
+
+def _listening(port):
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=2):
+            return True
+    except OSError:
+        return False
+
+
+def _status_code(url):
+    try:
+        with urllib.request.urlopen(url, timeout=15) as res:
+            return res.status
+    except urllib.error.HTTPError as exc:
+        return exc.code
+    except (OSError, ValueError):
+        return None
+
+
+def pilot_backend(web):
+    """The Convex URL the slot's web app gives the browser, read from its dev bundle; '' when it uses the page origin."""
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{web}/src/main.tsx", timeout=15) as res:
+            text = res.read(4_000_000).decode("utf-8", "replace")
+    except (OSError, ValueError) as exc:
+        raise SlotError(f"the web app on 127.0.0.1:{web} did not serve its Pilot bundle (/src/main.tsx): {exc}")
+    env = {k: v for k, v in re.findall(r'"(VITE_CONVEX_(?:URL|DEFAULT_URL|SAME_ORIGIN))":\s*"([^"]*)"', text)}
+    if not env:
+        raise SlotError(f"the web app on 127.0.0.1:{web} is not a Pilot dev server (no Convex URL in /src/main.tsx)")
+    if env.get("VITE_CONVEX_SAME_ORIGIN") == "1":
+        return ""
+    raw = env.get("VITE_CONVEX_URL") or env.get("VITE_CONVEX_DEFAULT_URL") or ""
+    if not raw:
+        raise SlotError(f"the web app on 127.0.0.1:{web} names no Convex URL")
+    return raw
+
+
+def browser_backend(raw, me):
+    """Where a tailnet viewer's browser sends Convex traffic: {url, port, serve}; port None for another machine."""
+    try:
+        p = urllib.parse.urlsplit(raw)
+        port = p.port or (443 if p.scheme == "https" else 80)
+    except ValueError:
+        raise SlotError(f"the web app's Convex URL {raw} does not parse")
+    host = (p.hostname or "").lower()
+    if host in LOOPBACK:
+        if p.scheme != "http":
+            raise SlotError(f"the web app's Convex URL {raw} is loopback https, which no tailnet serve can stand in for")
+        return {"url": f"http://{me['dns']}:{port}", "port": port, "serve": True}
+    if host in (me["dns"], me["name"]):
+        return {"url": f"{p.scheme}://{p.netloc}", "port": port, "serve": False}
+    return {"url": f"{p.scheme}://{p.netloc}", "port": None, "serve": False}
+
+
+def _serve_entry(status, dns, port):
+    """'present' when port is served over http to the same loopback port, None when unserved, else what is there."""
+    tcp = (status.get("TCP") or {}).get(str(port))
+    if not tcp:
+        return None
+    handlers = ((status.get("Web") or {}).get(f"{dns}:{port}") or {}).get("Handlers") or {}
+    target = (handlers.get("/") or {}).get("Proxy")
+    if tcp.get("HTTP") and target == f"http://127.0.0.1:{port}" and len(handlers) == 1:
+        return "present"
+    scheme = "https" if tcp.get("HTTPS") else "http" if tcp.get("HTTP") else "tcp"
+    return f"{scheme} to {target or tcp.get('TCPForward') or 'something else'}"
+
+
+def _serve_status():
+    out = _tailscale("serve", "status", "--json").strip()
+    try:
+        return json.loads(out) if out else {}
+    except ValueError:
+        raise SlotError("tailscale serve status --json did not print JSON")
+
+
+def ensure_serve(port, dns):
+    """Serve 127.0.0.1:port on the tailnet name at the same port over http; 'present' or 'added'."""
+    found = _serve_entry(_serve_status(), dns, port)
+    if found == "present":
+        return "present"
+    if found:
+        raise SlotError(f"tailnet port {port} is already served ({found}); a Pilot slot needs plain http to "
+                        f"127.0.0.1:{port}. Free it with `tailscale serve --{found.split()[0]}={port} off` if it is stale")
+    _tailscale("serve", "--bg", f"--http={port}", f"http://127.0.0.1:{port}")
+    if _serve_entry(_serve_status(), dns, port) != "present":
+        raise SlotError(f"tailscale serve did not take port {port}")
+    return "added"
+
+
+def share_slot(slot, to, path="/"):
+    """Serve one running Pilot slot's web and Convex ports on the tailnet and return the grant, tests, and link."""
+    if not isinstance(slot, int) or isinstance(slot, bool) or slot not in PILOT_SLOTS:
+        raise ShareError(f"a Pilot slot is 0 to {PILOT_SLOTS[-1]}")
+    to = str(to or "").strip()
+    if not ACCOUNT_RE.fullmatch(to):
+        raise ShareError("--to takes one tailnet account such as name@github (never autogroup:shared)")
+    path = str(path or "/")
+    if not re.fullmatch(r"/[^\s\"'<>\\`]{0,1000}", path):
+        raise ShareError("a path starts with / and has no spaces or quotes")
+    web, convex = slot_ports(slot)
+    if not _listening(web):
+        raise SlotError(f"Pilot slot {slot} is not up: nothing listens on 127.0.0.1:{web}")
+    raw = pilot_backend(web)
+    me = tailnet_self()
+    backend = browser_backend(raw, me) if raw else {"url": f"http://{me['dns']}:{web}", "port": None, "serve": False}
+    if backend["serve"] and not _listening(backend["port"]):
+        raise SlotError(f"the slot's web app sends Convex traffic to {raw}, and nothing listens on 127.0.0.1:{backend['port']}")
+    serves = [{"port": web, "state": ensure_serve(web, me["dns"])}]
+    if backend["serve"] and backend["port"] != web:
+        serves.append({"port": backend["port"], "state": ensure_serve(backend["port"], me["dns"])})
+    ports = [web] + ([backend["port"]] if backend["port"] not in (None, web) else [])
+    url = f"http://{me['dns']}:{web}{path}"
+    checks = {"web": _status_code(f"http://{me['dns']}:{web}/")}
+    if raw:
+        checks["convex"] = _status_code(backend["url"] + "/version")
+    bad = {k: v for k, v in checks.items() if v != 200}
+    if bad:
+        raise SlotError("served, but over the tailnet name from this machine "
+                        + ", ".join(f"{k} answered {v or 'nothing'}" for k, v in bad.items()))
+    host = me["name"]
+    return {
+        "slot": slot, "to": to, "web_port": web, "convex_port": convex, "backend": backend["url"],
+        "serve": serves, "url": url, "checks": checks,
+        "grant": {"src": [to], "dst": [host], "ip": [f"tcp:{p}" for p in ports]},
+        "test": {"src": to, "accept": [f"{host}:{p}" for p in ports], "deny": [f"{host}:{p}" for p in DENY_PORTS]},
+    }
+
+
+def slot_text(res):
+    """share-slot's printout: what is served, the link to send, and the two policy blocks to paste by hand."""
+    lines = [f"Pilot slot {res['slot']}: web 127.0.0.1:{res['web_port']}, its browser talks to Convex at {res['backend']}"]
+    lines += [f"  tailscale serve http :{s['port']} -> 127.0.0.1:{s['port']} ({s['state']})" for s in res["serve"]]
+    lines += ["  checked over the tailnet name from here: " + ", ".join(f"{k} {v}" for k, v in res["checks"].items()), "",
+              "Paste by hand into the tailnet policy file (there is no policy API here), keeping every existing grant:",
+              '  under "grants":', "    " + json.dumps(res["grant"]) + ",",
+              '  under "tests":', "    " + json.dumps(res["test"]) + ",", "",
+              f"Then send {res['to']} this link:", f"  {res['url']}"]
+    return "\n".join(lines)
+
+
 # ---------- command line ----------
 
 def _when(ts):
@@ -356,11 +600,29 @@ def main(argv):
             return 0
         if verb == "serve" and not args:
             return serve()
+        if verb == "share-slot":
+            to, path = None, "/"
+            for flag in ("--to", "--path"):
+                if flag in args:
+                    i = args.index(flag)
+                    if i + 1 >= len(args):
+                        raise ShareError(f"{flag} needs a value")
+                    to, path = (args[i + 1], path) if flag == "--to" else (to, args[i + 1])
+                    del args[i:i + 2]
+            if len(args) != 1 or not args[0].isdigit() or to is None:
+                raise ShareError("usage: fm-share.sh share-slot <pilot-slot> --to <account> [--path /p] [--json]")
+            try:
+                res = share_slot(int(args[0]), to, path)
+            except SlotError as exc:
+                print(f"fm-share: {exc}", file=sys.stderr)
+                return 1
+            print(json.dumps(res, ensure_ascii=False) if as_json else slot_text(res))
+            return 0
     except ShareError as exc:
         print(f"fm-share: {exc}", file=sys.stderr)
         return 2
-    print("fm-share: usage: fm-share.sh add <path> [--label <text>] | list | revoke <token> | serve (see --help)",
-          file=sys.stderr)
+    print("fm-share: usage: fm-share.sh add <path> [--label <text>] | list | revoke <token> | serve"
+          " | share-slot <pilot-slot> --to <account> (see --help)", file=sys.stderr)
     return 2
 
 

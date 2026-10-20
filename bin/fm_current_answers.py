@@ -106,12 +106,12 @@ def write_decisions(decisions, now):
     os.replace(tmp, DECISIONS)
 
 
-def write_shareables(items, now):
-    """Publish the artifacts one render offers a share button on: {artifact: {path, label}}."""
+def write_shareables(items, now, slots=None):
+    """Publish what one render offers to share: artifacts {artifact: {path, label}}, Pilot slots {slot: [paths]}."""
     os.makedirs(PRIVATE, exist_ok=True)
     tmp = SHAREABLES + f".tmp{os.getpid()}"
     with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump({"rendered": int(now), "items": items}, fh, ensure_ascii=False)
+        json.dump({"rendered": int(now), "items": items, "slots": slots or {}}, fh, ensure_ascii=False)
     os.replace(tmp, SHAREABLES)
 
 
@@ -241,10 +241,10 @@ def read_decisions():
         return None
 
 
-def read_shareables():
+def read_shareables(key="items"):
     try:
         with open(SHAREABLES, encoding="utf-8") as fh:
-            return json.load(fh).get("items") or {}
+            return json.load(fh).get(key) or {}
     except (OSError, ValueError, AttributeError):
         return None
 
@@ -430,6 +430,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self.post_share()
         if route == "/share/revoke":
             return self.post_revoke()
+        if route == "/share/slot":
+            return self.post_share_slot()
         return self.send(404, {"error": "not found"})
 
     def post_share(self):
@@ -463,6 +465,27 @@ class Handler(http.server.BaseHTTPRequestHandler):
         except OSError as exc:
             return self.send(500, {"error": "revoke", "detail": str(exc)[:200]})
         self.send(200 if found else 404, {"state": "revoked" if found else "unknown", "token": token})
+
+    def post_share_slot(self):
+        """Serve one Pilot slot a card on the latest render offered for one account; answer with the grant to paste."""
+        req, _ = self.read_post("slot shares")
+        if req is None:
+            return
+        offered = read_shareables("slots")
+        if offered is None:
+            return self.send(503, {"error": "shareables", "detail": "the page has not published its Pilot slots"})
+        slot, path = req.get("slot"), str(req.get("path") or "")
+        if not isinstance(slot, int) or isinstance(slot, bool) or path not in (offered.get(str(slot)) or []):
+            return self.send(409, {"error": "gone", "detail": "that Pilot link is no longer on the page; refreshing"})
+        if not fm_share.ACCOUNT_RE.fullmatch(str(req.get("to") or "").strip()):
+            return self.send(400, {"error": "account", "detail": "one tailnet account, like name@github"})
+        try:
+            res = fm_share.share_slot(slot, str(req["to"]), path)
+        except fm_share.SlotError as exc:
+            return self.send(502, {"error": "slot", "detail": str(exc)[:300]})
+        except fm_share.ShareError as exc:
+            return self.send(400, {"error": "slot", "detail": str(exc)[:300]})
+        self.send(200, {"state": "served", **res})
 
     def post_note(self):
         req, _ = self.read_post("notes")

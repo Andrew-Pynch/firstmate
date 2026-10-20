@@ -111,6 +111,16 @@
 # and revoke. Each render publishes the artifacts it offered to
 # state/.current-page/shareables.json, and the endpoint shares nothing else.
 #
+# Share a Pilot slot: with answers_origin set, every card that names a link to a
+# local Pilot slot's web port on this machine (5173+100N on loopback or this host's
+# name; bin/fm-share.sh's share-slot owns the mapping) carries a "share slot"
+# control with an account field (suggesting the tailnet's other accounts). A first
+# tap arms it and a second runs share-slot through POST /share/slot: the slot's web
+# and Convex are served on the tailnet, and the control shows the grant and policy
+# test to paste and the link to send, each with a copy button. The control says on
+# the page that the paste stays a human step, because there is no tailnet policy
+# API. The same shareables.json lists the slots and paths each render offered.
+#
 # Keeper contract: exactly one keeper (an Opus worker) edits only the curated file
 # and the notes file, re-checking every need at least every FM_CURRENT_PAGE_CONFIRM_HOURS.
 #

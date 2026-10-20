@@ -116,6 +116,8 @@
 #          Wins: only calls whose answer releases running work. "t": the one-line
 #          question; "unblocks": what the answer releases (about 6 words);
 #          "options": answer buttons inline (same answer path as Needs you);
+#          a row without options takes a typed answer instead; "why": the
+#          detail a click on the question opens (with that typed answer);
 #          "links": [{"label", "url"}] when the answer happens elsewhere. A row
 #          tied to a "task" leaves the band when that row stops being an open
 #          captain hold.

@@ -2355,6 +2355,7 @@ test_nonterminal_stale_provably_working_absorbed_then_escalated() {
 }
 
 
+
 # --- a record whose agent is GONE reports once, instead of alarming forever ---
 # Observed on a live fleet: two finished lanes reached 226 and 203 CONSECUTIVE
 # wedge escalations, one alarm roughly every FM_STALE_ESCALATE_SECS, indefinitely -
@@ -4680,6 +4681,7 @@ test_afk_paused_changed_pane_hands_off_plain_stale() {
     || fail "AFK paused stale was not queued with the plain window identity"
   pass "AFK changed paused panes hand off plain stale identities for daemon-owned pause triage"
 }
+
 
 
 

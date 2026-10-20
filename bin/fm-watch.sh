@@ -16,6 +16,8 @@
 # beyond FM_PAUSE_RESURFACE_SECS cannot extend the ordinary recheck cadence, and
 # while an away record (state/.afk-contract, never quiet mode's) exists an
 # item held for the captain is never rechecked at all, in either posture.
+# Explicit paused declarations naming `declared by Main` or `awaiting external`
+# take that long cadence directly, including for live panes and away mode.
 # While state/.afk exists, the daemon owns triage and this watcher queues and exits
 # on every wake. Printed reason lines:
 #   signal: <file>...      status/turn-end signals, surfaced when a listed status
@@ -4086,6 +4088,16 @@ EOF
     dialog=$(fm_composer_blocking_dialog "$tail40") || dialog=
     [ -n "$dialog" ] || clear_dialog_suffix "$task"
     h=$(printf '%s' "$tail40" | hash_pane)
+    if status_is_paused "$last" &&
+       [[ "$last" = *"declared by Main"* || "$last" = *"awaiting external"* ]]; then
+      # Main has already inspected this wait, or the worker explicitly named
+      # its external dependency. Pane liveness and hash churn cannot turn it
+      # into a new wedge; only the declaration's bounded recheck may wake.
+      printf '%s' "$h" > "$STATE/.hash-$key"
+      printf '0\n' > "$STATE/.count-$key"
+      handle_paused_stale "$w" "$task" "$h"
+      continue
+    fi
     hf="$STATE/.hash-$key"
     cf="$STATE/.count-$key"
     sf="$STATE/.stale-$key"

@@ -328,12 +328,15 @@ if [ "$KIND" = ship ]; then
   # A Forgejo project's pull requests are handled with tea, so the ship brief's
   # forge-CLI rule names it instead of gh-axi; an external review tool has no
   # forge CLI at all; every other forge keeps gh-axi.
+  # The browser rule is the same for every forge: workers use the built-in
+  # browser tool and never open a window on the captain's desktop.
+  BROWSER_RULE="For browser work use only the built-in browser tool (browser.open for managed Chromium, or app.cdp_url to attach to an existing endpoint); never chrome-devtools-axi or chrome-devtools-mcp, and never open a window or tab on the captain's desktop unless this brief says to."
   if [ "$FORGE" = forgejo ]; then
-    FORGE_RULE_LINE="Use tea for Forgejo operations and chrome-devtools-axi for browser operations."
+    FORGE_RULE_LINE="Use tea for Forgejo operations. $BROWSER_RULE"
   elif [ "$FORGE" = external ]; then
-    FORGE_RULE_LINE="Publish only through the review tool your Definition of done names, and use chrome-devtools-axi for browser operations."
+    FORGE_RULE_LINE="Publish only through the review tool your Definition of done names. $BROWSER_RULE"
   else
-    FORGE_RULE_LINE="Use gh-axi for GitHub operations and chrome-devtools-axi for browser operations."
+    FORGE_RULE_LINE="Use gh-axi for GitHub operations. $BROWSER_RULE"
   fi
 elif [ "$FORGE_SET" -eq 1 ] || [ "$SHAPE_SET" -eq 1 ]; then
   echo "error: --forge and --shape apply only to ship briefs; a scout delivers a report and a secondmate charter is not a delivery contract" >&2
@@ -715,7 +718,7 @@ The report is the only thing that survives, so anything worth keeping must be in
 # Rules
 1. Never push to any remote and never open a PR.
 2. Stay inside this worktree; outside it, write only the report and status file below, except for the task's empty-inventory attestation through \`fm-captain-hold.sh complete --none\`, exactly as specified under Definition of done.
-3. Use gh-axi for GitHub operations and chrome-devtools-axi for browser operations.
+3. Use gh-axi for GitHub operations. For browser work use only the built-in browser tool (browser.open for managed Chromium, or app.cdp_url to attach to an existing endpoint); never chrome-devtools-axi or chrome-devtools-mcp, and never open a window or tab on the captain's desktop unless this brief says to.
 4. Report status by appending one line:
    \`$STATUS_APPEND\`
    States: working, needs-decision, blocked, $PAUSED_VERB, done, failed.

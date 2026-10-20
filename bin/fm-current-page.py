@@ -316,7 +316,7 @@ def open_decisions():
 def parse_curated(path):
     """The keeper's curated JSON; bin/fm-current-page.sh's header owns the field list."""
     empty = {"checked": None, "needs": [], "why": {}, "mates": {}, "plain": {}, "hide": set(),
-             "initiatives": [], "completed": [], "links": [], "wins": [], "error": ""}
+             "initiatives": [], "completed": [], "links": [], "wins": [], "factory": [], "error": ""}
     try:
         with open(path, encoding="utf-8") as fh:
             data = json.load(fh)
@@ -343,6 +343,7 @@ def parse_curated(path):
                       for n in data.get("links") or [] if isinstance(n, dict) and re.match(r"https://", str(n.get("url", "")))],
             "wins": [n for n in data.get("wins") or [] if isinstance(n, dict) and str(n.get("t", "")).strip()
                      and re.match(r"https?://", str(n.get("url", "")))][:10],
+            "factory": [n for n in data.get("factory") or [] if isinstance(n, dict) and str(n.get("t", "")).strip()][:8],
             "error": ""}
 
 
@@ -482,17 +483,19 @@ def decision_options(text):
     return [], None
 
 
-def answer_block(key, rev, options, rec):
-    """Option buttons plus a one-line text box; the page script posts the tap and paints its receipt here."""
+def answer_block(key, rev, options, rec, title="", compact=False):
+    """Option buttons plus a one-line text box (buttons only when compact); the page script posts the tap and paints its receipt here."""
     buttons = "".join(
         f'<button type="button" class="ans-btn{" rec" if o == rec else ""}" data-opt="{e(o)}">{e(o)}'
-        f'{"<small>recommended</small>" if o == rec else ""}</button>' for o in options)
-    return (f'<div class="answer" data-ans="{e(key)}" data-rev="{e(rev)}">'
-            + (f'<div class="ans-opts">{buttons}</div>' if buttons else "")
-            + f'<div class="ans-text"><input type="text" maxlength="{answers.MAX_TEXT}" enterkeyhint="send" autocomplete="off" '
+        f'{"<small>recommended</small>" if o == rec and not compact else ""}</button>' for o in options)
+    text = ("" if compact else
+            f'<div class="ans-text"><input type="text" maxlength="{answers.MAX_TEXT}" enterkeyhint="send" autocomplete="off" '
             f'placeholder="{"Or type an answer" if options else "Type your answer"}" aria-label="Answer for Main">'
-            '<button type="button" class="ans-send">Send</button></div>'
-            '<div class="receipt" aria-live="polite" hidden></div></div>')
+            '<button type="button" class="ans-send">Send</button></div>')
+    return (f'<div class="answer{" compact" if compact else ""}" data-ans="{e(key)}" data-rev="{e(rev)}"'
+            + (f' data-title="{e(title)}"' if title else "") + ">"
+            + (f'<div class="ans-opts">{buttons}</div>' if buttons else "") + text
+            + '<div class="receipt" aria-live="polite" hidden></div></div>')
 
 
 # ---------- model ----------
@@ -941,6 +944,16 @@ border-radius:var(--r);padding:5px 8px;outline:0}.ans-text input:focus{border-co
 .gl{font:700 11px var(--mono);color:var(--data);margin-right:4px}.gl.wait{color:var(--fg2)}.gl.err{color:var(--alert)}
 .rc-reply{margin:4px 0 2px;padding:6px 8px;border-left:3px solid var(--link);background:rgba(124,196,255,.07);color:var(--fg);
 font:13px/1.5 var(--sans);white-space:pre-wrap;overflow-wrap:anywhere}
+#factory{flex:none;margin:8px 10px 0;padding:5px 10px;border:1px solid var(--alert);border-left:4px solid var(--alert);
+background:linear-gradient(90deg,var(--alert-dim),rgba(255,51,102,.04));border-radius:var(--r)}
+#factory>.lbl{display:block;color:var(--alert);margin-bottom:1px}#factory>.lbl b{color:var(--fg);margin-left:8px}
+.fx{display:flex;align-items:center;gap:12px;min-height:30px;padding:1px 0;border-top:1px solid rgba(255,51,102,.16)}.fx:first-child{border-top:0}
+.fx-q{flex:1;min-width:0;font:600 13.5px var(--sans);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fx-u{flex:none;font:11.5px var(--mono);color:var(--data);white-space:nowrap}
+.fx-a{flex:none;display:flex;gap:10px;align-items:center}.fx-a>a{font:12px var(--mono)}
+.answer.compact{margin:0;padding:0;border:0;background:none;display:flex;align-items:center;gap:8px}
+.answer.compact .ans-opts{margin:0;gap:6px;flex-wrap:nowrap}.answer.compact .ans-btn{padding:2px 10px;font-size:12px}
+.answer.compact .ans-btn.armed::after{display:inline;content:" · tap again"}.answer.compact .receipt{margin:0;max-width:300px}
 .mob{display:none}
 @media (max-width:760px){
 html{-webkit-text-size-adjust:100%}
@@ -975,6 +988,8 @@ button,a.go{min-height:44px;padding:8px 14px;font-size:14px}a.go{display:inline-
 .need-message summary{min-height:44px;display:flex;align-items:center}
 .ans-btn{min-height:52px;flex:1 1 40%;font-size:16px}.ans-text input{min-height:44px;font-size:16px}.ans-send{min-width:84px}
 .receipt{font-size:14px}
+#factory{margin:10px 10px 0}.fx{flex-wrap:wrap;gap:6px 10px;padding:8px 0}.fx-q{flex-basis:100%;white-space:normal;font-size:15px}
+.answer.compact .ans-btn{min-height:40px;flex:0 0 auto;font-size:14px;padding:6px 12px}
 .zero{height:auto;padding:28px 0}
 .overlay .box{min-width:0;width:calc(100vw - 24px);max-height:85vh}.timeline li{white-space:normal}
 #toasts{left:12px;right:12px;bottom:calc(env(safe-area-inset-bottom) + 12px);align-items:stretch}.toast{text-align:center}
@@ -1054,7 +1069,7 @@ function receipt(a,bare){const g=bare?"":glyph(a);
   +" &#183; Main: "+esc(a.reply.split("\n")[0])+'</summary><div class="rc-reply">'+esc(a.reply)+"</div></details>";}
 function tsOf(a){return(Date.parse(a.reply_at||a.at||"")||0)/1000;}
 function paint(){const shown=new Set(),now=Date.now()/1000;
- $$(".answer[data-ans]").forEach(b=>{const k=b.dataset.ans,a=S.sending[k]||S.ans[k],r=$(".receipt",b);if(b.closest(".pane"))shown.add(k);
+ $$(".answer[data-ans]").forEach(b=>{const k=b.dataset.ans,a=S.sending[k]||S.ans[k],r=$(".receipt",b);if(b.closest(".pane,#factory"))shown.add(k);
   b.classList.toggle("busy",!!a&&a.state==="sending");$$(".ans-btn",b).forEach(x=>x.classList.toggle("chosen",!!a&&x.dataset.opt===a.answer));
   r.hidden=!a;if(a){r.classList.toggle("err",a.state==="error");r.innerHTML=receipt(a);}});
  const m=$("#mine");if(!m)return;
@@ -1068,7 +1083,7 @@ function paint(){const shown=new Set(),now=Date.now()/1000;
  $(".mine-list",m).innerHTML=off.map(a=>'<div class="mine"><div class="mh">'+glyph(a)+'<b title="'+esc(a.title)+'">'+esc(a.title)+"</b>"
   +'<span class="m">'+ago(now-tsOf(a))+"</span></div>"+receipt(a,true)+"</div>").join("");}
 async function send(box,pick){const key=box.dataset.ans,said=pick.option||pick.text,id=rid();let r=null,j={};
- const h=box.closest(".det,.body"),title=(h&&h.querySelector("h2")||{}).textContent||key;
+ const h=box.closest(".det,.body"),title=box.dataset.title||(h&&h.querySelector("h2")||{}).textContent||key;
  S.sending[key]={state:"sending",answer:said};paint();
  for(let i=0;i<3&&!r;i++){try{r=await fetch("/api/answer",{method:"POST",credentials:"same-origin",
   headers:{"Content-Type":"application/json","X-FM-Answer-Token":($("#hud").dataset.token||"")},
@@ -1172,7 +1187,7 @@ def render(paths, reason):
     def docs(*tasks):
         return docs_line([p for t in dict.fromkeys(t for t in tasks if t) for p in task_docs(t, page_dir, doc_cache)])
 
-    def answer_for(task, title, text, options, rec):
+    def answer_for(task, title, text, options, rec, compact=False):
         """Register one answerable decision for the answer endpoint and return its buttons; '' when answers are off."""
         if not answers_on:
             return ""
@@ -1183,7 +1198,7 @@ def render(paths, reason):
             options, rec = decision_options(f"{title} {text}")
         rev = answers.revision(key, title, text, options)
         decisions[key] = {"row": task, "title": title, "rev": rev, "options": options}
-        return answer_block(key, rev, options, rec)
+        return answer_block(key, rev, options, rec, title, compact)
 
     def need_div(n, stale, asked, checked):
         who, task = str(n.get("who") or ""), str(n.get("task") or "")
@@ -1214,6 +1229,7 @@ def render(paths, reason):
             asks.append(asked)
         else:
             needs_stale.append(need_div(n, True, asked, checked))
+    curated_tasks |= {str(f["task"]) for f in cur["factory"] if f.get("task")}  # a call in the factory band is covered there
     fresh_calls, older_calls, deferred_calls = [], [], []
     for c in sorted(calls.values(), key=lambda c: c["asked"] or 0, reverse=True):
         if c["id"] in curated_tasks and not c["deferred"]:
@@ -1307,6 +1323,19 @@ def render(paths, reason):
                  ("^d / ^u", "scroll the inspector"), ("L", "keeper log"), ("O", "open the first link-out (Linear)"),
                  ("r", "refresh now (it also refreshes itself every 10 s)"), ("?", "this help")]
     keys_help = "".join(f"<kbd>{e(k)}</kbd><span>{e(v)}</span>" for k, v in help_rows)
+    # Factory blocked on you: only the calls whose answer releases running work, each with its answer inline.
+    def factory_div(f):
+        task = str(f.get("task") or "")
+        if task and held is not None and (task not in calls or calls[task]["deferred"]):
+            return ""
+        title = str(f["t"])
+        opts = [o for o in f.get("options") or [] if isinstance(o, str) and o.strip()] if isinstance(f.get("options"), list) else []
+        ans = answer_for(task, title, str(f.get("why", "")), opts, f.get("rec"), compact=True) if opts else ""
+        links = "".join(f'<a href="{e(str(lk["url"]))}" target="_blank" rel="noopener">{e(str(lk.get("label") or fm_md.link_label(str(lk["url"]))))} &#8599;</a>'
+                        for lk in f.get("links") or [] if isinstance(lk, dict) and re.match(r"https://", str(lk.get("url", ""))))
+        return (f'<div class="fx" data-task="{e(task)}"><span class="fx-q" title="{e(title)}">{e(title)}</span>'
+                f'<span class="fx-u">&#8594; {e(str(f.get("unblocks", "")))}</span><span class="fx-a">{ans}{links}</span></div>')
+    factory = [d for d in (factory_div(f) for f in cur["factory"]) if d]
     wins = "".join(
         f'<a class="win" href="{e(str(w["url"]))}" target="_blank" rel="noopener"><b>{e(str(w["t"]))}</b>'
         f'<span class="why">{e(str(w.get("why", "")))}</span>'
@@ -1336,6 +1365,8 @@ def render(paths, reason):
         f'<span class="out">{links}</span><span id="clock"></span><span class="hint"><kbd>?</kbd></span>'
         '<button type="button" id="logbtn" class="mob">Log</button></div>'
         f'<div id="warn" data-swap>{"".join(f"<p>{b}</p>" for b in banners)}</div>'
+        + (f'<section id="factory" data-swap aria-label="Factory blocked on you"{"" if factory else " hidden"}>'
+           f'<span class="lbl">Factory blocked on you<b>{len(factory)}</b></span><div class="fx-list">{"".join(factory)}</div></section>')
         + f'<nav id="wins" data-swap aria-label="Wins"{"" if wins else " hidden"}><span class="lbl">Wins</span><div class="wins-row">{wins}</div></nav>'
         + ('<section id="mine" hidden><span class="lbl">Your answers<span class="n"></span></span><div class="mine-list"></div></section>' if answers_on else "")
         + '<div id="cols">'

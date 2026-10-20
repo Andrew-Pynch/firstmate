@@ -111,6 +111,14 @@
 #   links  [{"label", "url"}]                   link-outs in the top bar (O opens the first)
 #   wins   [{"t", "url", "why", "kind"}]        up to 10 Wins cards: title, the link that
 #          shows the success, one line on why it matters, optional short link label
+#   factory [{"t", "unblocks", "task", "options", "rec", "why", "links"}]
+#          up to 8 rows in the FACTORY BLOCKED ON YOU band at the very top, above
+#          Wins: only calls whose answer releases running work. "t": the one-line
+#          question; "unblocks": what the answer releases (about 6 words);
+#          "options": answer buttons inline (same answer path as Needs you);
+#          "links": [{"label", "url"}] when the answer happens elsewhere. A row
+#          tied to a "task" leaves the band when that row stops being an open
+#          captain hold.
 #   initiatives [{"id", "title", "match"}]
 #          "match": {"project_tokens": [...], "linear_projects": [...],
 #                    "title_keywords": [...]} uses OR within and across lists.

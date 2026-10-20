@@ -379,6 +379,8 @@ The seed takes these steps:
 3. It sends a bounded manifest.
 4. It lets the remote host clone its own Firstmate home and project origins.
 
+`root:` is also the checkout that mate's own code and extensions run from, unless this home's task record for it names a different one.
+The primary resolves that on every launch and every restart and hands it to the host, so neither a recovery respawn nor an update pass can return the mate to its home checkout.
 It does not copy project trees or the primary process environment.
 In the primary home, its durable registration effects are limited to that route and the charter brief under `data/<id>`.
 Launch records are created only when the secondmate is launched.

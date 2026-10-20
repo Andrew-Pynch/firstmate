@@ -6,6 +6,10 @@
 #   - a live endpoint refuses the rename, with and without --stopped, and names
 #     the exact control-plane stop for that placement
 #   - a linked worktree (a treehouse-leased home) refuses the home move
+#   - a rename that keeps its home path leaves every path field alone, in the
+#     home's own records and in the parent's, and moves only the id fields
+#   - a home with live child work refuses the move before the parent reply
+#     channel is retired, so a refusal cannot strand the mate without one
 #   - an unsettled pending reply for the mate refuses before anything changes
 #   - the local path: registry line, parent task record, per-id state records,
 #     the presentation-cursor row, the stopped endpoint, and the machine-named
@@ -85,6 +89,13 @@ write_parent_meta() { # <meta> <id> <home> <project> <placement:local|remote>
     printf 'model=\n'
     printf 'effort=\n'
     printf 'home=%s\n' "$home"
+    if [ "$placement" = remote ]; then
+      # A remote mate's code root is its HOST's Firstmate checkout, which is the
+      # registry root - never a path under the mate home.
+      printf 'code_root=%s\n' "$project"
+    else
+      printf 'code_root=%s\n' "$home"
+    fi
     printf 'projects=monorepo\n'
     if [ "$placement" = remote ]; then
       printf 'remote_host=%s\n' "$REMOTE_HOST_ALIAS"
@@ -161,6 +172,58 @@ case_local_refuses_linked_worktree() {
   assert_present "$LOCAL_BASE/$OLD/.fm-secondmate-home" "a refused home move left the home half-done"
   rm -f "$LOCAL_HOME/.git"
   pass "local: a linked worktree refuses the home move"
+}
+
+# A rename that keeps its home path must not rewrite a single path, because the
+# machine-named path it would name does not exist: the home's own child records
+# keep pointing at the projects and worktrees under the home that is still
+# there. The id fields are the only ones that follow the id. This is the defect
+# where every child meta in a kept home came to name a path nobody created.
+case_local_keeps_every_path_when_the_home_is_kept() {
+  local world parent base home fakebin
+  world="$TMP_ROOT/keep-path-world"
+  parent="$world/parent"
+  base="$world/fm-homes"
+  home="$base/$OLD"
+  mkdir -p "$parent/data" "$parent/state" "$base"
+  fakebin=$(make_fake_tmux "$world/fake")
+  seed_home_markers "$home" "$OLD" local "$parent"
+  printf -- '- %s - kept path. (home: %s; scope: s; projects: monorepo; added 2026-09-12)\n' "$OLD" "$home" \
+    > "$parent/data/secondmates.md"
+  write_parent_meta "$parent/state/$OLD.meta" "$OLD" "$home" "$parent" local
+  # A child task record whose work lives under the mate's own home, plus one line
+  # that carries the mate id inside a longer token, which the bounded rule must
+  # leave alone.
+  mkdir -p "$home/state"
+  {
+    printf 'window=firstmate:fm-child\n'
+    printf 'endpoint_task_id=child\n'
+    printf 'worktree=%s/projects/monorepo/wt\n' "$home"
+    printf 'project=%s/projects/monorepo\n' "$home"
+    printf 'home=%s\n' "$home"
+    printf 'code_root=%s\n' "$home"
+    printf 'tasktmp=/tmp/fm-child\n'
+    printf 'note=%s-nightly\n' "$OLD"
+    printf 'harness=codex\n'
+    printf 'kind=ship\n'
+  } > "$home/state/child.meta"
+  cp "$home/state/child.meta" "$world/child.before"
+
+  WORLD_RC=0
+  WORLD_OUT=$(PATH="$fakebin:$PATH" FM_HOME="$parent" FM_FAKE_TMUX_LOG="$world/tmux.log" \
+    FM_FAKE_TMUX_CAPTURE="$world/fake/pane.txt" \
+    "$ROOT/bin/fm-secondmate-rename.sh" "$OLD" "$NEW" --keep-home-path 2>&1) || WORLD_RC=$?
+  [ "$WORLD_RC" -eq 0 ] || fail "the kept-path rename failed: $WORLD_OUT"
+  assert_contains "$WORLD_OUT" "home=$home" "the kept-path rename did not report the home it kept"
+  assert_contains "$WORLD_OUT" "moved=no" "the kept-path rename claimed it moved the home"
+  assert_present "$home/.fm-secondmate-home" "the kept-path rename moved the home anyway"
+  assert_absent "$base/$NEW" "the kept-path rename created the machine-named path"
+  cmp -s "$world/child.before" "$home/state/child.meta" \
+    || fail "a kept home rewrote a child record's paths:"$'\n'"$(diff "$world/child.before" "$home/state/child.meta")"
+  assert_grep "code_root=$home" "$parent/state/$NEW.meta" "the parent record moved the code root off the kept home"
+  assert_grep "window=firstmate:fm-$NEW" "$parent/state/$NEW.meta" "the parent record kept the old window handle"
+  assert_grep "endpoint_task_id=$NEW" "$parent/state/$NEW.meta" "the parent record kept the old endpoint binding"
+  pass "local: a kept home renames the identity and leaves every path where it is"
 }
 
 case_local_refuses_pending_reply() {
@@ -348,6 +411,7 @@ SH
     printf 'herdr_tab_id=t1\n'
     printf 'herdr_pane_id=missing-pane\n'
     printf 'home=%s\n' "$REMOTE_HOME"
+    printf 'code_root=%s\n' "$REMOTE_ROOT"
   } > "$REMOTE_HOME/state/parent-route/$OLD.meta"
 }
 
@@ -362,6 +426,55 @@ remote_env() {
   FM_REMOTE_JOB_STATE_ROOT="$TMP_ROOT/remote-jobs" \
   FM_FAKE_REMOTE_CWD="$TMP_ROOT" \
   "$@"
+}
+
+# A home that still has live child work cannot be moved, and that refusal must
+# land before the parent retires the reply channel: otherwise the mate keeps its
+# old id with no channel left for it to answer on. The refusal is decided on the
+# mate's own host, because only that host can see its child work.
+case_remote_refuses_a_live_child_before_retiring_the_reply_source() {
+  remote_env "$ROOT/bin/fm-procevent-remote-reply.sh" arm "$OLD" >/dev/null \
+    || fail "could not arm the reply source for the live-child fixture"
+  assert_present "$REMOTE_PARENT/state/procevent/remote-reply-$OLD.source" "the fixture did not register the reply source"
+  assert_present "$REMOTE_PARENT/state/remote-replies/$OLD.cursor" "the fixture has no reply cursor to migrate"
+  cp "$REMOTE_PARENT/state/remote-replies/$OLD.cursor" "$TMP_ROOT/remote-reply-cursor.before"
+
+  printf '{"next":3,"workspaces":[{"workspace_id":"w1","label":"child","cwd":"%s"}],"tabs":[{"tab_id":"w1:t2","label":"1","workspace_id":"w1","pane_id":"w1:p2"}],"typed":{"w1:p2":true},"working":{}}\n' \
+    "$REMOTE_HOME" > "$HERDR_STATE"
+  {
+    printf 'window=fm-remote:w1:p2\n'
+    printf 'endpoint_task_id=child\n'
+    printf 'worktree=%s/projects/monorepo/wt\n' "$REMOTE_HOME"
+    printf 'project=%s/projects/monorepo\n' "$REMOTE_HOME"
+    printf 'harness=codex\n'
+    printf 'kind=ship\n'
+    printf 'backend=herdr\n'
+    printf 'herdr_session=fm-remote\n'
+    printf 'herdr_workspace_id=w1\n'
+    printf 'herdr_tab_id=w1:t2\n'
+    printf 'herdr_pane_id=w1:p2\n'
+  } > "$REMOTE_HOME/state/child.meta"
+
+  CHILD_RC=0
+  CHILD_OUT=$(remote_env "$ROOT/bin/fm-secondmate-rename.sh" "$OLD" "$NEW" 2>&1) || CHILD_RC=$?
+  [ "$CHILD_RC" -ne 0 ] || fail "a home carrying live child work must refuse the move: $CHILD_OUT"
+  assert_contains "$CHILD_OUT" "still report a live agent" "the refusal did not name the live child work"
+  assert_present "$REMOTE_PARENT/state/procevent/remote-reply-$OLD.source" \
+    "the refused rename retired the parent reply channel"
+  assert_present "$REMOTE_PARENT/state/remote-replies/$OLD.cursor" \
+    "the refused rename migrated the reply cursor"
+  assert_absent "$REMOTE_PARENT/state/remote-replies/$NEW.cursor" \
+    "the refused rename published a cursor for an id that was never created"
+  assert_present "$REMOTE_HOME/.fm-secondmate-home" "the refused rename mutated the home"
+  assert_absent "$REMOTE_BASE/$NEW" "the refused rename created the machine-named path"
+
+  rm -f "$REMOTE_HOME/state/child.meta"
+  reset_remote_herdr_fixture "$HERDR_STATE"
+  # The retirement this case's cleanup runs deletes the mate's own reply cursor,
+  # which the case after this one migrates; put the fixture back exactly as found.
+  remote_env "$ROOT/bin/fm-procevent-remote-reply.sh" retire "$OLD" >/dev/null 2>&1 || true
+  cp "$TMP_ROOT/remote-reply-cursor.before" "$REMOTE_PARENT/state/remote-replies/$OLD.cursor"
+  pass "remote: live child work refuses the move before the parent channel is retired"
 }
 
 case_remote_renames() {
@@ -388,6 +501,16 @@ case_remote_renames() {
     "$REMOTE_BASE/$NEW/.fm-secondmate-parent" || fail "the remote parent record was not republished"
   assert_present "$REMOTE_BASE/$NEW/state/parent-route/$NEW.inbox/001.msg" "the host-local steering inbox was not renamed"
   assert_present "$REMOTE_BASE/$NEW/state/parent-route/$NEW.meta" "the host-local endpoint record was not renamed"
+  # The record's id field follows the id, its home fields follow the home that
+  # moved, and a path outside that home is left exactly where it is.
+  assert_grep "endpoint_task_id=$NEW" "$REMOTE_BASE/$NEW/state/parent-route/$NEW.meta" \
+    "the host record kept the old endpoint binding"
+  assert_grep "home=$REMOTE_BASE/$NEW" "$REMOTE_BASE/$NEW/state/parent-route/$NEW.meta" \
+    "the host record kept the old home path"
+  assert_grep "worktree=$REMOTE_BASE/$NEW" "$REMOTE_BASE/$NEW/state/parent-route/$NEW.meta" \
+    "the host record kept the old worktree path"
+  assert_grep "code_root=$REMOTE_ROOT" "$REMOTE_BASE/$NEW/state/parent-route/$NEW.meta" \
+    "the home move rewrote the code root outside the home"
 
   assert_grep "window=remote:$NEW" "$REMOTE_PARENT/state/$NEW.meta" "the parent record keeps the old window handle"
   assert_grep "home=$REMOTE_BASE/$NEW" "$REMOTE_PARENT/state/$NEW.meta" "the parent record keeps the old home path"
@@ -428,12 +551,14 @@ case_remote_renames() {
 setup_local
 case_local_refuses_live_endpoint
 case_local_refuses_linked_worktree
+case_local_keeps_every_path_when_the_home_is_kept
 case_local_refuses_pending_reply
 case_local_refuses_registered_new_id
 case_local_renames
 case_local_needs_proof_when_unverifiable
 
 setup_remote
+case_remote_refuses_a_live_child_before_retiring_the_reply_source
 case_remote_renames
 
 echo "ALL TESTS PASSED"

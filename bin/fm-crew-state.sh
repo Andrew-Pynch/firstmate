@@ -147,7 +147,9 @@
 #      to reattach, not by escalating.
 #   4. No current run for this crew (pre-validation, uninitialized repository,
 #      proven historical head, or kind=scout): fall back to the recorded
-#      backend's pane busy state, then the resolved status declaration
+#      backend's pane busy state, which on tmux and herdr reads working only
+#      while the recovery-grade classifier below also finds the agent alive,
+#      then the resolved status declaration
 #      when its verb maps to a recognized run-state. Decision-only events such as
 #      `resolved` never become current state or detail. An open human-step
 #      needs-decision on an idle pane (fm_human_step_url in
@@ -1372,10 +1374,27 @@ fi
 # Only an exact busy verdict reports working here, and only an exact idle
 # verdict permits the status-log fallback below. Missing, malformed, stale, or
 # unverified semantic state remains unknown.
+# A busy record outlives an agent killed mid-turn (an OOM kill leaves the
+# omp-ext agent-start record over a bare shell), so on tmux and herdr a busy
+# verdict reads working only when the recovery-grade classifier also answers
+# alive; its positive death evidence reads as gone, anything else as unknown.
 if [ "$KIND" != secondmate ]; then
   BUSY_VERDICT=$(crew_busy_verdict "$BACKEND_TARGET")
   case "${BUSY_VERDICT%% *}" in
-    busy) emit working pane "harness busy (${BUSY_VERDICT#* })" ;;
+    busy)
+      case "$TASK_BACKEND" in
+        tmux|herdr)
+          AGENT_STATE=$(fm_backend_agent_state "$TASK_BACKEND" "$BACKEND_TARGET")
+          case "$AGENT_STATE" in
+            alive) ;;
+            missing) emit unknown none "backend target gone: $BACKEND_TARGET (stale busy record: ${BUSY_VERDICT#* })" ;;
+            dead) emit unknown none "backend target gone: $BACKEND_TARGET (agent gone, pane shell remains; stale busy record: ${BUSY_VERDICT#* })" ;;
+            *) emit unknown pane "harness busy record unconfirmed ($TASK_BACKEND endpoint state: $AGENT_STATE)" ;;
+          esac
+          ;;
+      esac
+      emit working pane "harness busy (${BUSY_VERDICT#* })"
+      ;;
     idle) ;;
     *) emit unknown pane "harness state unavailable ($BUSY_VERDICT)" ;;
   esac

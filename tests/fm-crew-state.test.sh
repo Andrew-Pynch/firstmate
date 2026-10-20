@@ -240,7 +240,12 @@ case "${1:-}" in
     fi ;;
   display-message)
     [ "${FM_FAKE_TMUX_MISSING:-0}" = 1 ] && exit 1
-    printf '%%1\n' ;;
+    # FM_FAKE_TMUX_COMMAND: the pane's foreground command; a bare shell is a
+    # pane whose agent died (fm_backend_tmux_agent_state reads it as dead).
+    case "$*" in
+      *'#{pane_current_command}'*) printf '%s\n' "${FM_FAKE_TMUX_COMMAND:-claude}" ;;
+      *) printf '%%1\n' ;;
+    esac ;;
   capture-pane)
     [ "${FM_FAKE_TMUX_MISSING:-0}" = 1 ] && exit 1
     if [ "${FM_FAKE_BUSY:-0}" = 1 ]; then printf 'work in progress\n%s\n' "${FM_FAKE_BUSY_TEXT:-esc to interrupt}"
@@ -353,6 +358,7 @@ reset_fakes() {
   FM_FAKE_TMUX_MISSING=0
   FM_FAKE_TMUX_WINDOW_GONE=0
   FM_FAKE_TMUX_UNREADABLE=0
+  FM_FAKE_TMUX_COMMAND=claude
   FM_FAKE_HERDR_BUSY=0
   FM_FAKE_HERDR_MISSING=0
   FM_FAKE_HERDR_READ_FAIL=0
@@ -383,7 +389,7 @@ reset_fakes() {
   FM_FAKE_GERRIT_READ_FAIL=0
   FM_FAKE_GERRIT_READ_LOG=
   unset FM_FAKE_PR_47_STATE FM_FAKE_PR_47_MERGED FM_FAKE_PR_48_STATE FM_FAKE_PR_48_MERGED
-  export FM_FAKE_AXI_STATUS FM_FAKE_AXI_STATUS_RUN FM_FAKE_RUNS_LIST FM_FAKE_BUSY FM_FAKE_BUSY_TEXT FM_FAKE_TMUX_MISSING FM_FAKE_TMUX_WINDOW_GONE FM_FAKE_TMUX_UNREADABLE
+  export FM_FAKE_AXI_STATUS FM_FAKE_AXI_STATUS_RUN FM_FAKE_RUNS_LIST FM_FAKE_BUSY FM_FAKE_BUSY_TEXT FM_FAKE_TMUX_MISSING FM_FAKE_TMUX_WINDOW_GONE FM_FAKE_TMUX_UNREADABLE FM_FAKE_TMUX_COMMAND
   export FM_FAKE_HERDR_BUSY FM_FAKE_HERDR_MISSING FM_FAKE_HERDR_READ_FAIL FM_FAKE_HERDR_HUSK FM_FAKE_HERDR_AGENT_STATUS FM_FAKE_HERDR_PROCESS FM_FAKE_HERDR_SHELL_PID FM_FAKE_CI_LOGS
   export FM_FAKE_DAEMON_DOWN FM_FAKE_DAEMON_TIMEOUT FM_FAKE_DAEMON_PROBE_LOG FM_FAKE_AXI_HOME
   export FM_FAKE_DAEMON_OUTPUT
@@ -2717,6 +2723,33 @@ EOF
   assert_contains "$out" "implementation continues" "the status-log detail survives the no-run fallback"
   assert_not_contains "$out" "unreadable runs table" "explicit no-run answer avoids the capped-table diagnostic"
   pass "runs_on_current_branch: 0 makes a capped overview fall through to crew-state sources"
+}
+
+# An omp worker killed mid-turn (systemd-oomd) leaves its omp-ext agent-start
+# busy record over a live pane that now runs only a shell. The busy record alone
+# must not read working; the same record over a live omp still does.
+test_no_run_busy_record_over_dead_omp_is_not_working() {
+  reset_fakes
+  local d gen out
+  d=$(new_case busy-dead-omp)
+  make_repo_on_branch "$d/wt" fm/feat-oom
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-oom.meta" "window=fm:fm-feat-oom" "worktree=$d/wt" "kind=ship" "harness=omp"
+  gen=$("$ROOT/bin/fm-busy-event.sh" arm "$d/state" feat-oom)
+  "$ROOT/bin/fm-busy-event.sh" apply "$d/state" feat-oom busy --gen "$gen" \
+    --source omp-ext --event agent-start
+
+  FM_FAKE_TMUX_COMMAND=omp
+  out=$(run_crew_state "$d" feat-oom)
+  assert_contains "$out" "state: working" "a busy omp-ext record over a live omp must read working"
+  assert_contains "$out" "omp-ext" "the working verdict must name the omp-ext record"
+
+  FM_FAKE_TMUX_COMMAND=zsh
+  out=$(run_crew_state "$d" feat-oom)
+  assert_not_contains "$out" "state: working" "a busy omp-ext record over a bare shell must not read working"
+  assert_contains "$out" "state: unknown" "a dead omp under a stale busy record must read unknown"
+  assert_contains "$out" "agent gone, pane shell remains" "the verdict must name the dead agent"
+  pass "a stale omp busy record over a bare shell reads gone, while the same record over a live omp reads working"
 }
 
 # A launch pinned at the fm-spawn seed (no hook has posted yet) whose pane
@@ -5949,6 +5982,7 @@ test_moved_remote_branch_without_named_head_is_blocked
 test_external_review_done_reads_ready
 test_no_run_busy_pane
 test_no_run_overview_zero_branch_falls_through
+test_no_run_busy_record_over_dead_omp_is_not_working
 test_no_run_launch_prompt_parked_is_not_working
 test_no_run_footer_text_alone_is_not_working
 test_no_run_grok_uses_isolated_fallback

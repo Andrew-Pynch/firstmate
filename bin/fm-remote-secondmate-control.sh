@@ -84,6 +84,8 @@ fi
 . "$SCRIPT_DIR/fm-pending-reply-lib.sh"
 # shellcheck source=bin/fm-task-inbox-lib.sh
 . "$SCRIPT_DIR/fm-task-inbox-lib.sh"
+# shellcheck source=bin/fm-remote-readiness-lib.sh
+. "$SCRIPT_DIR/fm-remote-readiness-lib.sh"
 
 validate_home() { # <id>
   local id=$1 marker
@@ -175,10 +177,8 @@ cmd_launch() {
 
   validate_id "$id"
   validate_home "$id"
-  case "$harness" in
-    claude|codex|opencode|pi|pi-signed|grok|kimi|cursor) ;;
-    *) die "unverified remote secondmate harness: $harness" ;;
-  esac
+  fm_remote_secondmate_harness_supported "$harness" \
+    || die "unverified remote secondmate harness: $harness"
   case "$effort" in -|low|medium|high|xhigh|max|ultra) ;; *) die "invalid remote secondmate effort: $effort" ;; esac
   if [ "$effort" = ultra ]; then
     "$SCRIPT_DIR/fm-harness.sh" validate-native-effort "$harness" "$model" "$effort" || return 1
@@ -247,10 +247,8 @@ cmd_relaunch() {
 
   validate_id "$id"
   validate_home "$id"
-  case "$harness" in
-    claude|codex|opencode|pi|pi-signed|grok|kimi|cursor) ;;
-    *) die "unverified remote secondmate harness: $harness" ;;
-  esac
+  fm_remote_secondmate_harness_supported "$harness" \
+    || die "unverified remote secondmate harness: $harness"
   case "$effort" in -|default|low|medium|high|xhigh|max|ultra) ;; *) die "invalid remote secondmate effort: $effort" ;; esac
   case "$model" in *[[:space:]]*) die "invalid remote secondmate model: $model" ;; esac
   if [ "$effort" = ultra ]; then

@@ -323,7 +323,7 @@ A file at `~/.local/bin/fm-remote-entrypoint.sh` that is not Firstmate's own sym
 | Requirement | Tools |
 | --- | --- |
 | Always required | `git`, `jq`, `herdr`, compatible `tasks-axi`, and `treehouse` |
-| At least one of | `claude`, `codex`, `opencode`, `pi`, `pi-signed`, `grok`, or `kimi` |
+| At least one of | `claude`, `codex`, `opencode`, `pi`, `pi-signed`, `grok`, `kimi`, or `omp` |
 | Additionally required on macOS | `lsof`, so the doctor and guard can prove which process owns the session socket |
 
 ## Provision a route
@@ -440,6 +440,7 @@ All remote secondmates on one host share `fm-remote` and retain separate `2ndmat
   Launch, liveness recovery, control, and retirement refuse it until an operator explicitly migrates it, instead of attempting a live cutover.
 - A launch after a host has drifted out of readiness fails with the doctor's own gap text instead of leaving a half-created endpoint.
 - Raw launch commands are not accepted for remote secondmates.
+- An omp second mate additionally needs an installed omp new enough for the extension auto-discovery its supervision depends on, and a home that carries the tracked `.omp/extensions` files; [`bin/fm-spawn.sh`](../bin/fm-spawn.sh) owns both refusals and runs them on the host before any endpoint exists.
 - Backends that already refuse secondmate launch, currently Orca, cmux, and paseo, remain unsupported on the remote host.
 
 ### Liveness recovery

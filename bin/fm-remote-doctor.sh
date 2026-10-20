@@ -68,7 +68,11 @@ FM_ROOT="${FM_ROOT_OVERRIDE:-$(CDPATH='' cd "$SCRIPT_DIR/.." && pwd -P)}"
 # shellcheck source=bin/fm-remote-herdr-owner-lib.sh
 . "$SCRIPT_DIR/fm-remote-herdr-owner-lib.sh"
 REQUIRED_TOOLS=(git jq herdr tasks-axi treehouse)
-HARNESS_TOOLS=(claude codex opencode pi pi-signed grok kimi)
+# One installed worker runtime is enough for readiness. These are executable
+# NAMES, not adapter names: cursor resolves through bin/fm-cursor-lib.sh rather
+# than a bare `cursor`, and bin/fm-remote-readiness-lib.sh owns which adapters a
+# remote second mate may run on.
+HARNESS_TOOLS=(claude codex opencode pi pi-signed grok kimi omp)
 OPTIONAL_TOOLS=(tmux no-mistakes gh)
 LAUNCH_AGENT_LABEL=dev.firstmate.herdr.fm-remote
 # The dedicated remote-secondmate session. The user's interactive Herdr work

@@ -27,6 +27,11 @@
 #   (b2) local-only + commit no recorded farm patch reproduces  -> REFUSE (safety)
 #   (c) local-only + merged into local main, no remote         -> ALLOW  (no regression)
 #   (d) no-mistakes + HEAD on origin remote-tracking branch    -> ALLOW  (no regression)
+#   (d1) no-mistakes + pushed branch, recorded PR open (conflicting) -> REFUSE
+#   (d2) no-mistakes + pushed branch, recorded PR closed unmerged -> REFUSE until pr_closed_decision=
+#   (d3) no-mistakes + pushed branch, recorded PR merged       -> ALLOW
+#   (d4) no-mistakes + copy gone, recorded PR open             -> REFUSE
+#   (d5) local-only + pushed branch, recorded PR open          -> REFUSE
 #   (e) no-mistakes + unpushed, no PR, content not in default  -> REFUSE (safety)
 #   (f) local-only + truly unpushed + --force                  -> ALLOW  (escape hatch)
 #   (g) no-mistakes + squash-merged PR, exact PR head          -> ALLOW  (squash fix)
@@ -1093,6 +1098,128 @@ test_no_mistakes_origin_remote_allows() {
   grep -F 'blockers are gone and date is due' "$case_dir/stdout" >/dev/null \
     || fail "nm-origin: teardown manual prompt did not preserve date-gate check"
   pass "no-mistakes worktree with HEAD on origin is torn down (no regression)"
+}
+
+# gh answers the recorded PR's GraphQL state read with <state> and <merged>.
+add_gh_pr_state() {
+  local case_dir=$1 state=$2 merged=$3
+  cat > "$case_dir/fakebin/gh" <<SH
+#!/usr/bin/env bash
+case "\${1:-} \${2:-}" in
+  "api graphql") printf '%s\n' 'state=$state' 'merged=$merged' ; exit 0 ;;
+esac
+echo "error: unexpected gh call" >&2
+exit 1
+SH
+  chmod +x "$case_dir/fakebin/gh"
+}
+
+# A pushed task branch whose recorded PR is still open (its merge state was
+# CONFLICTING and it never merged) is published, not landed.
+setup_pushed_branch_with_recorded_pr() {
+  local case_dir=$1
+  write_meta "$case_dir" no-mistakes ship
+  wt_commit_file "$case_dir" feature.txt "pushed but never merged"
+  git -C "$case_dir/wt" push -q origin fm/task-x1
+  git -C "$case_dir/project" fetch -q origin
+  append_pr_meta_url "$case_dir"
+}
+
+test_pushed_branch_with_open_recorded_pr_refuses() {
+  local case_dir rc head
+  case_dir=$(make_case pushed-open-pr)
+  setup_pushed_branch_with_recorded_pr "$case_dir"
+  add_gh_pr_state "$case_dir" OPEN false
+  head=$(git -C "$case_dir/wt" rev-parse HEAD)
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "pushed-open-pr: teardown must refuse an open recorded PR"
+  assert_grep "REFUSED: ship task task-x1's recorded PR https://github.com/example/repo/pull/7 is open, not merged" \
+    "$case_dir/stderr" "pushed-open-pr: refusal did not name the open PR"
+  assert_refusal_retained_task_state "$case_dir" "pushed-open-pr" "$head"
+  pass "a pushed branch whose recorded PR is open is refused"
+}
+
+test_pushed_branch_with_closed_recorded_pr_needs_a_decision() {
+  local case_dir rc head
+  case_dir=$(make_case pushed-closed-pr)
+  setup_pushed_branch_with_recorded_pr "$case_dir"
+  add_gh_pr_state "$case_dir" CLOSED false
+  head=$(git -C "$case_dir/wt" rev-parse HEAD)
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  expect_code 1 "$rc" "pushed-closed-pr: a closed unmerged PR without a decision must refuse"
+  assert_grep "was closed without merging, and no decision to drop it is recorded" \
+    "$case_dir/stderr" "pushed-closed-pr: refusal did not name the missing decision"
+  assert_refusal_retained_task_state "$case_dir" "pushed-closed-pr" "$head"
+
+  printf '%s\n' 'pr_closed_decision=drop it, superseded (captain, 2026-10-17)' >> "$case_dir/state/task-x1.meta"
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  expect_code 0 "$rc" "pushed-closed-pr: a recorded decision must let a closed PR clean up: $(cat "$case_dir/stderr")"
+  pass "a closed unmerged recorded PR refuses until the decision to drop it is recorded"
+}
+
+test_pushed_branch_with_merged_recorded_pr_allows() {
+  local case_dir rc
+  case_dir=$(make_case pushed-merged-pr)
+  setup_pushed_branch_with_recorded_pr "$case_dir"
+  add_gh_pr_state "$case_dir" MERGED true
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  expect_code 0 "$rc" "pushed-merged-pr: a merged recorded PR must clean up: $(cat "$case_dir/stderr")"
+  pass "a pushed branch whose recorded PR merged is torn down"
+}
+
+test_missing_copy_with_open_recorded_pr_refuses() {
+  local case_dir rc
+  case_dir=$(make_case missing-copy-open-pr)
+  setup_pushed_branch_with_recorded_pr "$case_dir"
+  add_gh_pr_state "$case_dir" OPEN false
+  git -C "$case_dir/project" worktree remove --force "$case_dir/wt"
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "missing-copy-open-pr: an open recorded PR must refuse without the copy"
+  assert_grep "recorded PR https://github.com/example/repo/pull/7 is open, not merged" \
+    "$case_dir/stderr" "missing-copy-open-pr: refusal did not name the open PR"
+  [ -e "$case_dir/state/task-x1.meta" ] || fail "missing-copy-open-pr: refusal erased the task record"
+  pass "a ship task whose copy is gone but whose recorded PR is open is refused"
+}
+
+test_local_only_with_open_recorded_pr_refuses() {
+  local case_dir rc
+  case_dir=$(make_case local-only-open-pr)
+  write_meta "$case_dir" local-only ship
+  wt_commit_file "$case_dir" feature.txt "pushed but never merged"
+  git -C "$case_dir/wt" push -q origin fm/task-x1
+  git -C "$case_dir/project" fetch -q origin
+  append_pr_meta_url "$case_dir"
+  add_gh_pr_state "$case_dir" OPEN false
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "local-only-open-pr: an open recorded PR must refuse in local-only mode"
+  assert_grep "is open, not merged" "$case_dir/stderr" "local-only-open-pr: refusal did not name the open PR"
+  pass "a local-only ship task with an open recorded PR is refused"
 }
 
 test_no_mistakes_truly_unpushed_refuses() {
@@ -6220,6 +6347,11 @@ test_local_only_farm_patch_recorded_allows
 test_local_only_farm_patch_uncaptured_refuses
 test_local_only_farm_patch_must_be_recorded_and_settled
 test_no_mistakes_origin_remote_allows
+test_pushed_branch_with_open_recorded_pr_refuses
+test_pushed_branch_with_closed_recorded_pr_needs_a_decision
+test_pushed_branch_with_merged_recorded_pr_allows
+test_missing_copy_with_open_recorded_pr_refuses
+test_local_only_with_open_recorded_pr_refuses
 test_no_mistakes_truly_unpushed_refuses
 test_local_only_force_overrides_unpushed
 test_secondmate_pr_registration_publishes_ready_line

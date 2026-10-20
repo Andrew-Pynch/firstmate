@@ -74,6 +74,18 @@
 # teardown refuses rather than risk discarding unlanded work.
 # A merge-tree option or execution error reports the content-landed proof as
 # unavailable. The merge-tree --write-tree proof requires Git 2.38 or newer.
+# Every ship task that records pr= additionally needs that PR merged before a
+# teardown without --force, in any mode and whether or not its copy still
+# exists, even when its branch is reachable from a remote: a pushed branch is
+# published, not landed. The forge read goes through bin/fm-pr-lib.sh's GitHub,
+# GitLab, Forgejo, or Gerrit reader. An open PR refuses. A PR closed (or
+# abandoned) without merging refuses unless the task's meta records the
+# captain's decision to drop it as a non-empty
+# pr_closed_decision=<his words, date> line, which firstmate appends by hand.
+# An unreadable forge falls back to the content check while the copy exists and
+# refuses otherwise. A pr= that names no forge PR is not gated here: where the
+# backlog gate applies, its close refuses that Done artifact before any
+# destructive step and keeps every durable record.
 # Uncommitted changes are never landed; dirty refusals distinguish untracked-only
 # leftovers from tracked edits and list at most ten non-exempt untracked paths.
 # local-only projects additionally accept work merged into the local default
@@ -2325,6 +2337,64 @@ validate_worktree_teardown_safety() {
   fi
 }
 
+# A ship task's recorded pr= must be merged before teardown, even when its
+# branch is pushed: a pushed branch is published, not landed. The main flow
+# runs this for every non-forced ship task, whether or not its copy exists.
+# See the script header for the closed-PR decision record and the
+# unreadable-forge fallback.
+RECORDED_PR_GATE_PASSED=0
+# Reads the parsed PR's state into FM_PR_RECORD_STATE/FM_PR_RECORD_MERGED
+# through bin/fm-pr-lib.sh's per-forge reader; non-zero when unreadable.
+recorded_pr_read() {
+  FM_PR_RECORD_STATE=
+  FM_PR_RECORD_MERGED=
+  case "$FM_PR_PROVIDER" in
+    github) fm_pr_github_read_record "${FM_PR_PATH%%/*}" "${FM_PR_PATH#*/}" "$FM_PR_NUMBER" ;;
+    gitlab) fm_pr_gitlab_read_record "$FM_PR_HOST" "$FM_PR_PATH" "$FM_PR_NUMBER" ;;
+    forgejo) fm_pr_forgejo_read_record "$FM_PR_HOST" "$FM_PR_PATH" "$FM_PR_NUMBER" ;;
+    gerrit) fm_pr_gerrit_read_record "$FM_PR_HOST" "$FM_PR_NUMBER" ;;
+    *) return 1 ;;
+  esac >/dev/null 2>&1
+}
+recorded_pr_gate() {
+  local decision state_lc
+  [ "$KIND" = ship ] && [ -n "$PR_URL" ] || return 0
+  [ "$RECORDED_PR_GATE_PASSED" != 1 ] || return 0
+  # A pr= that names no forge PR is left to the backlog close, which refuses it
+  # as a Done artifact before any destructive step (see the script header).
+  fm_pr_url_parse "$PR_URL" || return 0
+  if ! recorded_pr_read; then
+    if [ -n "$WT" ] && [ -d "$WT" ] && content_in_default; then
+      RECORDED_PR_GATE_PASSED=1
+      return 0
+    fi
+    echo "REFUSED: ship task $ID's recorded PR $PR_URL could not be read, and its content is not in the default branch." >&2
+    echo "Retry once the forge answers, or get the captain's explicit OK to discard, then --force." >&2
+    return 1
+  fi
+  if [ "$FM_PR_RECORD_MERGED" = true ]; then
+    RECORDED_PR_GATE_PASSED=1
+    return 0
+  fi
+  state_lc=$(printf '%s' "$FM_PR_RECORD_STATE" | tr '[:upper:]' '[:lower:]')
+  case "$state_lc" in
+    closed|abandoned)
+      decision=$(grep '^pr_closed_decision=' "$META" 2>/dev/null | tail -1 | cut -d= -f2- || true)
+      if [ -n "${decision//[[:space:]]/}" ]; then
+        RECORDED_PR_GATE_PASSED=1
+        return 0
+      fi
+      echo "REFUSED: ship task $ID's recorded PR $PR_URL was closed without merging, and no decision to drop it is recorded." >&2
+      printf '%s\n' "If the captain decided to drop it, record his words: printf 'pr_closed_decision=%s\\n' '<words, date>' >> $META; then rerun." >&2
+      ;;
+    *)
+      echo "REFUSED: ship task $ID's recorded PR $PR_URL is ${state_lc:-in an unknown state}, not merged; a pushed branch is not landed work." >&2
+      echo "Land the PR (bin/fm-pr-merge.sh after the captain approves), or close it and record the captain's decision as pr_closed_decision= in $META, then rerun." >&2
+      ;;
+  esac
+  return 1
+}
+
 # Fix 1 (see script header): does the active-or-most-recent no-mistakes run in
 # worktree $1 belong to THIS task, and is it parked at a gate awaiting an agent
 # that is about to be removed? Prints nothing; returns 0 only on a genuine
@@ -4014,6 +4084,12 @@ if teardown_owns_worktree && [ -d "$WT" ] && [ "$FORCE" != "--force" ]; then
       exit 1
     fi
   fi
+fi
+
+# Task-level, so a missing or non-owned copy and a local-only task with a
+# recorded pr= are gated too.
+if [ "$FORCE" != "--force" ]; then
+  recorded_pr_gate || exit 1
 fi
 
 # A Herdr close may reposition shared workspace order, so the whole

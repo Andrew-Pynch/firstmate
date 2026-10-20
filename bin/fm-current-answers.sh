@@ -28,6 +28,13 @@
 # Routes (an `/api` prefix is accepted and stripped, so it works whether or not
 # the proxy strips its mount path):
 #   POST /answer    {"key", "rev", "rid", "option" | "text"} -> 200 {"state":"received","note":<id>,...}
+#   POST /note      {"rid", "text"} from the page's inbox panel: one inbox note to Main
+#                   (request id deck-note-<rid>, so a retry replays it), at most 1200
+#                   characters, recorded in state/.current-page/thread.jsonl -> 200
+#                   {"state":"received","note":<id>,...}. Same checks as /answer below,
+#                   except that it needs no open decision.
+#   GET  /thread    the last 7 days of panel notes and page answers, oldest first,
+#                   each with its state and Main's reply text, for the inbox thread.
 #   GET  /answers   the last 48 h of answers, newest per decision, each with
 #                   state received (in Main's inbox), seen (Main acknowledged the
 #                   note), or answered (Main published a reply), and the reply text.
@@ -40,7 +47,7 @@
 #                   200, 404 when Linear has no such issue, 502 upstream, 503 no key.
 #   GET  /health
 #
-# Security contract for POST /answer, each check refusing before anything is queued:
+# Security contract for POST /answer and POST /note, each check refusing before anything is queued:
 #   - same origin: Origin must equal answers_origin (Referer under it when no Origin
 #     is sent), and Sec-Fetch-Site, when sent, must be same-origin -> else 403;
 #   - Content-Type application/json only -> else 415, so a plain HTML form cannot post;

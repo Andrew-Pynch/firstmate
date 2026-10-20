@@ -30,12 +30,16 @@ PRIVATE = os.path.join(STATE, ".current-page")
 SECRET = PRIVATE + "/answer-secret"
 DECISIONS = os.path.join(PRIVATE, "decisions.json")
 LEDGER = os.path.join(PRIVATE, "answers.jsonl")
+THREAD = os.path.join(PRIVATE, "thread.jsonl")   # the Deck inbox panel's own notes, for its thread view
 INBOX = os.path.join(SCRIPT_DIR, "fm-inbox.sh")
 
 TOKEN_MAX_AGE = 24 * 3600   # the page re-renders at least every idle period, so a live tab always holds a fresh one
 MAX_BODY = 4096
 MAX_TEXT = 500
 FEED_HOURS = 48
+MAX_NOTE = 1200       # one inbox note from the phone panel, in characters
+THREAD_DAYS = 7
+THREAD_MAX = 400
 RID_RE = re.compile(r"^[A-Za-z0-9-]{8,64}$")
 
 
@@ -272,6 +276,38 @@ class Receipts:
             self.data = None
 
 
+def thread_append(entry):
+    os.makedirs(PRIVATE, exist_ok=True)
+    with open(THREAD, "a", encoding="utf-8") as fh:
+        fcntl.flock(fh, fcntl.LOCK_EX)
+        fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+
+def thread_recent(now):
+    """The panel's own notes from the last THREAD_DAYS, oldest first."""
+    try:
+        with open(THREAD, encoding="utf-8") as fh:
+            lines = fh.readlines()[-THREAD_MAX:]
+    except OSError:
+        return []
+    out = []
+    for line in lines:
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(row, dict) and now - row.get("ts", 0) < THREAD_DAYS * 86400:
+            out.append(row)
+    return out
+
+
+def thread_body(text):
+    return ("deck-phone-note\n"
+            "the captain wrote to Main from the Deck inbox panel:\n\n"
+            f"{text}\n\n"
+            "Answer with `bin/fm-inbox.sh reply <this note id> <text>`; the reply shows in his Deck inbox thread.\n")
+
+
 def note_body(row, decision, answer, key, rev):
     return (f"current-page-answer row={row or '-'} key={key} rev={rev}\n"
             f"the captain answered from the current page: {answer}\n"
@@ -310,6 +346,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send(200, {"ok": True})
         elif route == "/answers":
             self.send(200, self.feed())
+        elif route == "/thread":
+            self.send(200, self.thread())
         elif route.startswith("/linear/") and LINEAR_ID_RE.fullmatch(route[8:]):
             code, payload = self.server.linear.get(route[8:])
             self.send(code, payload)
@@ -327,31 +365,75 @@ class Handler(http.server.BaseHTTPRequestHandler):
         site = self.headers.get("Sec-Fetch-Site")
         return ok and site in (None, "same-origin")
 
-    def do_POST(self):
-        if self.route() != "/answer":
-            return self.send(404, {"error": "not found"})
+    def read_post(self, what):
+        """The shared refusals for every POST: same origin, JSON, the page token, a sane size, a request id."""
         if not self.same_origin():
-            return self.send(403, {"error": "origin", "detail": "answers come only from the current page"})
+            return None, self.send(403, {"error": "origin", "detail": f"{what} come only from the Deck page"})
         if (self.headers.get("Content-Type") or "").split(";")[0].strip().lower() != "application/json":
-            return self.send(415, {"error": "content-type", "detail": "JSON only"})
+            return None, self.send(415, {"error": "content-type", "detail": "JSON only"})
         if not token_ok(self.headers.get("X-FM-Answer-Token")):
-            return self.send(403, {"error": "token", "detail": "reload the page"})
+            return None, self.send(403, {"error": "token", "detail": "reload the page"})
         try:
             length = int(self.headers.get("Content-Length") or "0")
         except ValueError:
             length = -1
         if not 0 < length <= MAX_BODY:
-            return self.send(413, {"error": "size"})
+            return None, self.send(413, {"error": "size"})
         try:
             req = json.loads(self.rfile.read(length))
         except ValueError:
-            return self.send(400, {"error": "json"})
+            return None, self.send(400, {"error": "json"})
         if not isinstance(req, dict):
-            return self.send(400, {"error": "json"})
+            return None, self.send(400, {"error": "json"})
+        if not RID_RE.match(str(req.get("rid") or "")):
+            return None, self.send(400, {"error": "rid"})
+        return req, None
+
+    def inbox_note(self, request_id, body):
+        res = subprocess.run([INBOX, "note", "--request-id", request_id, "--json", "-"], input=body,
+                             capture_output=True, text=True, timeout=30, env={**os.environ, "FM_HOME": HOME})
+        try:
+            note = json.loads(res.stdout.strip().splitlines()[-1])
+        except (ValueError, IndexError):
+            note = {}
+        if res.returncode not in (0, 3) or not note.get("saved"):
+            return None, (res.stderr or "note not saved").strip()[:200]
+        return note, None
+
+    def do_POST(self):
+        route = self.route()
+        if route == "/answer":
+            return self.post_answer()
+        if route == "/note":
+            return self.post_note()
+        return self.send(404, {"error": "not found"})
+
+    def post_note(self):
+        req, _ = self.read_post("notes")
+        if req is None:
+            return
+        text = str(req.get("text") or "").replace("\r\n", "\n").strip()
+        if not text:
+            return self.send(400, {"error": "empty"})
+        if len(text) > MAX_NOTE:
+            return self.send(400, {"error": "text", "detail": f"at most {MAX_NOTE} characters"})
+        rid = str(req["rid"])
+        note, err = self.inbox_note("deck-note-" + rid, thread_body(text))
+        if note is None:
+            return self.send(502, {"error": "inbox", "detail": err})
+        now = time.time()
+        if note.get("outcome") != "replay":
+            thread_append({"ts": int(now), "note": note["id"], "text": text, "rid": rid})
+        self.server.receipts.invalidate()
+        self.send(200, {"state": "received", "note": note["id"], "at": iso(now), "announced": note.get("announced"),
+                        "outcome": note.get("outcome")})
+
+    def post_answer(self):
+        req, _ = self.read_post("answers")
+        if req is None:
+            return
         key, rev, rid = str(req.get("key") or ""), str(req.get("rev") or ""), str(req.get("rid") or "")
         option, text = req.get("option"), req.get("text")
-        if not RID_RE.match(rid):
-            return self.send(400, {"error": "rid"})
         decisions = read_decisions()
         if decisions is None:
             return self.send(503, {"error": "decisions", "detail": "the page has not published its decisions"})
@@ -370,15 +452,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return self.send(400, {"error": "text", "detail": f"at most {MAX_TEXT} characters"})
         else:
             return self.send(400, {"error": "empty"})
-        res = subprocess.run([INBOX, "note", "--request-id", "current-page-" + rid, "--json", "-"],
-                             input=note_body(decision.get("row"), decision, answer, key, rev),
-                             capture_output=True, text=True, timeout=30, env={**os.environ, "FM_HOME": HOME})
-        try:
-            note = json.loads(res.stdout.strip().splitlines()[-1])
-        except (ValueError, IndexError):
-            note = {}
-        if res.returncode not in (0, 3) or not note.get("saved"):
-            return self.send(502, {"error": "inbox", "detail": (res.stderr or "note not saved").strip()[:200]})
+        note, err = self.inbox_note("current-page-" + rid, note_body(decision.get("row"), decision, answer, key, rev))
+        if note is None:
+            return self.send(502, {"error": "inbox", "detail": err})
         now = time.time()
         if note.get("outcome") != "replay":
             ledger_append({"ts": int(now), "key": key, "rev": rev, "row": decision.get("row") or "",
@@ -386,6 +462,29 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.server.receipts.invalidate()
         self.send(200, {"state": "received", "key": key, "answer": answer, "note": note["id"], "at": iso(now),
                         "announced": note.get("announced"), "outcome": note.get("outcome")})
+
+    def receipts_or_empty(self, needed):
+        try:
+            return (self.server.receipts.get() if needed else {"pending": set(), "handled": set(), "replies": {}}), False
+        except (OSError, ValueError, subprocess.SubprocessError):
+            return {"pending": set(), "handled": set(), "replies": {}}, True
+
+    def thread(self):
+        """The Deck inbox thread: the panel's notes and the page's decision answers, oldest first, each with Main's reply."""
+        now = time.time()
+        notes, answers_ = thread_recent(now), ledger_recent(now)
+        rec, unread = self.receipts_or_empty(bool(notes or answers_))
+        def state(note):
+            return "answered" if note in rec["replies"] else "seen" if note in rec["handled"] else "received"
+        def reply(note):
+            r = rec["replies"].get(note)
+            return (r.get("body", "").strip(), r.get("at")) if r else ("", None)
+        msgs = [{"kind": "note", "note": n["note"], "text": n["text"], "ts": n["ts"], "at": iso(n["ts"]), "state": state(n["note"]),
+                 "reply": reply(n["note"])[0], "reply_at": reply(n["note"])[1]} for n in notes]
+        msgs += [{"kind": "answer", "note": a["note"], "text": a["answer"], "title": a["title"], "ts": a["ts"], "at": iso(a["ts"]),
+                  "state": state(a["note"]), "reply": reply(a["note"])[0], "reply_at": reply(a["note"])[1]} for a in answers_]
+        msgs.sort(key=lambda m: m["ts"])
+        return {"now": iso(now), "messages": msgs, "receipts": "unreadable" if unread else "ok"}
 
     def feed(self):
         now = time.time()

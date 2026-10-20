@@ -961,6 +961,20 @@ text-transform:uppercase;color:var(--data);margin:16px 0 6px;border-bottom:1px s
 .bt-q{font:600 14px var(--sans)}.bt-why{color:var(--fg2);font-size:13px;margin:2px 0 5px}
 .bt .answer.compact .ans-btn:not(.rec){color:var(--fg2);border-color:var(--dim)}.bt-close{text-align:right;margin:12px 0 0;font:12px var(--mono)}
 .fx-k{flex:none;font:11px var(--mono);color:var(--dim);user-select:all}
+#inboxbtn{font:600 12px var(--mono);letter-spacing:.08em;color:var(--acc);border:1px solid var(--acc);background:none;border-radius:var(--r);padding:3px 10px}
+#inboxbtn b.n{margin-left:6px;background:var(--alert);color:#fff;border-radius:9px;padding:0 6px}
+#inbox{position:fixed;z-index:8000;top:46px;right:0;bottom:0;width:min(440px,100vw);display:flex;flex-direction:column;background:var(--surface);
+border-left:2px solid var(--acc);box-shadow:-12px 0 40px rgba(0,0,0,.6)}#inbox[hidden]{display:none}
+#inbox header{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--acc-dim)}#inbox header b{font:600 14px var(--mono);letter-spacing:.12em;color:var(--acc)}
+#inbox .ib-close{margin-left:auto;background:none;border:1px solid var(--dim);color:var(--fg2);border-radius:var(--r);padding:4px 12px}
+#thread{flex:1;overflow:auto;padding:12px 14px;display:flex;flex-direction:column;gap:10px;overscroll-behavior:contain}
+.msg{max-width:86%;padding:9px 12px;border-radius:12px;font:15px/1.4 var(--sans);white-space:pre-wrap;word-break:break-word}
+.msg.me{align-self:flex-end;background:rgba(255,136,0,.14);border:1px solid var(--acc-dim)}.msg.main{align-self:flex-start;background:var(--raised);border:1px solid var(--data-dim)}
+.msg .who{display:block;font:600 11px var(--mono);letter-spacing:.08em;color:var(--fg2);margin-bottom:3px}.msg.main .who{color:var(--data)}
+.msg .st{display:block;font:11px var(--mono);color:var(--dim);margin-top:4px;text-align:right}.msg.err{border-color:var(--alert)}
+#composer{display:flex;gap:8px;padding:10px 12px calc(10px + env(safe-area-inset-bottom));border-top:1px solid var(--acc-dim)}
+#ib-text{flex:1;resize:none;font:16px/1.35 var(--sans);background:var(--bg);color:var(--fg);border:1px solid var(--acc-dim);border-radius:10px;padding:9px 11px}
+#ib-send{font:600 15px var(--mono);color:#0a0a0f;background:var(--acc);border:0;border-radius:10px;padding:0 16px;min-width:76px}
 .answer.compact{margin:0;padding:0;border:0;background:none;display:flex;align-items:center;gap:8px}
 .answer.compact .ans-opts{margin:0;gap:6px;flex-wrap:nowrap}.answer.compact .ans-btn{padding:2px 10px;font-size:12px}
 .answer.compact .ans-btn.armed::after{display:inline;content:" · tap again"}.answer.compact .receipt{margin:0;max-width:300px}
@@ -1001,6 +1015,8 @@ button,a.go{min-height:44px;padding:8px 14px;font-size:14px}a.go{display:inline-
 #factory{margin:10px 10px 0}.fx{flex-wrap:wrap;gap:6px 10px;padding:8px 0}.fx-q{flex-basis:100%;white-space:normal;font-size:15px}
 .fx-u{white-space:normal;flex:1 1 100%}.fx-a{flex-wrap:wrap;flex:1 1 100%}.fx-k{flex-basis:100%}
 .overlay.bt .box{width:calc(100vw - 24px)}.bt .answer.compact .ans-opts{flex-wrap:wrap}
+#inbox{top:0;padding-top:env(safe-area-inset-top);width:100vw;border-left:0}#inbox header{padding:12px 16px}#inbox .ib-close{min-height:44px}
+.msg{font-size:17px}#ib-send{min-height:48px}
 .answer.compact .ans-btn{min-height:40px;flex:0 0 auto;font-size:14px;padding:6px 12px}
 .zero{height:auto;padding:28px 0}
 .overlay .box{min-width:0;width:calc(100vw - 24px);max-height:85vh}.timeline li{white-space:normal}
@@ -1145,6 +1161,8 @@ document.addEventListener("click",ev=>{const b=ev.target.closest("button.copy-co
   copyText(t).then(()=>{b.textContent="Copied";toast("COPIED");},()=>{b.textContent="Copy failed";});return;}
  const ov=ev.target.closest(".overlay");if(ov&&!ev.target.closest(".box")){ov.hidden=true;return;}
  if(ev.target.closest("#logbtn")){$("#log").hidden=false;return;}
+ if(ev.target.closest("#inboxbtn")){inboxOpen(true);return;}
+ if(ev.target.closest("#inbox .ib-close")){inboxOpen(false);return;}
  const bo=ev.target.closest("a.bt-open");if(bo){ev.preventDefault();const o=document.getElementById(bo.getAttribute("href").slice(1));if(o)o.hidden=false;return;}
  if(ev.target.closest(".bt-close a")){ev.preventDefault();ev.target.closest(".overlay").hidden=true;return;}
  const hd=ev.target.closest(".pane>header");
@@ -1168,6 +1186,36 @@ q.addEventListener("input",()=>filter(q.value));
 MOB.addEventListener("change",folds);
 bind();score();show();clock();setInterval(clock,1000);setInterval(tick,30000);setInterval(refresh,10000);poll();setInterval(poll,10000);
 if(/^#batch-[\w-]+$/.test(location.hash)){const o=document.getElementById(location.hash.slice(1));if(o)o.hidden=false;}
+// Inbox: the captain's notes to Main and Main's replies, plus his answers from this page, through the answers server.
+const IB={msgs:[],pending:[],seen:+localStorage.getItem("fm-ib-seen")||0,timer:0};
+function ibAgo(t){return ago(Date.now()/1000-t);}
+function ibState(m){return m.state==="answered"?"Main replied":m.state==="seen"?"Main read it":"Main has it";}
+function ibDraw(){const box=$("#thread");if(!box)return;const atEnd=box.scrollHeight-box.scrollTop-box.clientHeight<40;
+ const rows=[];for(const m of IB.msgs){const mine=m.kind==="answer"?"Answered "+m.title+": "+m.text:m.text;
+  rows.push('<div class="msg me"><span class="who">YOU · '+esc(ibAgo(m.ts))+"</span>"+esc(mine)+'<span class="st">'+esc(ibState(m))+"</span></div>");
+  if(m.reply)rows.push('<div class="msg main"><span class="who">MAIN'+(m.reply_at?" · "+esc(ibAgo(Date.parse(m.reply_at)/1000)):"")+"</span>"+esc(m.reply)+"</div>");}
+ for(const p of IB.pending)rows.push('<div class="msg me'+(p.err?" err":"")+'"><span class="who">YOU</span>'+esc(p.text)+'<span class="st">'+esc(p.err||"sending…")+"</span></div>");
+ box.innerHTML=rows.join("")||'<p class="k">Nothing yet. Write to Main below; replies show here.</p>';if(atEnd)box.scrollTop=box.scrollHeight;}
+function ibBadge(){const b=$("#inboxbtn .n");if(!b)return;const n=IB.msgs.filter(m=>m.reply_at&&Date.parse(m.reply_at)/1000>IB.seen).length;
+ b.hidden=!n;b.textContent=n;}
+async function ibLoad(){try{const r=await fetch("/api/thread",{cache:"no-store"});if(!r.ok)return;const j=await r.json();
+ const before=IB.msgs.filter(m=>m.reply).length;IB.msgs=j.messages||[];if(IB.msgs.filter(m=>m.reply).length>before&&before)toast("MAIN REPLIED");
+ if(!$("#inbox").hidden){IB.seen=Date.now()/1000;localStorage.setItem("fm-ib-seen",IB.seen);}ibDraw();ibBadge();}catch{}}
+function inboxOpen(on){const p=$("#inbox");if(!p)return;p.hidden=!on;clearInterval(IB.timer);
+ if(on){ibLoad().then(()=>{const b=$("#thread");b.scrollTop=b.scrollHeight;});IB.timer=setInterval(ibLoad,10000);$("#ib-text").focus({preventScroll:true});}
+ else IB.timer=setInterval(ibLoad,30000);}
+async function ibSend(){const ta=$("#ib-text"),text=ta.value.trim();if(!text)return;const p={text,rid:rid()};IB.pending.push(p);ta.value="";ibDraw();
+ let r=null,j={};for(let i=0;i<3&&!r;i++){try{r=await fetch("/api/note",{method:"POST",credentials:"same-origin",
+  headers:{"Content-Type":"application/json","X-FM-Answer-Token":($("#hud").dataset.token||"")},body:JSON.stringify({text:p.text,rid:p.rid})});}
+  catch{await new Promise(z=>setTimeout(z,800));}}
+ try{j=r?await r.json():{};}catch{}
+ if(r&&r.ok){IB.pending=IB.pending.filter(x=>x!==p);toast("MAIN GOT IT");if(navigator.vibrate)navigator.vibrate(30);await ibLoad();return;}
+ p.err="not sent: "+(j.detail||j.error||(r?"HTTP "+r.status:"offline"))+"; your text is back in the box";ta.value=p.text;ibDraw();
+ setTimeout(()=>{IB.pending=IB.pending.filter(x=>x!==p);ibDraw();},8000);
+ if(r&&r.status===403&&j.error==="token"){toast("RELOADING","acc");setTimeout(()=>location.reload(),900);}}
+if($("#inbox")){$("#composer").addEventListener("submit",ev=>{ev.preventDefault();ibSend();});
+ $("#ib-text").addEventListener("keydown",ev=>{if(ev.key==="Enter"&&!ev.shiftKey&&!ev.isComposing&&!MOB.matches){ev.preventDefault();ibSend();}ev.stopPropagation();});
+ inboxOpen(location.hash==="#inbox");}
 """
 
 
@@ -1403,12 +1451,23 @@ def render(paths, reason):
         f'<a class="win" href="{e(str(w["url"]))}" target="_blank" rel="noopener"><b>{e(str(w["t"]))}</b>'
         f'<span class="why">{e(str(w.get("why", "")))}</span>'
         f'<span class="m">{e(str(w.get("kind") or fm_md.link_label(str(w["url"]))))} &#8599;</span></a>' for w in cur["wins"])
-    write_pwa_assets(page_dir, os.path.basename(paths["out"]))
+    write_pwa_assets(page_dir, paths.get("page_url") or os.path.basename(paths["out"]))
+    page_url = paths.get("page_url") or ""
+    inbox = ('<section id="inbox" hidden aria-label="Inbox to Main"><header><b>Inbox</b><span class="k">to Main</span>'
+             '<button type="button" class="ib-close" aria-label="Close the inbox">close</button></header>'
+             '<div id="thread" aria-live="polite"><p class="k">Loading…</p></div>'
+             '<form id="composer" autocomplete="off"><textarea id="ib-text" rows="2" maxlength="1200" enterkeyhint="send" '
+             'placeholder="Write to Main" aria-label="Message to Main"></textarea><button type="submit" id="ib-send">Send</button></form>'
+             '</section>') if answers_on else ""
+    inbox_btn = ('<button type="button" id="inboxbtn" aria-label="Open the inbox to Main">INBOX<b class="n" hidden></b></button>'
+                 if answers_on else "")
     page = (
-        f'<!doctype html><html lang="en"><head><meta charset="utf-8"><title>{f"({len(needs_now)}) " if needs_now else ""}Current</title>'
-        '<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">'
+        f'<!doctype html><html lang="en"><head><meta charset="utf-8"><title>{f"({len(needs_now)}) " if needs_now else ""}Deck</title>'
+        + (f'<base href="/"><script>if(location.pathname!=={json.dumps(page_url)})location.replace({json.dumps(page_url)}+location.hash);</script>'
+           if page_url else "")
+        + '<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">'
         '<meta name="theme-color" content="#0a0a0f"><meta name="apple-mobile-web-app-capable" content="yes">'
-        '<meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="Current">'
+        '<meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="Deck">'
         '<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">'
         f'<link rel="manifest" href="{PWA_MANIFEST}"><link rel="apple-touch-icon" href="{PWA_ICONS[180]}">'
         f'<link rel="icon" type="image/png" href="{PWA_ICONS[192]}">'
@@ -1416,7 +1475,7 @@ def render(paths, reason):
         f'<body data-rendered="{int(now)}"><div class="grid-bg"></div>'
         f'<div id="hud" data-swap title="{e(reason)}"'
         + (f' data-token="{answers.mint_token(now)}"' if answers_on else "")
-        + '><span class="brand">FM//CURRENT</span>'
+        + '><span class="brand">FM//DECK</span>' + inbox_btn +
         f'<span class="live" id="live"><span class="dot"></span> <span id="live-l">LIVE</span> · {age(now, now)}</span>'
         f'<span class="stat{" hot" if needs_now else " good"}">NEED<b>{len(needs_now)}</b></span>'
         f'<span class="stat">RUN<b>{len(running)}</b></span><span class="stat good">DONE<b>{len(done_today)}</b></span>'
@@ -1448,7 +1507,7 @@ def render(paths, reason):
         '<span class="sp"></span><span class="lbl">cleared this session <b id="cleared">0</b></span></div>'
         f'<div class="overlay" id="help" hidden><div class="box"><h2>Keys</h2><div class="keys">{keys_help}</div></div></div>'
         f'<div class="overlay" id="log" hidden data-swap><div class="box"><h2>Keeper log</h2>{notes_html}</div></div>'
-        + batches +
+        + batches + inbox +
         '<div id="toasts"></div>'
         f"<script>{PAGE_JS}</script>{fm_md.LINEAR_CARD}</body></html>")
     if answers_on:   # decisions first, so a tap on the new page never meets the previous render's revisions
@@ -1501,7 +1560,7 @@ def icon_png(size):
 def write_pwa_assets(page_dir, page_name):
     """manifest.json and the icons beside the page, so iOS Add to Home Screen opens it as a standalone app.
     Icons are drawn once (absent files only); the manifest is rewritten only when its content changes."""
-    manifest = json.dumps({"name": "FM Current", "short_name": "Current", "start_url": page_name, "scope": "./",
+    manifest = json.dumps({"name": "FM Deck", "short_name": "Deck", "start_url": page_name, "scope": "./",
                            "display": "standalone", "background_color": "#0a0a0f", "theme_color": "#0a0a0f",
                            "icons": [{"src": name, "sizes": f"{size}x{size}", "type": "image/png", "purpose": "any"}
                                      for size, name in PWA_ICONS.items()]}, indent=1) + "\n"
@@ -1537,8 +1596,9 @@ def write_atomic(path, content):
 
 
 def configured_paths():
-    """config/current-page: first plain line is the page; optional notes=<path> and curated=<path> lines, and
-    answers_origin=<origin> (bin/fm-current-answers.sh's header), which turns on the page's answer buttons."""
+    """config/current-page: first plain line is the page; optional notes=<path> and curated=<path> lines,
+    answers_origin=<origin> (bin/fm-current-answers.sh's header), which turns on the page's answer buttons, and
+    page_url=<path> (bin/fm-current-page.sh's header), the URL path the page is served at."""
     found = {}
     try:
         with open(os.path.join(HOME, "config", "current-page"), encoding="utf-8") as fh:
@@ -1546,9 +1606,12 @@ def configured_paths():
                 line = line.strip()
                 if not line or line.startswith("#"):
                     continue
-                key, val = line.split("=", 1) if re.match(r"^(notes|curated|answers_origin|answers_listen)=", line) else ("out", line)
+                key, val = line.split("=", 1) if re.match(r"^(notes|curated|answers_origin|answers_listen|page_url)=", line) else ("out", line)
                 if key in ("answers_origin", "answers_listen"):
                     found.setdefault(key, val)
+                elif key == "page_url":
+                    if re.fullmatch(r"/[\w./-]*", val):
+                        found.setdefault(key, val)
                 elif key not in found:
                     found[key] = val if os.path.isabs(val) else os.path.join(HOME, val)
     except OSError:

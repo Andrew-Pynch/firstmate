@@ -19,6 +19,7 @@ background grid at all, and the captain page's faint grid stays behind its panes
 bin/fm-current-page.py imports it.
 """
 import html
+import json
 import os
 import re
 import sys
@@ -332,6 +333,10 @@ main .md{max-width:920px;animation:boot .25s ease-out}
 body.notoc nav{display:none}body.notoc main{left:0}body.notoc main .md{margin:auto}
 .md section.fold>*:not(h2){display:none}.md section.fold>h2::after{content:" +";color:var(--dim)}
 .md h2{cursor:pointer}
+header a.back{font:600 12px var(--mono);letter-spacing:.06em;color:var(--acc);border:1px solid var(--acc-dim);border-radius:var(--r);padding:3px 10px;white-space:nowrap}
+a.back.bottom{position:fixed;right:18px;bottom:14px;z-index:50;background:rgba(13,17,23,.95);font:600 12px var(--mono);color:var(--acc);
+border:1px solid var(--acc);border-radius:var(--r);padding:6px 12px;box-shadow:var(--glow)}
+header a.back:hover,a.back.bottom:hover{text-decoration:none;background:rgba(255,136,0,.12)}
 """
 
 PAGE_JS = r"""
@@ -358,7 +363,7 @@ addEventListener("keydown",ev=>{if(ev.metaKey||ev.ctrlKey&&!"du".includes(ev.key
   t:()=>document.body.classList.toggle("notoc"),za:()=>{const s=sec();if(s)s.classList.toggle("fold");},
   zM:()=>{document.querySelectorAll(".md section").forEach(s=>s.classList.add("fold"));M.scrollTo({top:0});},
   zR:()=>document.querySelectorAll(".md section").forEach(s=>s.classList.remove("fold")),
-  "?":()=>help.hidden=!help.hidden,Escape:()=>help.hidden=true};
+  gb:()=>{location.href=BACK;},"?":()=>help.hidden=!help.hidden,Escape:()=>help.hidden=true};
  const f=act[two]||act[k];if(f){ev.preventDefault();f();requestAnimationFrame(sync);}
  else if(k==="g"||k==="z")pend=k;});
 help.addEventListener("click",()=>help.hidden=true);sync();
@@ -369,6 +374,9 @@ def sectioned(body_html):
     """Wrap each h2 and what follows it in a <section> so a section can fold."""
     parts = re.split(r"(?=<h2 id=)", body_html)
     return parts[0] + "".join(f"<section>{p}</section>" for p in parts[1:])
+
+
+BACK = "/current.html"  # the captain page every report links back to; same server root
 
 
 def page(md_text, title=None):
@@ -382,18 +390,20 @@ def page(md_text, title=None):
     source = md_text.replace("</", "<\\/")
     help_rows = [("j / k", "scroll"), ("d / u, ^d / ^u, space", "half page / page"), ("n / p, J / K, ] / [", "next / previous heading"),
                  ("gg / G", "top / bottom"), ("t", "toggle the outline"), ("za / zM / zR", "fold this section / fold all / open all"),
-                 ("?", "this help"), ("Esc", "close")]
+                 ("gb", "back to current"), ("?", "this help"), ("Esc", "close")]
     keys = "".join(f"<kbd>{e(k)}</kbd><span>{e(v)}</span>" for k, v in help_rows)
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8">'
             '<meta name="viewport" content="width=device-width,initial-scale=1">'
             f"<title>{e(title)}</title><style>{THEME_CSS}{MD_CSS}{PAGE_CSS}</style></head><body>"
-            f'<header><span class="brand">FM//REPORT</span><span class="title">{e(title)}</span>'
+            f'<header><span class="brand">FM//REPORT</span><a class="back" href="{BACK}">&#8592; back to current</a>'
+            f'<span class="title">{e(title)}</span>'
             f'<span class="lbl">{max(1, round(words / 230))} min · <span id="cnt"></span></span>'
             '<span class="lbl"><kbd>?</kbd> keys</span></header><div id="xp"></div>'
             f'<nav aria-label="Outline">{nav}</nav><main><article class="md">{body}</article></main>'
             f'<div class="overlay" id="help" hidden><div class="box"><h2>Keys</h2><div class="keys">{keys}</div></div></div>'
             f'<script type="text/markdown" id="md-src">{source}</script>'
-            f"<script>{PAGE_JS}</script></body></html>")
+            f'<a class="back bottom" href="{BACK}">&#8592; back to current</a>'
+            f'<script>const BACK={json.dumps(BACK)};{PAGE_JS}</script></body></html>')
 
 
 class _Source:

@@ -193,9 +193,44 @@ FAKEBIN="$SCRATCH/fakebin"
 mkdir -p "$FAKEBIN"
 cat > "$FAKEBIN/codex" <<EOF
 #!/usr/bin/env bash
-: > "$SCRATCH/codex-launched"
+pwd -P > "$SCRATCH/codex-launched"
 EOF
 chmod +x "$FAKEBIN/codex"
+
+# A legacy home endpoint must migrate before ordinary endpoint reuse is tested.
+# Use an absolute inert command: the replacement pane cannot inherit the old
+# pane's private PATH, and must not launch a real harness from the server PATH.
+LEGACY_WORKSPACE_ID=$WORKSPACE_ID
+LEGACY_PANE_ID=$PANE_ID
+LEGACY_CWD=$(fm_backend_herdr_current_path "$SESSION:$LEGACY_PANE_ID")
+printf -v INERT_LAUNCH 'bash %q' "$FAKEBIN/codex"
+OUT=$(env FM_HOME="$HOME_DIR" HERDR_SESSION="$SESSION" FM_SPAWN_NO_GUARD=1 \
+  "$ROOT/bin/fm-spawn.sh" hsmoke --relaunch --harness "$INERT_LAUNCH") \
+  || fail "a legacy home endpoint should migrate to an isolated task workspace: $OUT"
+WORKSPACE_ID=$(sed -n 's/^herdr_workspace_id=//p' "$HOME_DIR/state/hsmoke.meta")
+TAB_ID=$(sed -n 's/^herdr_tab_id=//p' "$HOME_DIR/state/hsmoke.meta")
+PANE_ID=$(sed -n 's/^herdr_pane_id=//p' "$HOME_DIR/state/hsmoke.meta")
+[ -n "$PANE_ID" ] && [ "$PANE_ID" != "$LEGACY_PANE_ID" ] \
+  || fail "legacy home relaunch reused the supervisor pane"
+[ "$WORKSPACE_ID" != "$LEGACY_WORKSPACE_ID" ] \
+  || fail "legacy home relaunch reused the supervisor workspace"
+[ "$(herdr workspace get "$WORKSPACE_ID" --session "$SESSION" | jq -r '.result.workspace.label')" = fm-hsmoke ] \
+  || fail "legacy home relaunch did not create the task workspace"
+herdr pane get "$LEGACY_PANE_ID" --session "$SESSION" >/dev/null 2>&1 \
+  || fail "legacy home relaunch removed the supervisor pane"
+[ "$(fm_backend_herdr_current_path "$SESSION:$LEGACY_PANE_ID")" = "$LEGACY_CWD" ] \
+  || fail "legacy home relaunch changed the supervisor pane's working directory"
+for _ in $(seq 1 20); do
+  [ ! -e "$SCRATCH/codex-launched" ] || break
+  sleep 0.1
+done
+[ "$(cat "$SCRATCH/codex-launched" 2>/dev/null)" = "$WT_REAL" ] \
+  || fail "the migrated task did not launch in its recorded worktree"
+[ "$(sed -n 's/^window=//p' "$HOME_DIR/state/hsmoke.meta")" = "$SESSION:$PANE_ID" ] \
+  || fail "legacy home relaunch did not record the replacement endpoint"
+rm -f "$SCRATCH/codex-launched"
+pass "real herdr: legacy home relaunch isolates the task and preserves the supervisor pane"
+
 printf -v FAKEBIN_Q '%q' "$FAKEBIN"
 printf -v PROJ_Q '%q' "$PROJ"
 fm_backend_herdr_send_text_line "$SESSION:$PANE_ID" "export PATH=$FAKEBIN_Q:\$PATH" \

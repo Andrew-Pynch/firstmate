@@ -1474,6 +1474,36 @@ EOF
   pass "a secondmate home publishes each hold occurrence and its answer on the parent channel"
 }
 
+# A reconcile selection made where no captured source exists (chat, the queue
+# program) is recorded by the explicit `reconcile request` verb: it refuses a
+# task that is not an open captain call, is idempotent, and its request is what
+# lets `reconcile close` record the evidence.
+test_explicit_reconcile_request_records_then_closes() {
+  local home out evidence request first
+  home=$(make_home explicit-reconcile-request)
+  tasks_in "$home" add explicit-call "Explicit reconcile call" --kind ship --repo sample >/dev/null \
+    || fail "could not create the explicit reconcile call"
+  out=$(run_captain "$home" reconcile request explicit-call --source "captain in chat" 2>&1) \
+    && fail "a reconcile request on a task not held for the captain succeeded: $out"
+  run_captain "$home" hold explicit-call --reason "verify current release state" >/dev/null \
+    || fail "could not hold the explicit reconcile call"
+  out=$(run_captain "$home" reconcile request explicit-call --source "captain in chat" --note "check the tag") \
+    || fail "the explicit reconcile request was refused: $out"
+  assert_contains "$out" "reconcile: explicit-call" "the explicit request did not report its record"
+  request="$home/state/reconcile-requests/explicit-call.request"
+  [ -f "$request" ] || fail "the explicit request left no durable record"
+  first=$(cat "$request")
+  out=$(run_captain "$home" reconcile request explicit-call --source "captain in chat again")
+  assert_contains "$out" "reconcile-kept: explicit-call" "a repeated request did not keep the first record"
+  [ "$(cat "$request")" = "$first" ] || fail "a repeated request rewrote the original request"
+  evidence="$home/explicit-evidence.txt"
+  printf 'The tag already shipped.\n' > "$evidence"
+  run_captain "$home" reconcile close explicit-call --evidence-file "$evidence" >/dev/null \
+    || fail "reconcile close refused an explicitly requested call"
+  [ ! -e "$request" ] || fail "reconcile close did not retire the explicit request"
+  pass "an explicit reconcile request records once, refuses non-captain tasks, and enables reconcile close"
+}
+
 test_secondmate_reconcile_publishes_before_request_retirement() {
   local parent mate channel evidence out show rc request
   parent=$(make_home reconcile-parent-channel)
@@ -4789,6 +4819,7 @@ test_terminal_single_owner_status_decision_does_not_block_empty_inventory
 test_secondmate_hold_stays_in_authoritative_home
 test_secondmate_home_publishes_holds_and_answers
 test_secondmate_reconcile_publishes_before_request_retirement
+test_explicit_reconcile_request_records_then_closes
 test_bound_channel_answers_close_at_answer_time
 test_reconcile_never_closes_through_the_keyed_answer_intake
 test_normal_answers_retire_pending_reconcile_requests

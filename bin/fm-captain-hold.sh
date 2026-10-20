@@ -33,6 +33,7 @@
 #   fm-captain-hold.sh open <task-id> [--identity] [--distinguish-absent]
 #   fm-captain-hold.sh diverged
 #   fm-captain-hold.sh reconcile list
+#   fm-captain-hold.sh reconcile request <task-id> --source <provenance> [--note <note>]
 #   fm-captain-hold.sh reconcile close <task-id> --evidence-file <path>
 #   fm-captain-hold.sh reconcile note <task-id> --note-file <path>
 #
@@ -103,7 +104,10 @@
 # visibly refuses it, and never passes it to `answer`, so no channel and no
 # card-declared mode can turn it into a close, release, or request. A separate
 # `reconcile-requests` intake verifies a captured source's binding before it
-# records a durable request under `state/reconcile-requests/`.
+# records a durable request under `state/reconcile-requests/`, and `reconcile
+# request` records the same request directly for a selection the captain made
+# on a surface with no captured source (chat, or the queue program), after
+# checking the task is still an open captain call.
 #
 # `reconcile` is the verify-then-decide half. Both outcomes require the pending
 # request created by the captain's board selection. `close` is the moot outcome:
@@ -1732,8 +1736,44 @@ command_reconcile() {
     list)    reconcile_list "$@" ;;
     close)   reconcile_close "$@" ;;
     note)    reconcile_note "$@" ;;
+    request) reconcile_request "$@" ;;
     *) usage >&2; exit 2 ;;
   esac
+}
+
+# Record the durable obligation to re-check one captain call from a selection
+# the captain made outside a captured source. Idempotent per task: a repeated
+# selection keeps the one request and its original timestamp.
+reconcile_request() {
+  local id=${1:-} source='' note='' provenance
+  [ "$#" -ge 1 ] || { usage >&2; exit 2; }
+  shift
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --source) shift; source=${1:-} ;;
+      --note) shift; note=${1:-} ;;
+      *) usage >&2; exit 2 ;;
+    esac
+    shift
+  done
+  case "$id" in
+    ''|*[!A-Za-z0-9._-]*) fail "invalid task id: $id" ;;
+  esac
+  [ -n "$source" ] || fail "--source provenance is required so the durable request records where the re-check came from"
+  source=$(sanitize_field "$source")
+  command_open "$id" >/dev/null \
+    || fail "task $id is not an open captain call; there is nothing to re-check"
+  acquire_task_control_lock "$id"
+  provenance=$source
+  [ -z "$note" ] || provenance="$source; captain note: $(sanitize_field "$note")"
+  if [ -e "$(reconcile_request_path "$id")" ]; then
+    printf 'reconcile-kept: %s\n' "$id"
+  elif reconcile_request_record "$id" "$provenance"; then
+    printf 'reconcile: %s\n' "$id"
+  else
+    fail "cannot record the reconcile request for $id"
+  fi
+  release_task_control_lock || fail "cannot release task control for $id"
 }
 
 reconcile_list() {

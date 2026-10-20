@@ -16,7 +16,10 @@ THEME_CSS is the single owner of the shared look (andrewpynch.com's NERV
 palette: near-black panes, 2px geometry, orange accent, teal data, red alert,
 monospace labels). No overlay ever sits on top of content: report pages carry no
 background grid at all, and the captain page's faint grid stays behind its panes.
-bin/fm-current-page.py imports it.
+bin/fm-current-page.py imports it. LINEAR_CARD is the one owner of the Linear hover
+card every captain page carries: each STA-NNNN in the page text, found in the DOM
+at load and as text arrives, shows its card from bin/fm-current-answers.sh's
+GET /api/linear/<id>.
 """
 import html
 import json
@@ -369,6 +372,62 @@ addEventListener("keydown",ev=>{if(ev.metaKey||ev.ctrlKey&&!"du".includes(ev.key
 help.addEventListener("click",()=>help.hidden=true);sync();
 """
 
+# Every STA-NNNN in a served page's text becomes a hover (or tap) card from the answers server's
+# GET /api/linear/<id> (bin/fm-current-answers.sh owns the route and its 10 min cache). Found in the
+# rendered DOM, including text added later, so no author marks anything; a page opened from disk stays plain.
+LINEAR_CARD = r"""<style>
+.sta{border-bottom:1px dotted var(--data,#00ddaa);cursor:help}
+#sta-card{position:fixed;z-index:2147483600;width:max-content;max-width:min(470px,92vw);background:var(--raised,#161b22);
+color:var(--fg,#e6edf3);border:1px solid var(--acc,#ff8800);border-radius:2px;box-shadow:0 8px 30px rgba(0,0,0,.6);
+padding:10px 12px;font:13px/1.4 system-ui,-apple-system,sans-serif;text-align:left;white-space:normal;letter-spacing:0}
+#sta-card .h{display:flex;flex-wrap:wrap;gap:8px;align-items:center;font:600 12px ui-monospace,monospace;color:var(--fg2,#8b949e)}
+#sta-card .h a{color:var(--acc,#ff8800)}#sta-card .s{padding:0 6px;border:1px solid currentColor;border-radius:2px}
+#sta-card .completed{color:#00ddaa}#sta-card .started{color:#ffcc00}#sta-card .canceled,#sta-card .duplicate{color:#ff3366}
+#sta-card .nc{color:var(--link,#7cc4ff)}#sta-card .t{font-weight:600;margin:6px 0 4px;font-size:14px}
+#sta-card .b{white-space:pre-wrap;color:var(--fg2,#8b949e);font:12px/1.35 ui-monospace,monospace;max-height:16em;overflow:hidden}
+#sta-card .ms{margin-top:7px;font-size:12px;color:var(--data,#00ddaa)}
+</style><script>(()=>{if(!/^https?:$/.test(location.protocol))return;
+const RE=/\bSTA-\d{1,6}\b/g,SKIP=/^(SCRIPT|STYLE|TEXTAREA|INPUT|SELECT|NOSCRIPT|OPTION)$/,got=new Map();let card,tShow=0,tHide=0,at=null;
+function skip(n){for(let p=n.parentNode;p&&p.nodeType===1;p=p.parentNode)
+ if(SKIP.test(p.tagName)||p.isContentEditable||p.classList.contains("sta")||p.id==="sta-card")return true;return false;}
+function scan(root){if(!root||root.id==="sta-card")return;const w=document.createTreeWalker(root,NodeFilter.SHOW_TEXT),hits=[];
+ if(root.nodeType===3){if(/STA-\d/.test(root.nodeValue)&&!skip(root))hits.push(root);}
+ else while(w.nextNode()){const n=w.currentNode;if(/STA-\d/.test(n.nodeValue)&&!skip(n))hits.push(n);}
+ for(const n of hits){const t=n.nodeValue,f=document.createDocumentFragment();let last=0,m;RE.lastIndex=0;
+  while((m=RE.exec(t))){if(m.index>last)f.append(t.slice(last,m.index));const s=document.createElement("span");
+   s.className="sta";s.dataset.sta=m[0];s.textContent=m[0];f.append(s);last=m.index+m[0].length;}
+  if(last){if(last<t.length)f.append(t.slice(last));n.replaceWith(f);}}}
+function get(id){const c=got.get(id);if(c&&Date.now()-c.at<60000)return c.p;
+ const p=fetch("/api/linear/"+id,{credentials:"same-origin"}).then(r=>r.json().then(j=>({ok:r.ok,code:r.status,j}),()=>({ok:false,code:r.status,j:{}})),
+  ()=>({ok:false,code:0,j:{}}));got.set(id,{at:Date.now(),p});return p;}
+function el(tag,cls,text,parent){const x=document.createElement(tag);if(cls)x.className=cls;if(text!=null)x.textContent=text;parent.append(x);return x;}
+function place(s){const r=s.getBoundingClientRect(),c=card.getBoundingClientRect();
+ let top=r.bottom+6;if(top+c.height>innerHeight-8)top=Math.max(8,r.top-c.height-6);
+ card.style.top=top+"px";card.style.left=Math.max(8,Math.min(r.left,innerWidth-c.width-8))+"px";}
+function fill(s,res){if(at!==s)return;card.textContent="";const j=res.j,h=el("div","h",null,card);
+ const a=el("a",null,j.id||s.dataset.sta,h);a.href=j.url||"https://linear.app/starcube/issue/"+s.dataset.sta;a.target="_blank";a.rel="noopener";
+ if(!res.ok){el("span",null,res.code===404?"not found in Linear":"Linear card unavailable ("+(res.code||"offline")+")",h);return place(s);}
+ el("span","s "+(j.state_type||""),j.state||"?",h);if(!j.counted)el("span","s nc","not counted toward completion",h);
+ el("span",null,j.assignee||"unassigned",h);el("div","t",j.title||"",card);
+ if(j.body&&j.body.length)el("div","b",j.body.join("\n")+(j.more?"\n…":""),card);
+ const m=j.milestone;if(m&&m.pct!=null)el("div","ms",m.name+": "+m.done+"/"+m.total+" done, "+m.pct+"% (References, canceled and duplicates not counted)",card);
+ place(s);}
+function show(s){at=s;if(!card){card=document.createElement("div");card.id="sta-card";document.body.append(card);
+  card.addEventListener("mouseenter",()=>clearTimeout(tHide));card.addEventListener("mouseleave",()=>{tHide=setTimeout(hide,250);});}
+ card.hidden=false;card.textContent=s.dataset.sta+": loading from Linear…";place(s);get(s.dataset.sta).then(res=>fill(s,res));}
+function hide(){at=null;if(card)card.hidden=true;}
+document.addEventListener("mouseover",ev=>{const s=ev.target.closest&&ev.target.closest(".sta");if(!s)return;
+ clearTimeout(tHide);clearTimeout(tShow);if(at!==s)tShow=setTimeout(()=>show(s),180);});
+document.addEventListener("mouseout",ev=>{const s=ev.target.closest&&ev.target.closest(".sta");if(!s)return;
+ clearTimeout(tShow);tHide=setTimeout(hide,250);});
+document.addEventListener("click",ev=>{const s=ev.target.closest&&ev.target.closest(".sta");
+ if(s&&!s.closest("a")){ev.stopPropagation();at===s&&card&&!card.hidden?hide():show(s);}
+ else if(!(card&&card.contains(ev.target)))hide();},true);
+addEventListener("keydown",ev=>{if(ev.key==="Escape")hide();});
+scan(document.body);new MutationObserver(ms=>{for(const m of ms)for(const n of m.addedNodes)
+ if(n.nodeType===3?n.parentNode:n.nodeType===1&&!n.classList.contains("sta"))scan(n);}).observe(document.body,{childList:true,subtree:true});
+})();</script>"""
+
 
 def sectioned(body_html):
     """Wrap each h2 and what follows it in a <section> so a section can fold."""
@@ -403,7 +462,7 @@ def page(md_text, title=None):
             f'<div class="overlay" id="help" hidden><div class="box"><h2>Keys</h2><div class="keys">{keys}</div></div></div>'
             f'<script type="text/markdown" id="md-src">{source}</script>'
             f'<a class="back bottom" href="{BACK}">&#8592; back to current</a>'
-            f'<script>const BACK={json.dumps(BACK)};{PAGE_JS}</script></body></html>')
+            f'<script>const BACK={json.dumps(BACK)};{PAGE_JS}</script>{LINEAR_CARD}</body></html>')
 
 
 class _Source:

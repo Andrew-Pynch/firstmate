@@ -101,12 +101,34 @@ for text, want in cases.items():
 PY
 pass "options come from lettered choices, yes/no, and merge/close; anything else gets a text box"
 
+python3 - "$ROOT/bin" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1])
+import fm_current_answers as a
+st = lambda name, kind: {"name": name, "type": kind}
+issue = {"identifier": "STA-1", "title": "Notes", "url": "https://linear.app/x/issue/STA-1",
+         "description": "\n".join(f"line {i}" for i in range(20)), "state": st("References", "completed"),
+         "projectMilestone": {"name": "Sprint 2", "issues": {"nodes": [{"state": s} for s in [
+             st("Done", "completed"), st("Done", "completed"), st("References", "completed"), st("References", "completed"),
+             st("In Progress", "started"), st("Todo", "unstarted"), st("Canceled", "canceled"), st("Duplicate", "duplicate")]]}}}
+c = a.card(issue)
+assert c["counted"] is False, c
+assert c["milestone"] == {"name": "Sprint 2", "done": 2, "total": 4, "pct": 50}, c["milestone"]
+assert len(c["body"]) == a.CARD_LINES and c["more"], c["body"]
+assert a.card({**issue, "state": st("Done", "completed")})["counted"] is True
+assert a.completion([st("References", "completed")])["pct"] is None
+PY
+pass "References tickets count neither done nor outstanding in a card's milestone completion"
+
 : > "$TMP_ROOT/server.log"
+unset FM_LINEAR_API_KEY
 "$ROOT/bin/fm-current-answers.sh" >"$TMP_ROOT/server.log" 2>&1 &
 server_pid=$!
 trap 'kill "$server_pid" 2>/dev/null || true; fm_test_cleanup' EXIT
 for _ in $(seq 1 50); do curl -fsS "$BASE/api/health" >/dev/null 2>&1 && break; sleep 0.1; done
 curl -fsS "$BASE/api/health" >/dev/null || fail "endpoint did not start: $(cat "$TMP_ROOT/server.log")"
+expect_code 503 "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/linear/STA-1")" "a Linear card with no key configured"
+expect_code 404 "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/linear/not-an-id")" "a malformed issue id"
 
 TOKEN=$(python3 -c 'import re,sys; print(re.search(r"data-token=\"([^\"]+)\"", open(sys.argv[1]).read()).group(1))' "$PAGE")
 REV=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["decisions"]["pick-plan"]["rev"])' "$HOME_DIR/state/.current-page/decisions.json")

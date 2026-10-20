@@ -18,7 +18,12 @@
 #                                          tailnet-only `tailscale serve` path that
 #                                          already serves the page, for example
 #                                          `tailscale serve --bg --https=8449 --set-path /api http://127.0.0.1:8451`.
-# FM_CURRENT_ANSWERS_ORIGIN and FM_CURRENT_ANSWERS_LISTEN override the two lines.
+#   linear_key_file=<path>                 optional file holding a Linear API key, as a
+#                                          `*LINEAR_API_KEY=<key>` line or the bare key;
+#                                          FM_LINEAR_API_KEY overrides it. Without a key
+#                                          GET /linear/<id> answers 503 and pages show
+#                                          "Linear card unavailable".
+# FM_CURRENT_ANSWERS_ORIGIN and FM_CURRENT_ANSWERS_LISTEN override the first two lines.
 #
 # Routes (an `/api` prefix is accepted and stripped, so it works whether or not
 # the proxy strips its mount path):
@@ -26,6 +31,13 @@
 #   GET  /answers   the last 48 h of answers, newest per decision, each with
 #                   state received (in Main's inbox), seen (Main acknowledged the
 #                   note), or answered (Main published a reply), and the reply text.
+#   GET  /linear/<ID-123>  the hover card bin/fm_md.py's LINEAR_CARD shows for every
+#                   STA-NNNN in a served page: title, state, assignee, the body's
+#                   first 12 lines, and the issue's milestone completion. Cached
+#                   10 min per issue (30 s after an upstream failure). The
+#                   References state, canceled, and duplicates never count toward
+#                   completion, as done or as outstanding; "counted" says which.
+#                   200, 404 when Linear has no such issue, 502 upstream, 503 no key.
 #   GET  /health
 #
 # Security contract for POST /answer, each check refusing before anything is queued:

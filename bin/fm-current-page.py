@@ -1388,7 +1388,7 @@ def render(paths, reason):
         f'<div class="overlay" id="help" hidden><div class="box"><h2>Keys</h2><div class="keys">{keys_help}</div></div></div>'
         f'<div class="overlay" id="log" hidden data-swap><div class="box"><h2>Keeper log</h2>{notes_html}</div></div>'
         '<div id="toasts"></div>'
-        f"<script>{PAGE_JS}</script></body></html>")
+        f"<script>{PAGE_JS}</script>{fm_md.LINEAR_CARD}</body></html>")
     if answers_on:   # decisions first, so a tap on the new page never meets the previous render's revisions
         answers.write_decisions(decisions, now)
     write_atomic(paths["out"], page)

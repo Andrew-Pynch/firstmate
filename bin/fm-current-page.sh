@@ -84,10 +84,9 @@
 #     covers yet. A need tied to a backlog row ("task") leaves the page the moment
 #     that row stops being an open captain hold (answered, released, done, or
 #     deferred). A need with no "task" whose "key" names a backlog row is tied
-#     to that row the same way. Any other need whose "key" names no open
-#     keyed decision in a status log is marked UNBACKED, on its row and in a
-#     banner, because an answer to it has no record to close. Raw status lines
-#     never reach this pane; the one structured exception is a worker's open
+#     to that row the same way. Any other need is marked UNBACKED, on its row
+#     and in a banner, because an answer to it has no held row to close. Raw
+#     status lines never reach this pane; the one structured exception is a worker's open
 #     human-step decision (fm_human_step_url in bin/fm-classify-lib.sh), shown
 #     as the step's link, its URL as a copy block, and a Done answer, until Main
 #     closes that decision or a curated need about the same worker replaces it.

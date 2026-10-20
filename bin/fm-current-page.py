@@ -1489,10 +1489,8 @@ def render(paths, reason):
                + docs(task, who) + slot_ctl(n.get("why"), link, n.get("do")))
         return item_div("need:" + (task or str(n["t"])), row, det, href=link if re.match(r"https?://", link) else "",
                         task=task, cls=heat(asked) + (" dim" if stale else ""))
-    # A need is backed when its task (or, with no task, a key naming a backlog row) is an open captain
-    # hold, or its key names an open keyed decision in a status log (a second mate's routed call); any
-    # other need is marked UNBACKED, since an answer to it has no record to close.
-    open_keys = {d["key"] for ds in open_by_task.values() for d in ds if d.get("key")}
+    # A need is backed only when its task (or, with no task, a key naming a backlog row) is an open
+    # captain hold in this home; any other need is marked UNBACKED, since an answer to it has no row to close.
     row_ids = set(calls) | set(titles) | {r["id"] for r in done or [] if r.get("id")}
     needs_now, needs_stale, curated_tasks, asks, unbacked_keys = [], [], set(), [], []
     for n in cur["needs"]:
@@ -1503,7 +1501,7 @@ def render(paths, reason):
             curated_tasks.add(task)
             if held is not None and (task not in calls or calls[task]["deferred"]):
                 continue
-        unbacked = held is not None and not task and key not in open_keys
+        unbacked = held is not None and not task
         if unbacked:
             unbacked_keys.append(key or str(n["t"]))
         asked = ts_of(n.get("asked")) or calls.get(task, {}).get("asked")

@@ -146,11 +146,11 @@ assert_contains "$(page_part held-stale)" 'Ask TJ to upgrade' "a need not re-che
 assert_contains "$(page_part held-stale)" 'checked 3h ago' "a stale need says when it was last checked"
 assert_not_contains "$page" 'page keeper last checked' "a fresh keeper check raises no banner"
 assert_contains "$needs" 'task=call-keyed' "a need whose key is a held row is tied to that row"
-assert_contains "$needs" 'UNBACKEDRestart window' "a need with no held row or open keyed decision is marked unbacked"
+assert_contains "$needs" 'UNBACKEDRestart window' "a need with no held row is marked unbacked"
 assert_not_contains "$needs" 'UNBACKEDKeyed need' "a need whose key is a held row is backed"
-assert_not_contains "$needs" 'UNBACKEDRouted color call' "a need whose key is an open keyed decision is backed"
+assert_contains "$needs" 'UNBACKEDRouted color call' "a need keyed only by a status-log decision has no held row, so it is unbacked"
 assert_not_contains "$needs" 'UNBACKEDPick the banner color' "a need tied to a held task is backed"
-assert_contains "$page" 'marked UNBACKED: Ask TJ to upgrade, restart-window.' "the banner names every unbacked need"
+assert_contains "$page" 'marked UNBACKED: Ask TJ to upgrade, pick-color, restart-window.' "the banner names every unbacked need"
 pass "Needs you now holds only current, linked, aged needs"
 
 running=$(page_part running-now)

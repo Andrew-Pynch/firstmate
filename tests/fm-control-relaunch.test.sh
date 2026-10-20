@@ -900,6 +900,29 @@ test_native_ultra_relaunch_preserves_profile_and_rejects_before_stop() {
   pass "native Ultra relaunch preserves its profile and rejects an unsupported model before stopping"
 }
 
+test_omp_relaunch_keeps_its_service_tier_and_a_switch_drops_it() {
+  local dir out rc id=rl-tier
+  dir=$(new_case omp-tier "$id")
+  add_ship_task "$dir" "$id" omp
+  printf omp > "$dir/fake/command"
+  printf omp > "$dir/fake/becomes"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$dir/fakebin/omp"
+  chmod +x "$dir/fakebin/omp"
+  printf 'service_tier=ultrafast\n' >> "$dir/home/state/$id.meta"
+  out=$(run_control "$dir" "$id" relaunch --note "same runtime"); rc=$?
+  expect_code 0 "$rc" "a same-harness omp relaunch should succeed"$'\n'"$out"
+  [ "$(meta_field "$dir" "$id" service_tier)" = ultrafast ] || fail "the service tier should carry across an omp relaunch"
+  assert_contains "$(cat "$dir/fake/literal")" "--service-tier 'ultrafast'" "the replacement omp launch lost its service tier"
+  assert_contains "$out" "service_tier=ultrafast" "the relaunch report should name the service tier it kept"
+  : > "$dir/fake/literal"
+  printf claude > "$dir/fake/becomes"
+  out=$(run_control "$dir" "$id" relaunch --harness claude --note "switching runtime"); rc=$?
+  expect_code 0 "$rc" "a switch off omp should succeed rather than refuse the recorded tier"$'\n'"$out"
+  [ -z "$(meta_field "$dir" "$id" service_tier)" ] || fail "a harness without the flag must not inherit the recorded tier"
+  assert_not_contains "$(cat "$dir/fake/literal")" "--service-tier" "the claude replacement must carry no service tier"
+  pass "fm-control relaunch: an omp task keeps its service tier and a harness switch drops it"
+}
+
 # A fake claude that answers `claude auth status` the way the real runner
 # does: signed in only when the selected config root holds a stored login.
 make_claude_auth_stub() {  # <case-dir>
@@ -3021,6 +3044,7 @@ test_harness_switch_resolves_a_prefixed_recorded_harness
 test_prefixed_recorded_harness_requires_explicit_replacement
 test_same_harness_relaunch_keeps_the_profile_axes
 test_native_ultra_relaunch_preserves_profile_and_rejects_before_stop
+test_omp_relaunch_keeps_its_service_tier_and_a_switch_drops_it
 test_signed_out_worker_account_pin_refuses_before_stop
 test_worker_account_pin_follows_the_relaunch
 test_secondmate_account_pin_follows_relaunch_and_refuses_before_stop

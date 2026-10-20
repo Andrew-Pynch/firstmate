@@ -665,26 +665,29 @@ None of these three runs ever answered its dialog (Escape only, never Enter), so
 
 ## Worker account pin sign-in check
 
-`bin/fm-worker-account-lib.sh` decides whether a pinned account is signed in from vendor output: the exit status of `claude auth status`, the JSON of `pi auth check`, and the provider column of `pi --list-models`.
+`bin/fm-worker-account-lib.sh` decides whether a pinned account is signed in from vendor output: the exit status of `claude auth status`, the JSON of `pi auth check`, the provider column of `pi --list-models`, and the JSON of `omp usage accounts`.
 `tests/fm-worker-account-live-e2e.test.sh` asks the real installed runners about synthetic roots that need no login and no network, under a throwaway `HOME`.
 A Claude root whose `settings.json` names an `apiKeyHelper` reports `loggedIn: true`, a Pi root holding a stored API key reports `ready`, and a provider registered by an extension in the Pi root's `extensions/` answers `pi auth check` with `not_ready`/`provider_not_found` while `pi --list-models` lists it.
+An omp root that received a synthetic, never-valid OAuth login through `omp auth import` lists it under `omp usage accounts --json --provider openai-codex`, and an empty root lists none.
 Each refusal is paired with the divergence it depends on: the same runner, given `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or the extension's key variable, answers signed in for the empty root, so the refusal proves the check's cleared environment.
 Replacing `env -i` with `env` in the check makes the guard fail on the Claude refusal.
+For omp the divergence is a named profile: the same signed-in root lists no account once `OMP_PROFILE` is set, because omp resolves a profile's agent directory ahead of `PI_CODING_AGENT_DIR`, which is why a pinned omp launch unsets `OMP_PROFILE` and `PI_PROFILE`.
 
-Verified 2026-09-22 on Claude Code 2.1.278 and pi 0.86.1 on Linux; pi-signed was not installed.
+Verified 2026-10-20 on Claude Code 2.1.304, pi 1.3.0, and omp 18.11.0 on Linux; pi-signed was not installed.
 
 ```sh
 bash tests/fm-worker-account-live-e2e.test.sh
 ```
 
 ```
-ok - claude 2.1.278 (Claude Code): the pin check accepts a signed-in root and refuses an empty one despite an ambient API key
-ok - pi 0.86.1: the pin check reads auth check and the model listing, and refuses what only an ambient credential signs in
+ok - claude 2.1.304 (Claude Code): the pin check accepts a signed-in root and refuses an empty one despite an ambient API key
+ok - pi 1.3.0: the pin check reads auth check and the model listing, and refuses what only an ambient credential signs in
 skip-runner: pi-signed is not installed, so its pin check was not exercised
-# worker account live guard checked: claude pi
+ok - omp 18.11.0: the pin check reads the root's stored logins, and a named profile would replace the pinned root
+# worker account live guard checked: claude pi omp
 ```
 
-The guard submits no prompt and spends no tokens, so it runs by default wherever a runner is installed; rerun it after every Claude or Pi upgrade.
+The guard submits no prompt and spends no tokens, so it runs by default wherever a runner is installed; rerun it after every Claude, Pi, or omp upgrade.
 
 ## Secondmate busy contract
 

@@ -11,6 +11,7 @@
 # process select:
 #   claude          CLAUDE_CONFIG_DIR     config/claude-account
 #   pi, pi-signed   PI_CODING_AGENT_DIR   config/pi-account
+#   omp             PI_CODING_AGENT_DIR   config/omp-account
 #
 # The pin is opt-in: an absent file is no pin, and the launch keeps today's
 # ambient behavior byte for byte. A present file must resolve, or the launch
@@ -18,22 +19,24 @@
 # home has declared one. `ordinary` selects the vendor default: for Claude
 # that is CLAUDE_CONFIG_DIR unset, because Claude reads $CLAUDE_CONFIG_DIR/
 # .claude.json and keys its macOS Keychain entry to any CLAUDE_CONFIG_DIR that
-# is set, even $HOME/.claude; for Pi it is $HOME/.pi/agent. Any other value is
-# one absolute path to an existing readable, searchable directory. Firstmate
-# never copies credentials or changes a global login.
+# is set, even $HOME/.claude; for Pi it is $HOME/.pi/agent, and for omp
+# $HOME/.omp/agent. Any other value is one absolute path to an existing
+# readable, searchable directory. Firstmate never copies credentials or changes
+# a global login.
 #
-# A Pi root can hold several provider identities, so config/pi-account names
-# the root on line 1 and the providers that home may spend on line 2,
-# separated by spaces. A pinned Pi launch must name its provider explicitly as
-# --model <provider>/<id>, and that provider must be declared; Firstmate never
-# guesses a provider for an unqualified model. The canonical launch also
-# passes --provider <that provider>, because without it Pi may resolve a
-# provider-prefixed model under another authenticated provider. A raw Pi
-# launch command is launched verbatim and cannot receive that flag, so a home
-# with config/pi-account refuses raw Pi launches. A raw Claude launch command
-# runs after the pinned root and shed credentials are applied, so its own
-# leading CLAUDE_CONFIG_DIR or shed-credential assignment would override the
-# pin; a home with config/claude-account refuses such a command.
+# A Pi or omp root can hold several provider identities, so config/pi-account
+# and config/omp-account name the root on line 1 and the providers that home
+# may spend on line 2, separated by spaces. A pinned Pi or omp launch must name
+# its provider explicitly as --model <provider>/<id>, and that provider must be
+# declared; Firstmate never guesses a provider for an unqualified model. The
+# canonical Pi launch also passes --provider <that provider>, because without
+# it Pi may resolve a provider-prefixed model under another authenticated
+# provider. A raw Pi or omp launch command is launched verbatim and cannot
+# receive the pinned launch shape, so a home with config/pi-account or
+# config/omp-account refuses raw launches of that runner. A raw Claude launch
+# command runs after the pinned root and shed credentials are applied, so its
+# own leading CLAUDE_CONFIG_DIR or shed-credential assignment would override
+# the pin; a home with config/claude-account refuses such a command.
 #
 # The sign-in check asks the runner itself, with only HOME, PATH, TMPDIR,
 # USER, LOGNAME, and the selected root in its environment, so a credential
@@ -47,11 +50,18 @@
 #           a root can authenticate; a row whose provider column is exactly
 #           <p> passes. --no-refresh keeps the check from rewriting a root's
 #           tokens while other workers use them.
+#   omp:    `omp usage accounts --json --provider <p>`, which lists the OAuth
+#           logins stored in the root's own agent.db without refreshing them;
+#           at least one account whose provider is exactly <p> passes. The
+#           listing holds OAuth logins only, so an omp pin selects among
+#           subscription logins, and an API-key-only provider refuses.
 # A pinned Claude launch also unsets the environment credentials Claude ranks
 # above the root's stored login, so an ambient API key or token cannot outrank
 # the pin. Pi ranks a root's stored credentials above environment variables,
 # and the check refuses a provider the root has not stored, so a pinned Pi
-# launch unsets nothing.
+# launch unsets nothing. omp resolves a named profile (OMP_PROFILE or
+# PI_PROFILE) ahead of PI_CODING_AGENT_DIR, so a pinned omp launch, made by
+# bin/fm-spawn.sh, unsets both.
 
 # shellcheck source=bin/fm-timeout-lib.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-timeout-lib.sh"
@@ -70,6 +80,7 @@ fm_worker_account_file() {
   case "$1" in
   claude) printf '%s\n' claude-account ;;
   pi | pi-signed) printf '%s\n' pi-account ;;
+  omp) printf '%s\n' omp-account ;;
   *) return 1 ;;
   esac
 }
@@ -145,7 +156,7 @@ fm_worker_account_resolve() {
     return 1
     ;;
   *)
-    if [ "$file" = pi-account ]; then
+    if [ "$file" != claude-account ]; then
       echo "error: $setting must hold 'ordinary' or one absolute path on line 1 and the providers this home may spend on line 2, separated by spaces, with no other lines or control characters: $cfg" >&2
     else
       echo "error: $setting must hold 'ordinary' or one absolute path on a single line with no control characters: $cfg" >&2
@@ -158,11 +169,13 @@ fm_worker_account_resolve() {
   # shellcheck disable=SC2088  # The fallbacks are literal text for the refusal.
   case "$harness" in
   claude) fallback='~/.claude with CLAUDE_CONFIG_DIR unset' ;;
+  omp) fallback='~/.omp/agent' ;;
   *) fallback='~/.pi/agent' ;;
   esac
   if [ "$declared" = ordinary ]; then
     case "$harness" in
     claude) root= ;;
+    omp) root="${HOME:?HOME is required to resolve an ordinary omp account}/.omp/agent" ;;
     *) root="${HOME:?HOME is required to resolve an ordinary Pi account}/.pi/agent" ;;
     esac
   fi
@@ -235,6 +248,25 @@ fm_worker_account_check() {
     echo "error: $setting pins Pi workers to $declared, which is not signed in for provider '$provider' ($verdict); sign in with PI_CODING_AGENT_DIR=$root $harness, then /login, or change the pin" >&2
     return 1
     ;;
+  omp)
+    # Under a migrated XDG layout omp's default store lives in $XDG_*_HOME/omp
+    # whenever the selected root is ~/.omp/agent, so those locations, which
+    # carry no credential, reach the check as they reach the worker.
+    for name in XDG_DATA_HOME XDG_STATE_HOME XDG_CACHE_HOME; do
+      [ -z "${!name:-}" ] || clean+=("$name=${!name}")
+    done
+    clean+=("PI_CODING_AGENT_DIR=$root")
+    out=$(fm_run_timed "$FM_WORKER_ACCOUNT_CHECK_SECONDS" "${clean[@]}" \
+      "$executable" usage accounts --json --provider "$provider" 2>/dev/null </dev/null)
+    verdict=$(printf '%s\n' "$out" | jq -r --arg p "$provider" '
+      if type != "object" or ((.accounts | type) != "array") then "no account listing"
+      elif any(.accounts[]; .provider == $p) then "ready"
+      else "no OAuth login stored for provider \($p)"
+      end' 2>/dev/null)
+    [ "$verdict" != ready ] || return 0
+    echo "error: config/omp-account pins omp workers to $declared, which is not signed in for provider '$provider' (${verdict:-no account listing}); sign in with PI_CODING_AGENT_DIR=$root omp, then /login, or change the pin" >&2
+    return 1
+    ;;
   esac
   return 0
 }
@@ -242,8 +274,8 @@ fm_worker_account_check() {
 # fm_worker_account_select <harness> <config-dir> <model> <executable> [<raw-command>] [<secondmate-id>]
 # The whole launch-time decision. Prints nothing for an unpinned runner, so
 # the caller keeps today's launch unchanged. For a pinned one prints
-# "declared<TAB>root<TAB>provider", where provider is the Pi launch model's
-# own (empty for Claude), after the model guard and the sign-in check pass. On
+# "declared<TAB>root<TAB>provider", where provider is the Pi or omp launch
+# model's own (empty for Claude), after the model guard and the sign-in check pass. On
 # refusal prints one error and returns 1. bin/fm-spawn.sh runs it before any
 # endpoint exists, and bin/fm-control.sh before a relaunch stops the live
 # agent.
@@ -278,18 +310,23 @@ fm_worker_account_select() {
       esac
     done
   else
+    local runner=Pi raw_reason='it cannot carry the pinned --provider'
+    [ "$harness" != omp ] || {
+      runner=omp
+      raw_reason='its own --profile or agent directory could replace the pinned root'
+    }
     if [ -n "$raw" ]; then
-      echo "error: $setting pins Pi workers, and a raw Pi launch command runs verbatim, so it cannot carry the pinned --provider; launch with --harness $harness and --model <provider>/<id> instead" >&2
+      echo "error: $setting pins $runner workers, and a raw $runner launch command runs verbatim, so $raw_reason; launch with --harness $harness and --model <provider>/<id> instead" >&2
       return 1
     fi
     provider=$(fm_worker_account_pi_provider "$model") || {
-      echo "error: $setting pins Pi workers to providers ($providers), so a Pi launch needs --model <provider>/<id> naming one of them; '${model:-none}' names no provider, and Firstmate does not guess one" >&2
+      echo "error: $setting pins $runner workers to providers ($providers), so a $runner launch needs --model <provider>/<id> naming one of them; '${model:-none}' names no provider, and Firstmate does not guess one" >&2
       return 1
     }
     case " $providers " in
     *" $provider "*) ;;
     *)
-      echo "error: $setting pins Pi workers to providers ($providers), but --model '$model' names provider '$provider'" >&2
+      echo "error: $setting pins $runner workers to providers ($providers), but --model '$model' names provider '$provider'" >&2
       return 1
       ;;
     esac

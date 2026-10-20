@@ -243,9 +243,43 @@ test_spawn_launch_line_and_worker_wiring() {
     *"-e '$state/$id.omp-ext.ts' \"\$("*) ;;
     *) fail "omp launch must keep exactly one positional brief after the extension flag: $launch" ;;
   esac
+  assert_no_grep "service_tier=" "$state/$id.meta" "an untiered spawn must record no service tier"
+  assert_not_contains "$launch" "--service-tier" "an untiered omp launch must carry no --service-tier"
   [ "$(fm_busy_classify tmux fake:w omp "$id" "$state")" = "busy fm-spawn" ] \
     || fail "omp spawn must seed the busy-state contract"
   pass "fm-spawn: the omp launch line clears markers, pins posture, and wires the state-resident extension"
+}
+
+test_spawn_service_tier_rides_the_omp_launch_and_record() {
+  local rec id=omp-tier-q1 out status launch state
+  rec=$(make_spawn_case tier omp "$id")
+  read_case_record "$rec"
+  out=$(run_scout_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --harness omp --model openai-codex/gpt-6-astra --service-tier ultrafast)
+  status=$?
+  expect_code 0 "$status" "an omp scout spawn with a service tier should succeed: $out"
+  state="$HOME_DIR/state"
+  assert_grep "service_tier=ultrafast" "$state/$id.meta" "meta missing the requested service tier"
+  launch=$(cat "$LAUNCH_LOG")
+  assert_contains "$launch" "--cwd '$WT_DIR' --service-tier 'ultrafast' --model 'openai-codex/gpt-6-astra' -e '$state/$id.omp-ext.ts'" \
+    "omp launch did not pass the service tier ahead of the model"
+
+  rec=$(make_spawn_case tier-claude omp omp-tier-claude-q2)
+  read_case_record "$rec"
+  out=$(run_scout_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" omp-tier-claude-q2 "$PROJ_DIR" --harness claude --service-tier ultrafast)
+  status=$?
+  expect_code 1 "$status" "a service tier on a harness without the flag must refuse"
+  assert_contains "$out" "--service-tier requires --harness omp; 'claude'" "refusal did not name the harness"
+  assert_absent "$HOME_DIR/state/omp-tier-claude-q2.meta" "a refused spawn must publish no record"
+  [ ! -s "$LAUNCH_LOG" ] || fail "a refused spawn must launch nothing: $(cat "$LAUNCH_LOG")"
+
+  rec=$(make_spawn_case tier-bad omp omp-tier-bad-q3)
+  read_case_record "$rec"
+  out=$(run_scout_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" omp-tier-bad-q3 "$PROJ_DIR" --harness omp --service-tier flex)
+  status=$?
+  expect_code 1 "$status" "a service tier outside none, priority, ultrafast must refuse"
+  assert_contains "$out" "--service-tier must be one of none, priority, ultrafast" "refusal did not name the accepted tiers"
+  assert_absent "$HOME_DIR/state/omp-tier-bad-q3.meta" "a refused spawn must publish no record"
+  pass "fm-spawn: --service-tier reaches the omp launch ahead of --model, is recorded, and refuses elsewhere"
 }
 
 test_spawn_model_validation_scoped_to_listed_providers() {
@@ -1755,6 +1789,7 @@ test_detection_anchored_name_and_marker_precedence
 test_lock_identity_and_liveness_classification
 test_bun_run_omp_session_owns_its_lock
 test_spawn_launch_line_and_worker_wiring
+test_spawn_service_tier_rides_the_omp_launch_and_record
 test_spawn_model_validation_scoped_to_listed_providers
 test_secondmate_launch_relies_on_discovery
 test_secondmate_config_pinned_model_is_validated

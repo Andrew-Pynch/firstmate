@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Behavior tests for the opt-in per-home worker account pin
-# (config/claude-account, config/pi-account; bin/fm-worker-account-lib.sh).
+# (config/claude-account, config/pi-account, config/omp-account;
+# bin/fm-worker-account-lib.sh).
 #
 # Each case drives the real fm-spawn.sh through the shared fake tmux, which
 # records the launch command, then runs that command in a synthetic pane whose
@@ -69,8 +70,35 @@ esac
   printf 'ARGS=%s\n' "\$*"
 } > '$dir/pi-worker'
 SH
-  chmod +x "$fakebin/claude" "$fakebin/pi"
   cp "$fakebin/pi" "$fakebin/pi-signed"
+  # omp reads a named profile ahead of PI_CODING_AGENT_DIR, exactly as the real
+  # runner's directory resolver does, and lists only the OAuth logins its
+  # selected root stores (one provider per line in <root>/omp-signed-in).
+  cat > "$fakebin/omp" <<SH
+#!/usr/bin/env bash
+profile=\${OMP_PROFILE:-\${PI_PROFILE:-}}
+if [ -n "\$profile" ]; then root=\$HOME/.omp/profiles/\$profile/agent; else root=\${PI_CODING_AGENT_DIR:-\$HOME/.omp/agent}; fi
+case "\${1:-}" in
+  models) exit 0 ;;
+  usage)
+    provider=\$5
+    printf '%s %s\n' "\${PI_CODING_AGENT_DIR-unset}" "\$provider" >> '$dir/omp-checks'
+    if grep -qx "\$provider" "\$root/omp-signed-in" 2>/dev/null; then
+      printf '{"accounts":[{"provider":"%s","identityKey":"email:fm-test@example.invalid"}]}\n' "\$provider"
+    else
+      printf '{"accounts":[]}\n'
+    fi
+    exit 0
+    ;;
+esac
+{
+  printf 'PI_CODING_AGENT_DIR=%s\n' "\${PI_CODING_AGENT_DIR-unset}"
+  printf 'OMP_PROFILE=%s\n' "\${OMP_PROFILE-unset}"
+  printf 'PI_PROFILE=%s\n' "\${PI_PROFILE-unset}"
+  printf 'ARGS=%s\n' "\$*"
+} > '$dir/omp-worker'
+SH
+  chmod +x "$fakebin/claude" "$fakebin/pi" "$fakebin/pi-signed" "$fakebin/omp"
 }
 
 # new_case <name> <crew-harness> -> sets CASE HOME_DIR PROJ WT FAKEBIN
@@ -112,7 +140,8 @@ run_pane() {
   env -i HOME="$HOME_DIR/user-home" PATH="$FAKEBIN:$PATH" TERM=xterm \
     CLAUDE_CONFIG_DIR="$CASE/ambient-claude" ANTHROPIC_API_KEY=ambient-pane-key \
     CLAUDE_CODE_OAUTH_TOKEN=ambient-pane-token CLAUDE_CODE_USE_BEDROCK=1 \
-    PI_CODING_AGENT_DIR="$CASE/ambient-pi" OPENAI_API_KEY=ambient-pane-openai \
+    PI_CODING_AGENT_DIR="$CASE/ambient-pi" OPENAI_API_KEY=                      \
+    OMP_PROFILE=ambient PI_PROFILE=ambient \
     bash -c "$(cat "$CASE/launch.log")" || fail "the recorded launch failed in the synthetic pane"
 }
 
@@ -300,6 +329,53 @@ test_pi_extension_provider_and_old_pi_fall_back_to_the_model_listing() {
   out=$(spawn_ship "$id-old" --model openai-codex/gpt-5); rc=$?
   expect_code 0 "$rc" "a Pi without auth check should launch when the root lists the provider: $out"
   pass "extension providers and a Pi without auth check fall back to an exact model-listing match"
+}
+
+test_omp_pin_selects_the_root_and_sheds_named_profiles() {
+  local out rc id=acct-omp launch
+  new_case omp-pin omp
+  mkdir -p "$CASE/omp-personal"
+  printf 'openai-codex\n' > "$CASE/omp-personal/omp-signed-in"
+  printf '%s\nopenai-codex\n' "$CASE/omp-personal" > "$HOME_DIR/config/omp-account"
+  out=$(spawn_ship "$id" --harness omp --model openai-codex/gpt-6.1-sol --service-tier ultrafast); rc=$?
+  expect_code 0 "$rc" "an omp spawn pinned to a signed-in provider should succeed: $out"
+  assert_contains "$out" "account=$CASE/omp-personal account_provider=openai-codex" \
+    "the spawn should report the pinned root and provider"
+  assert_grep "account=$CASE/omp-personal" "$HOME_DIR/state/$id.meta" "the task record should carry the pinned root"
+  [ "$(cat "$CASE/omp-checks")" = "$CASE/omp-personal openai-codex" ] \
+    || fail "the sign-in check should ask the pinned root about the model's provider: $(cat "$CASE/omp-checks")"
+  launch=$(cat "$CASE/launch.log")
+  assert_not_contains "$launch" "--provider" "omp's legacy --provider flag must stay off the pinned launch"
+  run_pane
+  # The pane carries OMP_PROFILE and PI_PROFILE, either of which the real omp
+  # would resolve ahead of PI_CODING_AGENT_DIR; the launch must shed both.
+  assert_grep "PI_CODING_AGENT_DIR=$CASE/omp-personal" "$CASE/omp-worker" "the worker should run under the pinned omp root"
+  assert_grep "OMP_PROFILE=unset" "$CASE/omp-worker" "an ambient OMP_PROFILE would replace the pinned root"
+  assert_grep "PI_PROFILE=unset" "$CASE/omp-worker" "an ambient PI_PROFILE would replace the pinned root"
+  assert_grep "--service-tier ultrafast --model openai-codex/gpt-6.1-sol" "$CASE/omp-worker" \
+    "the pinned worker should still receive its service tier and model"
+  pass "an omp pin selects its root, sheds named profiles, and keeps the launch's tier and model"
+}
+
+test_omp_pin_refusals() {
+  local out rc id=acct-omp-bad
+  new_case omp-refusals omp
+  mkdir -p "$CASE/omp-personal"
+  printf 'openai-codex\n' > "$CASE/omp-personal/omp-signed-in"
+  printf '%s\nopenai-codex anthropic\n' "$CASE/omp-personal" > "$HOME_DIR/config/omp-account"
+  out=$(spawn_ship "$id-bare" --harness omp --model gpt-6.1-sol); rc=$?
+  expect_code 1 "$rc" "an unqualified omp model must refuse under a pin"
+  assert_refused_before_launch "$id-bare" "$out" "'gpt-6.1-sol' names no provider"
+  out=$(spawn_ship "$id-other" --harness omp --model openrouter/gpt-6.1-sol); rc=$?
+  expect_code 1 "$rc" "an undeclared omp provider must refuse"
+  assert_refused_before_launch "$id-other" "$out" "names provider 'openrouter'"
+  out=$(spawn_ship "$id-out" --harness omp --model anthropic/claude-opus-4-8); rc=$?
+  expect_code 1 "$rc" "a declared provider the root holds no login for must refuse"
+  assert_refused_before_launch "$id-out" "$out" "pins omp workers to $CASE/omp-personal, which is not signed in for provider 'anthropic'"
+  out=$(spawn_ship "$id-raw" --harness "omp --model openai-codex/gpt-6.1-sol"); rc=$?
+  expect_code 1 "$rc" "a raw omp launch must refuse under a pin"
+  assert_refused_before_launch "$id-raw" "$out" "a raw omp launch command runs verbatim"
+  pass "an omp pin refuses unqualified, undeclared, signed-out, and raw launches"
 }
 
 test_a_pin_governs_only_its_own_runner() {
@@ -496,6 +572,8 @@ test_malformed_pins_refuse_before_launch
 test_pi_pin_selects_the_root_and_the_declared_provider
 test_pi_pin_refusals
 test_pi_extension_provider_and_old_pi_fall_back_to_the_model_listing
+test_omp_pin_selects_the_root_and_sheds_named_profiles
+test_omp_pin_refusals
 test_a_pin_governs_only_its_own_runner
 test_raw_claude_command_receives_the_pin
 test_raw_claude_account_override_refuses_under_a_pin

@@ -79,9 +79,12 @@
 #              plus its optional model and effort tokens) exactly as any other
 #              respawn does, while a ship or scout keeps the exact adapter
 #              already recorded for it.
+#              A recorded omp service tier (state/<id>.meta service_tier=) is
+#              passed back to the replacement while the task stays on omp, and
+#              dropped when it moves to a harness that has no such flag.
 #              A prefixed raw-command basename cannot reconstruct its launch
 #              command, so relaunch requires an explicit --harness for it.
-#              A replacement Claude or Pi profile must also pass this home's
+#              A replacement Claude, Pi, or omp profile must also pass this home's
 #              worker account pin (bin/fm-worker-account-lib.sh) here, so a pin
 #              that no longer resolves or is signed out refuses before the old
 #              agent stops.
@@ -916,6 +919,7 @@ PRIOR_EFFORT=
 TARGET_HARNESS=$HARNESS
 TARGET_MODEL=
 TARGET_EFFORT=
+TARGET_SERVICE_TIER=
 
 journal_write() {  # <phase> [extra-line]...
   local phase=$1
@@ -1089,6 +1093,12 @@ resolve_relaunch_profile() {
     TARGET_EFFORT=$PRIOR_EFFORT
   else
     TARGET_EFFORT=default
+  fi
+  # A recorded omp service tier (bin/fm-spawn.sh --service-tier) rides the
+  # replacement only while the task stays on omp, the one harness that accepts it.
+  TARGET_SERVICE_TIER=
+  if [ "$TARGET_HARNESS" = omp ] && [ "$PRIOR_HARNESS" = omp ]; then
+    TARGET_SERVICE_TIER=$(fm_meta_get "$META" service_tier)
   fi
   if [ "$TARGET_EFFORT" = ultra ]; then
     "$SCRIPT_DIR/fm-harness.sh" validate-native-effort "$TARGET_HARNESS" "$TARGET_MODEL" "$TARGET_EFFORT" || return 1
@@ -1280,6 +1290,7 @@ do_relaunch() {
   # A secondmate's launch root, so a mate already moved onto a patched checkout
   # stays there across this relaunch (bin/fm-spawn.sh owns the validation).
   [ "$CODE_ROOT_SET" = 0 ] || spawn_args+=(--code-root "$NEW_CODE_ROOT")
+  [ -z "$TARGET_SERVICE_TIER" ] || spawn_args+=(--service-tier "$TARGET_SERVICE_TIER")
   if FM_CONTROL_RELAUNCH_TX="$RELAUNCH_TX" \
       "$SCRIPT_DIR/fm-spawn.sh" "${spawn_args[@]}" >/dev/null; then
     RELAUNCH_META_PUBLISHED=1
@@ -1313,7 +1324,7 @@ do_relaunch() {
 
   journal_write complete "${CHECKPOINT_LINES[@]}" "$note_line" "exit_result=$exit_result"
   RELAUNCH_ACTIVE=0
-  echo "relaunched $ID harness=$TARGET_HARNESS from=$PRIOR_RECORDED_HARNESS model=$TARGET_MODEL effort=$TARGET_EFFORT backend=$BACKEND endpoint=$T worktree=$WT"
+  echo "relaunched $ID harness=$TARGET_HARNESS from=$PRIOR_RECORDED_HARNESS model=$TARGET_MODEL effort=$TARGET_EFFORT backend=$BACKEND endpoint=$T worktree=$WT${TARGET_SERVICE_TIER:+ service_tier=$TARGET_SERVICE_TIER}"
 }
 
 # --- verbs ------------------------------------------------------------------

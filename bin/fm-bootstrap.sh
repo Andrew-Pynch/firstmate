@@ -1217,6 +1217,13 @@ crew_dispatch_validate() {
       | map(select(. as $p | effort_ok($p.h; $p.m; $p.e) | not))
       | map("\(.h):\(.e)")
       | unique;
+    # service_tier is the omp-only per-launch OpenAI tier (bin/fm-spawn.sh --service-tier).
+    def bad_tiers:
+      configured_profiles
+      | map(select(has("service_tier")))
+      | map(select(.service_tier as $t | .harness != "omp" or ((["none","priority","ultrafast"] | index($t)) == null)))
+      | map("\(.harness):\(.service_tier | tostring)")
+      | unique;
     if type != "object" then "top-level value must be an object"
     elif has("preferred_provider") and (provider_id(.preferred_provider) | not) then "preferred_provider must be a lowercase provider ID (for example codex)"
     elif has("rules") and (.rules | type) != "array" then "rules must be an array"
@@ -1254,6 +1261,7 @@ crew_dispatch_validate() {
         | unique) as $bad_harnesses
       | if ($bad_harnesses | length) > 0 then "unverified harness: " + ($bad_harnesses | join(", "))
         elif (bad_efforts | length) > 0 then "invalid effort: " + (bad_efforts | join(", "))
+        elif (bad_tiers | length) > 0 then "invalid service_tier (omp only; none, priority, or ultrafast): " + (bad_tiers | join(", "))
         else empty
         end
     end

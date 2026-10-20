@@ -1409,6 +1409,9 @@ kimi model profile is accepted^{"rules":[{"when":"kimi work","use":{"harness":"k
 unsupported kimi effort is flagged^{"rules":[{"when":"kimi work","use":{"harness":"kimi","model":"kimi-code/k3","effort":"high"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - invalid effort: kimi:high
 cursor model profile is accepted^{"rules":[{"when":"cursor work","use":{"harness":"cursor","model":"cursor-grok-4.5-high"}}]}^empty^
 unsupported cursor effort is flagged^{"rules":[{"when":"cursor work","use":{"harness":"cursor","model":"cursor-grok-4.5-high","effort":"high"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - invalid effort: cursor:high
+omp service tier is accepted^{"rules":[{"when":"ultrafast work","use":{"harness":"omp","model":"openai-codex/gpt-6.1-sol","service_tier":"ultrafast"}}]}^empty^
+service tier off omp is flagged^{"rules":[{"when":"fast work","use":{"harness":"codex","service_tier":"priority"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - invalid service_tier (omp only; none, priority, or ultrafast): codex:priority
+unknown omp service tier is flagged^{"default":{"harness":"omp","service_tier":"flex"}}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - invalid service_tier (omp only; none, priority, or ultrafast): omp:flex
 array use with quota-balanced is accepted^{"rules":[{"when":"big feature","use":[{"harness":"claude","model":"claude-sonnet-5","effort":"high"},{"harness":"codex","model":"gpt-5.5","effort":"high"}],"select":"quota-balanced"}]}^empty^
 array use without select is accepted^{"rules":[{"when":"big feature","use":[{"harness":"claude"},{"harness":"codex"}]}]}^empty^
 one-element array use is accepted^{"rules":[{"when":"focused feature","use":[{"harness":"claude"}]}]}^empty^

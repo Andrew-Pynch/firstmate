@@ -597,6 +597,14 @@ TYPESAFE_API_KEY=$KEY run code out err "$BRIEF"
 assert_contains "$out" 'candidate: gemini:gemini-3.8-flash-high  provider=google  scope=all_models  remaining=72%  spendPriority=0.3  runway=through_reset  -> eligible' "Gemini resolves through its explicit provider"
 assert_contains "$out" "  profile: --harness 'gemini' --model 'gemini-3.8-flash-high'" "Gemini is a typed verified dispatch harness"
 
+OMP_TIER_RULE="$TMP_ROOT/omp-tier-rule.json"
+printf '%s\n' '{"rules":[{"when":"Ultrafast work.","use":{"harness":"omp","model":"openai-codex/gpt-6.1-sol","provider":"codex","service_tier":"ultrafast"}}]}' > "$OMP_TIER_RULE"
+cp "$OMP_TIER_RULE" "$RULES"
+reset_log
+TYPESAFE_API_KEY=$KEY run code out err "$BRIEF"
+assert_contains "$out" 'candidate: omp:openai-codex/gpt-6.1-sol  service_tier=ultrafast  provider=codex' "a tiered candidate shows its service tier"
+assert_contains "$out" "  profile: --harness 'omp' --model 'openai-codex/gpt-6.1-sol' --service-tier 'ultrafast'" "a profile service_tier reaches the spawn flags"
+
 cp "$ROOT/docs/examples/crew-dispatch.json" "$RULES"
 cat > "$RESPONSE" <<'JSON'
 {"model":"jev-1.13.0","answers":{"rule":{"type":"choice","choice":"default","confidence":0.9,"probabilities":{"rule_1":0.02,"rule_2":0.02,"rule_3":0.02,"default":0.94}}},"usage":{"input_tokens":812,"output_tokens":60}}
@@ -1163,6 +1171,9 @@ for bad in \
   '{"rules":[{"when":"x","use":{"harness":"codex"}}],"default":[{"harness":"claude","model":"opus"},{"harness":"claude","model":"opus"}]}|default must not contain duplicate harness, model, and effort profiles' \
   '{"rules":[{"when":"x","use":{"harness":"spaceship"}}]}|each use profile must name a verified harness' \
   '{"rules":[{"when":"x","use":{"harness":"grok","effort":"max"}}]}|each use profile effort must be supported by its harness and model' \
+  '{"rules":[{"when":"x","use":{"harness":"claude","service_tier":"priority"}}]}|each use profile service_tier must be none, priority, or ultrafast on harness omp' \
+  '{"rules":[{"when":"x","use":{"harness":"omp","provider":"codex","service_tier":"flex"}}]}|each use profile service_tier must be none, priority, or ultrafast on harness omp' \
+  '{"rules":[{"when":"x","use":{"harness":"codex"}}],"default":{"harness":"omp","provider":"codex","service_tier":""}}|each default profile service_tier must be none, priority, or ultrafast on harness omp' \
   '{"rules":[{"when":"x","use":{"harness":"opencode","model":"anthropic/claude-sonnet-4-5"}}]}|use profiles whose harness lacks one authoritative provider family require provider: opencode' \
   '{"rules":[{"when":"x","use":{"harness":"rovo"}}]}|use profiles whose harness lacks one authoritative provider family require provider: rovo' \
   '{"rules":[{"when":"x","use":{"harness":"codex"}}],"default":{"harness":"pi","model":"anthropic/claude-sonnet-5"}}|default profiles whose harness lacks one authoritative provider family require provider: pi'; do

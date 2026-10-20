@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Spawn a direct report: a crewmate in a treehouse or Orca worktree, or a
 # secondmate in its isolated firstmate home.
-# Usage: fm-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--branch-prefix <prefix>] [--base-branch <branch>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--herdr-resume-lock-wait] [--project-token <token>] [--force-local]
-#        fm-spawn.sh <task-id> <project-dir> --scout [--base-branch <branch>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--herdr-resume-lock-wait] [--project-token <token>] [--force-local]
+# Usage: fm-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--branch-prefix <prefix>] [--base-branch <branch>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--service-tier <tier>] [--backend <name>] [--herdr-resume-lock-wait] [--project-token <token>] [--force-local]
+#        fm-spawn.sh <task-id> <project-dir> --scout [--base-branch <branch>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--service-tier <tier>] [--backend <name>] [--herdr-resume-lock-wait] [--project-token <token>] [--force-local]
 #        fm-spawn.sh <task-id> [<firstmate-home>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] --secondmate [--code-root <dir>]
 #   --mode and --yolo are this task's delivery contract, REQUIRED for every ship
 #   spawn and refused on --scout and --secondmate spawns. Firstmate resolves both
@@ -70,7 +70,7 @@
 #   first in the private launch-brief overlay, including the exact task-owned
 #   steering inbox. This never rewrites a project's instruction files or a
 #   secondmate's charter.
-#        fm-spawn.sh <task-id> --relaunch [--harness <name>] [--model <name>] [--effort <level>]
+#        fm-spawn.sh <task-id> --relaunch [--harness <name>] [--model <name>] [--effort <level>] [--service-tier <tier>]
 #   --relaunch launches a replacement agent for an EXISTING task into that
 #   task's own recorded worktree, reusing its recorded endpoint when that
 #   endpoint still exists, instead of creating either from scratch. It is
@@ -81,7 +81,7 @@
 #   backend, kind, project or home, worktree, endpoint - comes from the task's
 #   validated state/<id>.meta, so --backend, --scout, --secondmate, a project
 #   positional, and batch pairs are all refused alongside it; only harness,
-#   model, and effort may change, which is what makes a harness switch one
+#   model, effort, and service tier may change, which is what makes a harness switch one
 #   ordinary relaunch. It refuses unless the recorded endpoint is positively
 #   agent-free on a backend with both a recovery-grade agent-state classifier
 #   and replacement-agent support (tmux or herdr), and clears the previous
@@ -136,6 +136,14 @@
 #   warning. --relaunch (which replaces an agent already counted) and
 #   --secondmate (a persistent home, not a worker) are exempt from the check
 #   and refuse --force-local.
+#   --service-tier <none|priority|ultrafast> is the per-spawn OpenAI service tier
+#   for one ship or scout task, accepted only on the canonical --harness omp
+#   launch and refused on every other harness, a raw launch command, and a
+#   --secondmate spawn. It reaches omp as `--service-tier <tier>` ahead of
+#   --model, which omp records as the session's own tier (no settings write),
+#   and is recorded as service_tier= in the task record; fm-control relaunch
+#   passes the recorded tier back while the task stays on omp. Absent, the
+#   launch and the record are byte-identical and omp's own tier.openai applies.
 #   --backend <name> is the explicit runtime session-provider backend for this
 #   exact task only (docs/configuration.md "Runtime backend" owns when that flag
 #   is authorized). Without it, the script resolves FM_BACKEND, then
@@ -537,7 +545,7 @@
 #   docs/configuration.md "Worker tool exclusions" owns config/crew-exclude-tools
 #   and its operator contract. Resolve it with bin/fm-exclude-tools-lib.sh
 #   before provisioning; __PIEXCLUDE__ below owns the Pi launch substitution.
-# Worker account pin (config/claude-account, config/pi-account):
+# Worker account pin (config/claude-account, config/pi-account, config/omp-account):
 #   Opt-in. docs/configuration.md's "Worker account pin" section owns unpinned
 #   account selection. A present file pins every supported launch of
 #   that runner from this home - ship, scout, local secondmate, raw Claude
@@ -545,9 +553,11 @@
 #   refuses before any endpoint, worktree, or record exists when the file is
 #   malformed, the root is unusable, or the runner's own check says it is not
 #   signed in. A pinned Claude launch sheds the environment credentials Claude
-#   ranks above the root's login; a pinned Pi launch needs --model
-#   <provider>/<id> for a declared provider and also carries --provider, and a
-#   raw Pi command refuses. The pin is recorded as account= (and Pi's
+#   ranks above the root's login; a pinned Pi or omp launch needs --model
+#   <provider>/<id> for a declared provider, a pinned Pi launch also carries
+#   --provider, a pinned omp launch sheds OMP_PROFILE and PI_PROFILE (either
+#   would override PI_CODING_AGENT_DIR), and a raw Pi or omp command refuses.
+#   The pin is recorded as account= (and Pi's or omp's
 #   account_provider=) in the task record and on the spawned line. A local
 #   secondmate first checks config/secondmate-accounts/<id>/<runner>-account
 #   in this launching home, then falls back to its home-wide pin when absent.
@@ -598,6 +608,9 @@
 #                  auto-discovery cannot load it a second time; a secondmate names
 #                  this -e and still does not name its auto-discovered primary extensions)
 #     __OMPWORKERCFG__ absolute path to the tracked .omp/fm-worker-overlay.yml posture overlay
+#     __SERVICETIERFLAG__ optional `--service-tier '<tier>' ` for an omp ship or scout
+#                  launch given --service-tier (supplies its own trailing space,
+#                  empty otherwise)
 #     __OPINPUT__   absolute path to the canonical operational-input encoder
 #     __BRIEFDOORBELL__ quoted printable doorbell naming the launch-brief record this
 #                  script published into the receiving home's operational inbox
@@ -1006,6 +1019,7 @@ KIND_SET=0
 HARNESS_ARG=
 MODEL=
 EFFORT=
+SERVICE_TIER=
 BACKEND_ARG=
 MODE=
 YOLO=
@@ -1018,6 +1032,7 @@ PROJECT_TOKEN=
 HARNESS_SET=0
 MODEL_SET=0
 EFFORT_SET=0
+SERVICE_TIER_SET=0
 BACKEND_SET=0
 MODE_SET=0
 YOLO_SET=0
@@ -1055,6 +1070,10 @@ for a in "$@"; do
     effort)
       EFFORT=$a
       EFFORT_SET=1
+      ;;
+    service-tier)
+      SERVICE_TIER=$a
+      SERVICE_TIER_SET=1
       ;;
     backend)
       BACKEND_ARG=$a
@@ -1126,6 +1145,11 @@ for a in "$@"; do
   --effort=*)
     EFFORT=${a#--effort=}
     EFFORT_SET=1
+    ;;
+  --service-tier) want_value="service-tier" ;;
+  --service-tier=*)
+    SERVICE_TIER=${a#--service-tier=}
+    SERVICE_TIER_SET=1
     ;;
   --backend) want_value=backend ;;
   --backend=*)
@@ -1265,6 +1289,21 @@ case "$EFFORT" in
   exit 1
   ;;
 esac
+[ "$SERVICE_TIER_SET" -eq 0 ] || [ -n "$SERVICE_TIER" ] || {
+  echo "error: --service-tier requires a non-empty value" >&2
+  exit 1
+}
+case "$SERVICE_TIER" in
+'' | none | priority | ultrafast) ;;
+*)
+  echo "error: --service-tier must be one of none, priority, ultrafast" >&2
+  exit 1
+  ;;
+esac
+[ "$SERVICE_TIER_SET" -eq 0 ] || [ "$KIND" != secondmate ] || {
+  echo "error: --service-tier applies only to ship and scout spawns; a secondmate records no per-task service tier" >&2
+  exit 1
+}
 
 if [ "$FORCE_LOCAL" -eq 1 ] && { [ "$RELAUNCH" -eq 1 ] || [ "$KIND" = secondmate ]; }; then
   echo "error: --force-local applies only to a fresh ship or scout spawn; a relaunch or secondmate spawn never runs the worker headroom check it overrides" >&2
@@ -1861,6 +1900,7 @@ spawn_abort_cleanup() {
             echo "tasktmp=${TASK_TMP:-}"
             echo "model=${MODEL:-default}"
             echo "effort=${EFFORT:-default}"
+            [ -z "${SERVICE_TIER:-}" ] || echo "service_tier=$SERVICE_TIER"
             echo "backend=orca"
             echo "orca_worktree_id=$ORCA_WORKTREE_ID"
             [ -z "${ORCA_TERMINAL:-}" ] || echo "terminal=$ORCA_TERMINAL"
@@ -2158,6 +2198,7 @@ if [ "${#POS[@]}" -gt 0 ] && [ "${POS[0]}" != "$idpart" ] && case "$idpart" in *
   [ -z "$HARNESS_ARG" ] || shared_args+=(--harness "$HARNESS_ARG")
   [ -z "$MODEL" ] || shared_args+=(--model "$MODEL")
   [ -z "$EFFORT" ] || shared_args+=(--effort "$EFFORT")
+  [ -z "$SERVICE_TIER" ] || shared_args+=(--service-tier "$SERVICE_TIER")
   [ -z "$BACKEND_ARG" ] || shared_args+=(--backend "$BACKEND_ARG")
   # One delivery contract applies to every pair in a batch, exactly like the shared
   # harness. Each pair still re-validates it against its own brief, so a batch
@@ -2981,7 +3022,7 @@ launch_template() {
   # session_stop continuation. The busy extension is the exception: it lives
   # outside the home, so discovery never sees it, and -e is the only load.
   omp)
-    printf '%s' 'env -u CLAUDECODE -u PI_CODING_AGENT -u GROK_AGENT -u FM_PI_HARNESS -u GEMINI_CLI -u CURSOR_AGENT -u CURSOR_INVOKED_AS FM_OMP_HARNESS=omp OMP_SKIP_SETUP=1 __OMPBIN____OMPPROFILE__ --config __OMPWORKERCFG__ --auto-approve --cwd __WORKTREE__ __MODELFLAG____EFFORTFLAG__-e __OMPEXT__ "$(__OPINPUT__ encode launch-brief < __BRIEF__)"'
+    printf '%s' 'env -u CLAUDECODE -u PI_CODING_AGENT -u GROK_AGENT -u FM_PI_HARNESS -u GEMINI_CLI -u CURSOR_AGENT -u CURSOR_INVOKED_AS FM_OMP_HARNESS=omp OMP_SKIP_SETUP=1 __OMPBIN____OMPPROFILE__ --config __OMPWORKERCFG__ --auto-approve --cwd __WORKTREE__ __SERVICETIERFLAG____MODELFLAG____EFFORTFLAG__-e __OMPEXT__ "$(__OPINPUT__ encode launch-brief < __BRIEF__)"'
     ;;
   # agy (Antigravity CLI): --prompt-interactive "<brief>" starts the supervised
   # interactive session and auto-submits it, so the brief rides the launch
@@ -3404,6 +3445,23 @@ OMP_PROFILE_MATE=
 OMP_PROFILE_RAW=
 [ "$RAW_LAUNCH" = 0 ] || OMP_PROFILE_RAW=$ARG3
 OMP_PROFILE_PIN=$(fm_omp_profile_select "$HARNESS" "$CONFIG" "$OMP_PROFILE_MATE" "$OMP_PROFILE_RAW") || exit 1
+# --service-tier is an omp launch flag only (header above); every other
+# harness, and a raw command that never receives the template's flag, refuses
+# rather than recording a tier no launch carries.
+if [ -n "$SERVICE_TIER" ]; then
+  [ "$HARNESS" = omp ] || {
+    echo "error: --service-tier requires --harness omp; '$HARNESS' has no verified per-launch service-tier flag" >&2
+    exit 1
+  }
+  [ "$RAW_LAUNCH" = 0 ] || {
+    echo "error: --service-tier requires the canonical --harness omp launch; a raw launch command runs verbatim and cannot carry the flag" >&2
+    exit 1
+  }
+  [ "$KIND" != secondmate ] || {
+    echo "error: --service-tier applies only to ship and scout tasks; a secondmate records no per-task service tier" >&2
+    exit 1
+  }
+fi
 if [ "$HARNESS" = omp ]; then
   omp_model_validate "$OMP_BIN" "$MODEL" "$OMP_PROFILE_PIN" || exit 1
 fi
@@ -3429,7 +3487,7 @@ RAW_COMMAND=
 [ "$RAW_LAUNCH" = 0 ] || RAW_COMMAND=$ARG3
 WORKER_ACCOUNT_MATE=
 [ "$KIND" != secondmate ] || WORKER_ACCOUNT_MATE=$ID
-WORKER_ACCOUNT=$(fm_worker_account_select "$HARNESS" "$CONFIG" "$MODEL" "${PI_BIN:-$HARNESS}" "$RAW_COMMAND" "$WORKER_ACCOUNT_MATE") || exit 1
+WORKER_ACCOUNT=$(fm_worker_account_select "$HARNESS" "$CONFIG" "$MODEL" "${PI_BIN:-${OMP_BIN:-$HARNESS}}" "$RAW_COMMAND" "$WORKER_ACCOUNT_MATE") || exit 1
 WORKER_ACCOUNT_DECLARED=${WORKER_ACCOUNT%%$'\t'*}
 WORKER_ACCOUNT_ROOT=${WORKER_ACCOUNT#*$'\t'}
 WORKER_ACCOUNT_PROVIDER=${WORKER_ACCOUNT_ROOT#*$'\t'}
@@ -7099,7 +7157,7 @@ SPAWN_META_PATH=$SPAWN_META_TMP
 preserve_relaunch_meta() {
   awk -F= '
     BEGIN {
-      split("window endpoint_task_id worktree project harness kind mode yolo branch tasktmp base_branch upstream_consent forge backup_remote backup_prefix model effort opencode_version account account_provider omp_profile busy_gen spawn_gen approval_mode traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id paseo_terminal_id paseo_workspace_id rex_server rex_session_id rex_window_id rex_block_id t3_thread_id t3_project_id tern_session_id tern_tab_id tern_block_id home code_root projects control_relaunch_tx polytoken_session polytoken_port polytoken_credential", keys, " ")
+      split("window endpoint_task_id worktree project harness kind mode yolo branch tasktmp base_branch upstream_consent forge backup_remote backup_prefix model effort service_tier opencode_version account account_provider omp_profile busy_gen spawn_gen approval_mode traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id paseo_terminal_id paseo_workspace_id rex_server rex_session_id rex_window_id rex_block_id t3_thread_id t3_project_id tern_session_id tern_tab_id tern_block_id home code_root projects control_relaunch_tx polytoken_session polytoken_port polytoken_credential", keys, " ")
       for (i in keys) owned[keys[i]] = 1
     }
     !($1 in owned)
@@ -7142,6 +7200,9 @@ preserve_relaunch_meta() {
   # agent's TUI understands. Written only when a version was resolved, so a
   # non-opencode or undetectable task record stays byte-identical.
   [ -z "$OPENCODE_VERSION" ] || echo "opencode_version=$OPENCODE_VERSION"
+  # The per-launch omp service tier, only when one was requested, so an
+  # untiered task record stays byte-identical.
+  [ -z "$SERVICE_TIER" ] || echo "service_tier=$SERVICE_TIER"
   # The worker account pin, only when this home declares one, so an unpinned
   # task record stays byte-identical.
   [ -z "$WORKER_ACCOUNT" ] || echo "account=$WORKER_ACCOUNT_DECLARED"
@@ -7308,9 +7369,15 @@ sq_ompcfg=$(shell_quote "${OMP_WORKER_CFG:-$FM_ROOT/.omp/fm-worker-overlay.yml}"
 sq_opinput=$(shell_quote "$FM_ROOT/bin/fm-operational-input.sh")
 sq_worktree=$(shell_quote "$WT")
 MODELFLAG=$(model_flag_for_harness "$HARNESS" "$MODEL" "$OPENCODE_MAJOR")
-# A pinned Pi launch confines Pi's model lookup to the declared provider.
-[ -z "$WORKER_ACCOUNT_PROVIDER" ] || MODELFLAG="--provider $(shell_quote "$WORKER_ACCOUNT_PROVIDER") $MODELFLAG"
+# A pinned Pi launch confines Pi's model lookup to the declared provider; omp's
+# --provider is legacy and its pinned launch keeps the explicit <provider>/<id>.
+case "$HARNESS" in
+pi | pi-signed) [ -z "$WORKER_ACCOUNT_PROVIDER" ] || MODELFLAG="--provider $(shell_quote "$WORKER_ACCOUNT_PROVIDER") $MODELFLAG" ;;
+esac
 EFFORTFLAG=$(effort_flag_for_harness "$HARNESS" "$EFFORT" "$MODEL" "$OPENCODE_MAJOR") || exit 1
+SERVICETIERFLAG=
+[ -z "$SERVICE_TIER" ] || SERVICETIERFLAG="--service-tier $(shell_quote "$SERVICE_TIER") "
+LAUNCH=${LAUNCH//__SERVICETIERFLAG__/$SERVICETIERFLAG}
 LAUNCH=${LAUNCH//__MODELFLAG__/$MODELFLAG}
 LAUNCH=${LAUNCH//__EFFORTFLAG__/$EFFORTFLAG}
 # Relaunch session continuity. Computed here, where the adopted endpoint (T) is
@@ -7458,6 +7525,11 @@ if [ -n "$WORKER_ACCOUNT" ]; then
     ;;
   pi | pi-signed)
     LAUNCH="PI_CODING_AGENT_DIR=$(shell_quote "$WORKER_ACCOUNT_ROOT") $LAUNCH"
+    ;;
+  omp)
+    # omp resolves a named profile ahead of PI_CODING_AGENT_DIR, so an
+    # inherited OMP_PROFILE or PI_PROFILE would silently replace the pin.
+    LAUNCH="env -u OMP_PROFILE -u PI_PROFILE PI_CODING_AGENT_DIR=$(shell_quote "$WORKER_ACCOUNT_ROOT") $LAUNCH"
     ;;
   esac
 elif [ "$HARNESS" = claude ] && [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then

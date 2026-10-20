@@ -1105,6 +1105,9 @@ document.addEventListener("click",ev=>{const b=ev.target.closest("button.copy-co
   S.pane=i;S.sel[i]=it.dataset.key;show(false);}});
 document.addEventListener("visibilitychange",()=>{if(!document.hidden){refresh();poll();}});
 document.addEventListener("dblclick",ev=>{if(ev.target.closest(".pane .it")&&!ev.target.closest(".det,button,input,a")&&!MOB.matches)openSel();});
+document.addEventListener("wheel",ev=>{const s=ev.target.closest&&ev.target.closest(".wins-row,.mine-list");
+ if(!s||ev.ctrlKey||s.scrollWidth<=s.clientWidth||Math.abs(ev.deltaY)<=Math.abs(ev.deltaX))return;
+ s.scrollLeft+=ev.deltaY*(ev.deltaMode===1?16:ev.deltaMode===2?s.clientWidth:1);ev.preventDefault();},{passive:false});
 q.addEventListener("input",()=>filter(q.value));
 MOB.addEventListener("change",folds);
 bind();score();show();clock();setInterval(clock,1000);setInterval(tick,30000);setInterval(refresh,10000);poll();setInterval(poll,10000);

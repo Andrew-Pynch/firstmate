@@ -2083,6 +2083,7 @@ if (pending.options.triggerTurn !== true || pending.options.deliverAs !== "follo
 if (!pending.message.content.includes(`[seq ${seq1}, recorded 0m ago] `)) {
   throw new Error(`the first queued request lost seq ${seq1}: ${pending.message.content}`);
 }
+
 const processingMsg = { role: "custom", customType: pending.message.customType, content: pending.message.content, display: false };
 let aborted = false;
 const abortCtx = { ...defaultSessionCtx, abort() { aborted = true; } };
@@ -2092,7 +2093,7 @@ await fire("agent_start", {}, defaultSessionCtx);
 const attendedProcessing = await fire("context", { messages: [processingMsg] }, abortCtx);
 if (aborted || attendedProcessing !== undefined) throw new Error("attended custom processing was aborted or filtered");
 await fire("agent_end", {});
-contract(["enter", "--words", "merge task-d when green, then cut the prerelease\n\n"]);
+contract(["enter", "--objective", "the accepted objective for this window", "--words", "merge task-d when green, then cut the prerelease\n\n"]);
 for (const message of [
   { ...processingMsg, customType: "unrelated" },
   { ...processingMsg, content: "unrelated processing content" },
@@ -2155,7 +2156,7 @@ for (const event of [
   contract(["archive"]);
   aborted = false;
   await fire("before_agent_start", event, abortCtx);
-  contract(["enter", "--words", "merge task-d when green, then cut the prerelease\n\n"]);
+  contract(["enter", "--objective", "the accepted objective for this window", "--words", "merge task-d when green, then cut the prerelease\n\n"]);
   await fire("agent_start", {}, defaultSessionCtx);
   const openedByRequest = await fire("context", { messages: [...history, processingMsg] }, abortCtx);
   if (!aborted) throw new Error(`a dedicated ${event.messageType ?? "legacy"} processing turn with history was not aborted under the record`);
@@ -2443,7 +2444,7 @@ const contract = (args) => {
 };
 
 await fire("session_start", {});
-contract(["enter"]);
+contract(["enter", "--objective", "the accepted objective for this window"]);
 writeFileSync(`${home}/state/.wake-queue`, "1\t1\tcheck\tmain-only\tcheck: task-d.check.sh: PR merged\n");
 contract(["archive"]);
 const offer = makeOffer("check: task-d.check.sh: PR merged", [], false, true, true);
@@ -2460,7 +2461,7 @@ if (mainUserMessages.length !== 0) {
   throw new Error("the rejected settlement leaked a main user message from the branch");
 }
 
-contract(["enter"]);
+contract(["enter", "--objective", "the accepted objective for this window"]);
 writeFileSync(`${home}/state/.wake-queue`, "1\t1\tsignal\tbranch-driver.status\tsignal: branch-driver.status\n");
 const taskLocal = makeOffer("signal: branch-driver.status", [approvedProject], false, true);
 bus.emit("fm-branch-supervision:dispatch", taskLocal);
@@ -2508,7 +2509,7 @@ const contract = (args) => {
 };
 
 await fire("session_start", {}, defaultSessionCtx);
-contract(["enter"]);
+contract(["enter", "--objective", "the accepted objective for this window"]);
 writeFileSync(
   `${home}/state/.wake-queue`,
   "1\t1\tsignal\tbranch-driver.status\tsignal: branch-driver.status\n2\t2\theartbeat\theartbeat\theartbeat\n",

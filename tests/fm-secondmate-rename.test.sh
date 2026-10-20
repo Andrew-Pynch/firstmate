@@ -542,6 +542,7 @@ case_remote_renames() {
   EXIT_OUT=$(remote_env "$ROOT/bin/fm-on.sh" "$NEW" fm-remote-secondmate-control.sh exit "$NEW" 2>&1) || EXIT_RC=$?
   case "$EXIT_OUT" in
     *"recorded endpoint is gone"*) [ "$EXIT_RC" -ne 0 ] || fail "exit accepted an endpoint its own plane calls gone" ;;
+    *endpoint-gone*) [ "$EXIT_RC" -eq 0 ] || fail "exit reported the endpoint gone but failed" ;;
     *already-stopped*) [ "$EXIT_RC" -eq 0 ] || fail "exit reported already-stopped but failed" ;;
     *) fail "the exit verb did not reach the local control plane on that host: $EXIT_OUT" ;;
   esac

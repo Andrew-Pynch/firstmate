@@ -519,7 +519,13 @@ publish_pending() { # task canonical-url record-file
   [ "$count" -gt 0 ] || return 0
   while IFS=$'\t' read -r token type source age; do
     [ -n "$token" ] || continue
-    key=$(printf '%s\n%s\n' "$url" "$token" | shasum -a 256 | awk '{print $1}')
+    if command -v shasum >/dev/null 2>&1; then
+      key=$(printf '%s\n%s\n' "$url" "$token" | shasum -a 256 | awk '{print $1}') || return 1
+    elif command -v sha256sum >/dev/null 2>&1; then
+      key=$(printf '%s\n%s\n' "$url" "$token" | sha256sum | awk '{print $1}') || return 1
+    else
+      return 1
+    fi
     emitted=0
     status=0
     reason="check: contributions $task $key"

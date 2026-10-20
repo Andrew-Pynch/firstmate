@@ -28,6 +28,16 @@ REAL_CHMOD=$(command -v chmod)
 # depending on the host keeping jq in one of those four directories.
 REAL_JQ=$(command -v jq) || fail "these tests read glab's JSON with the real jq, which was not found"
 
+if ! command -v shasum >/dev/null 2>&1; then
+  command -v sha256sum >/dev/null 2>&1 \
+    || fail "these tests need shasum or sha256sum"
+  shasum() {
+    [ "$1" = -a ] && [ "$2" = 256 ] || return 2
+    shift 2
+    sha256sum "$@"
+  }
+fi
+
 ack_watcher_cycle() {  # <state>
   local state=$1 err sequence generation
   err="$state/.test-wake-drain.err"

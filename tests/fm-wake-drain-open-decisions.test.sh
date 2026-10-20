@@ -428,6 +428,42 @@ test_over_long_decision_note_is_capped_with_a_marker() {
   pass "an over-long open decision is cut to its per-item budget with the shared truncation marker"
 }
 
+# A reader that filters the drain's output still gets every line the drain
+# recorded as presented: the first line names the complete copy.
+test_filtered_drain_keeps_a_complete_copy() {
+  local dir state out copy first i count
+  dir=$(make_case filtered-copy)
+  state="$dir/state"
+  out="$dir/drain.out"
+  printf 'needs-decision [key=api-shape]: pick REST or RPC\n' > "$state/task-f.status"
+  append_wake "$state" signal task-f.status "needs-decision [key=api-shape]: pick REST or RPC" \
+    || fail "queueing the wake failed"
+
+  FM_STATE_OVERRIDE="$state" "$DRAIN" 2>&1 | grep -vF 'pick REST or RPC' > "$out"
+  first=$(sed -n 1p "$out")
+  case "$first" in
+    "DRAIN COPY: $state/.last-drain."*.txt) copy=${first#DRAIN COPY: } ;;
+    *) fail "the drain's first line did not name its presentation copy: $(cat "$out")" ;;
+  esac
+  grep -F 'task-f [key=api-shape] needs-decision: pick REST or RPC' "$copy" >/dev/null \
+    || fail "the presentation copy lost the decision the filter hid: $(cat "$copy")"
+  grep -F 'WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 1 ' "$copy" >/dev/null \
+    || fail "the presentation copy lost the acknowledgement command printed on stderr: $(cat "$copy")"
+  [ "$(stat -c %a "$copy" 2>/dev/null || stat -f %Lp "$copy")" = 600 ] \
+    || fail "the presentation copy is readable beyond its owner"
+
+  sleep 1
+  for i in 1 2 3 4 5 6; do
+    printf 'needs-decision [key=more-%s]: another call %s\n' "$i" "$i" >> "$state/task-f.status"
+    FM_STATE_OVERRIDE="$state" "$DRAIN" > /dev/null 2>&1 || fail "drain $i failed"
+  done
+  count=$(find "$state" -maxdepth 1 -name '.last-drain.*.txt' | wc -l | tr -d ' ')
+  [ "$count" -eq 5 ] || fail "expected the newest 5 presentation copies, found $count"
+  [ ! -e "$copy" ] || fail "the oldest presentation copy was not pruned"
+  [ -z "$(find "$state" -maxdepth 1 -name '.last-drain.*.stderr')" ] || fail "a presentation copy left its stderr scratch behind"
+  pass "a filtered drain names a complete presentation copy and keeps the newest five"
+}
+
 test_buried_decision_still_surfaces
 test_over_long_decision_note_is_capped_with_a_marker
 test_explicit_resolution_closes_it
@@ -436,6 +472,7 @@ test_reserved_key_namespace_is_owned_by_its_library
 test_no_open_decisions_prints_nothing
 test_open_decision_surfaces_even_with_an_unrelated_queued_wake
 test_buried_decision_surfaces_on_the_empty_queue_fast_path
+test_filtered_drain_keeps_a_complete_copy
 test_status_symlink_is_not_followed
 test_unchanged_decisions_are_presented_once_per_reader
 test_a_new_decision_prints_in_full_among_counted_rows

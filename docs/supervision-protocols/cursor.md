@@ -3,6 +3,7 @@ Mode: Cursor stop-hook-owned park.
 When this session owns supervision and away mode is not active:
 1. Drain first with `bin/fm-wake-drain.sh`.
    After handling all emitted wakes and reconciling open decisions, run the exact `--ack-through` command printed as `WAKE_ACK_REQUIRED`; until then the work remains durable for idempotent re-handling after interruption.
+   A drain marks what it prints as read, so capture its output to a file or read the copy named on its first `DRAIN COPY:` line before acknowledging whenever you filter or truncate it.
 2. Routine watcher arm and re-arm are owned by the `stop` hook (`bin/fm-turnend-guard-cursor.sh`), never by you.
    Cursor runs that hook synchronously and awaits it, so every turn end while supervision is needed parks the turn boundary open on one home-scoped watcher cycle, with no model command and no model tokens spent while parked.
 3. An actionable close wakes you as a follow-up turn carrying the `watcher` operational kind.

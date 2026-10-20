@@ -235,7 +235,11 @@
 #   The local root is whatever bin/fm-wake-lib.sh's
 #   fm_firstmate_root_home resolves, so a home seeded from another machine anchors
 #   that lock itself rather than failing to resolve one;
-#   contention refuses rather than waits.
+#   contention retries 3 times, FM_SPAWN_PROJECT_LOCK_RETRY_DELAY seconds apart
+#   (default 5), then refuses naming the lock path and its recorded holder pid
+#   and whether that pid is alive. The lock is a symlink to its owner directory,
+#   held through the whole of another spawn's launch, so it is usually gone by
+#   the time anyone looks for it after a refusal.
 #   Project capacity: when this machine declares how many workers a project
 #   admits at once (config/project-capacity; bin/fm-project-capacity-lib.sh owns
 #   the declaration, what holds a place, and the race argument), a fresh ship or
@@ -4184,14 +4188,31 @@ if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ] &&
     echo "error: could not resolve the shared Treehouse project lock for $PROJ_ABS" >&2
     exit 1
   }
-  if ! fm_lock_try_acquire "$SPAWN_TREEHOUSE_PROJECT_LOCK"; then
-    if [ "$BACKEND" = orca ]; then
-      echo "error: another spawn or cleanup holds the shared project lock for $PROJ_ABS; refusing to race its capacity admission" >&2
+  SPAWN_PROJECT_LOCK_RETRY=0
+  SPAWN_PROJECT_LOCK_RETRY_DELAY=${FM_SPAWN_PROJECT_LOCK_RETRY_DELAY:-5}
+  case "$SPAWN_PROJECT_LOCK_RETRY_DELAY" in ''|*[!0-9]*) SPAWN_PROJECT_LOCK_RETRY_DELAY=5 ;; esac
+  until fm_lock_try_acquire "$SPAWN_TREEHOUSE_PROJECT_LOCK"; do
+    SPAWN_PROJECT_LOCK_HOLDER=${FM_LOCK_HELD_PID:-}
+    if [ -z "$SPAWN_PROJECT_LOCK_HOLDER" ]; then
+      SPAWN_PROJECT_LOCK_HOLDER='none recorded'
+    elif fm_pid_alive "$SPAWN_PROJECT_LOCK_HOLDER"; then
+      SPAWN_PROJECT_LOCK_HOLDER="$SPAWN_PROJECT_LOCK_HOLDER (alive)"
     else
-      echo "error: another Treehouse slot allocation or return is in progress for $PROJ_ABS; refusing to race it" >&2
+      SPAWN_PROJECT_LOCK_HOLDER="$SPAWN_PROJECT_LOCK_HOLDER (not alive)"
+    fi
+    if [ "$SPAWN_PROJECT_LOCK_RETRY" -lt 3 ]; then
+      SPAWN_PROJECT_LOCK_RETRY=$((SPAWN_PROJECT_LOCK_RETRY + 1))
+      echo "warning: shared project lock $SPAWN_TREEHOUSE_PROJECT_LOCK for $PROJ_ABS is held by pid $SPAWN_PROJECT_LOCK_HOLDER; retry $SPAWN_PROJECT_LOCK_RETRY of 3 in ${SPAWN_PROJECT_LOCK_RETRY_DELAY}s" >&2
+      sleep "$SPAWN_PROJECT_LOCK_RETRY_DELAY"
+      continue
+    fi
+    if [ "$BACKEND" = orca ]; then
+      echo "error: another spawn or cleanup holds the shared project lock for $PROJ_ABS; refusing to race its capacity admission (lock $SPAWN_TREEHOUSE_PROJECT_LOCK, holder pid $SPAWN_PROJECT_LOCK_HOLDER, after 3 retries)" >&2
+    else
+      echo "error: another Treehouse slot allocation or return is in progress for $PROJ_ABS; refusing to race it (lock $SPAWN_TREEHOUSE_PROJECT_LOCK, holder pid $SPAWN_PROJECT_LOCK_HOLDER, after 3 retries)" >&2
     fi
     exit 1
-  fi
+  done
   SPAWN_TREEHOUSE_PROJECT_LOCK_HELD=1
 fi
 if [ -n "$SPAWN_PROJECT_CAPACITY" ]; then

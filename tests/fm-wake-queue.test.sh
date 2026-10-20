@@ -1439,6 +1439,21 @@ wait_for_file_text() {  # <file> <fixed-text>
   return 1
 }
 
+# A presenting drain replays its output only when it ends; while it runs, its
+# committed lines are visible in its presentation copy (bin/fm-wake-drain.sh
+# header "Presentation copy"), named after the drain's pid.
+wait_for_drain_copy_text() {  # <state> <drain-pid> <fixed-text>
+  local state=$1 pid=$2 expected=$3 copy i=0
+  while [ "$i" -lt 100 ]; do
+    for copy in "$state"/.last-drain.*."$pid".txt; do
+      grep -F "$expected" "$copy" >/dev/null 2>&1 && return 0
+    done
+    sleep 0.05
+    i=$((i + 1))
+  done
+  return 1
+}
+
 test_slow_annotation_does_not_block_append_and_deleted_file_fails_open() {
   local dir state out1 out2 pid
   dir=$(make_case slow-annotation)
@@ -1450,7 +1465,7 @@ test_slow_annotation_does_not_block_append_and_deleted_file_fails_open() {
 
   FM_STATE_OVERRIDE="$state" FM_WAKE_ENRICH_TEST_DELAY=3 "$DRAIN" > "$out1" &
   pid=$!
-  wait_for_file_text "$out1" "$(printf '\tsignal\tslow.status\t')" \
+  wait_for_drain_copy_text "$state" "$pid" "$(printf '\tsignal\tslow.status\t')" \
     || { kill "$pid" 2>/dev/null || true; fail "slow drain did not commit its raw row"; }
   printf 'done: appended while first drain annotates\n' > "$state/next.status"
   append_wake "$state" signal next.status "signal: next" || fail "append blocked or failed during annotation"
@@ -2399,8 +2414,8 @@ test_interruption_before_and_after_raw_commit() {
   append_wake "$state" signal task.status "signal: task after commit" || fail "post-commit interruption wake append failed"
   FM_STATE_OVERRIDE="$state" FM_WAKE_ENRICH_TEST_DELAY=5 "$DRAIN" > "$after_out" &
   pid=$!
-  wait_for_file_text "$after_out" "$(printf '\tsignal\ttask.status\t')" \
-    || { kill "$pid" 2>/dev/null || true; fail "post-commit drain did not print its raw row"; }
+  wait_for_drain_copy_text "$state" "$pid" "$(printf '\tsignal\ttask.status\t')" \
+    || { kill "$pid" 2>/dev/null || true; fail "post-commit drain did not present its raw row"; }
   [ -s "$state/.wake-queue" ] \
     || { kill "$pid" 2>/dev/null || true; fail "post-commit drain consumed its raw row before handling acknowledgement"; }
   kill -TERM "$pid" 2>/dev/null || fail "could not interrupt drain after raw presentation"
@@ -2890,7 +2905,7 @@ test_live_presentation_holder_is_deadlined_without_weakening_ack() {
     "$queue_out" || true)
   [ "$advisory_count" -eq 1 ] \
     || { kill "$queue_holder" 2>/dev/null || true; fail "queue deadline did not emit exactly one holder advisory"; }
-  [ ! -s "$queue_err" ] \
+  ! grep -qv '^DRAIN COPY: ' "$queue_err" \
     || { kill "$queue_holder" 2>/dev/null || true; fail "queue deadline leaked helper-process diagnostics"; }
   if grep "$(printf '\tsignal\t')" "$queue_out" >/dev/null \
     || grep -F 'WAKE_ACK_REQUIRED:' "$queue_err" >/dev/null; then
@@ -2930,7 +2945,7 @@ test_live_presentation_holder_is_deadlined_without_weakening_ack() {
     "$first_out" || true)
   [ "$advisory_count" -eq 1 ] \
     || { kill "$presentation_holder" 2>/dev/null || true; fail "presentation deadline did not emit exactly one holder advisory"; }
-  if grep -v '^WAKE_ACK_REQUIRED:' "$first_err" | grep . >/dev/null; then
+  if grep -v -e '^WAKE_ACK_REQUIRED:' -e '^DRAIN COPY: ' "$first_err" | grep . >/dev/null; then
     kill "$presentation_holder" 2>/dev/null || true
     fail "presentation deadline leaked helper-process diagnostics"
   fi

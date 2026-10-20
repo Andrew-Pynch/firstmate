@@ -25,6 +25,17 @@
 # presentation-path locks (default 10); queue mutation locks remain blocking.
 # Successful main handling acknowledgements record state/.last-successful-drain
 # for fm-wake-notify.sh health and the Main-quiet watchdog.
+#
+# Presentation copy: a presenting drain (not --ack-through) writes its whole
+# output to state/.last-drain.<epoch>.<pid>.txt (stdout, then a `--- stderr ---`
+# block) and replays it only when the run ends: `DRAIN COPY: <path>` as its
+# first line, on stderr so no stdout filter can drop it and stdout stays the
+# record stream, then the buffered stdout and stderr on their own streams.
+# Sections recorded as read when presented (UNREAD STATUS, OPEN DECISIONS)
+# count as presented once their bytes reach that copy,
+# whoever consumes stdout, so a reader that filtered or truncated the output
+# reads the copy before acknowledging. The newest five copies are kept; a run
+# that presented nothing leaves no copy and still prints nothing.
 set -u
 
 SCRIPT_DIR="$(d=${BASH_SOURCE[0]%/*}; [ "$d" != "${BASH_SOURCE[0]}" ] || d=.; cd "${d:-/}" && pwd)"
@@ -47,6 +58,7 @@ DRAIN_TMP=
 DRAIN_VIEW_TMP=
 OPEN_DECISIONS_PRESENTED_TMP=
 DRAIN_LOCK_HELD=false
+DRAIN_COPY=
 RAW_ROWS=
 RECOVERY_MARKER="$STATE/.watcher-down"
 RECOVERY_MARKER_TOKEN=
@@ -878,8 +890,8 @@ print_status_sections() {
     return 1
   fi
   # Prepare every section before presentation, but do not commit its receipt
-  # until the prepared bytes reach stdout. If the consumer closes or fails,
-  # leave the receipt behind so the next drain can recover the presentation.
+  # until the prepared bytes reach the presentation copy (header). If that
+  # write fails, leave the receipt behind so the next drain can recover it.
   if ! command cat "$prepared"; then
     rm -f -- "$prepared"
     discard_open_decisions_presented_stage
@@ -928,6 +940,36 @@ print_status_presentation() {  # [<deduped-raw-rows>]
   return "$rc"
 }
 
+# Replay the buffered presentation (header "Presentation copy") on the
+# caller's own streams, then keep only the newest five copies.
+# shellcheck disable=SC2317,SC2329 # Invoked from cleanup, a trap handler.
+finish_presentation_copy() {
+  local copy=$DRAIN_COPY rc=0 old name
+  [ -n "$copy" ] || return 0
+  DRAIN_COPY=
+  exec 1>&5 2>&6 5>&- 6>&-
+  if [ -s "$copy" ] || [ -s "$copy.stderr" ]; then
+    printf 'DRAIN COPY: %s\n' "$copy" >&2 || rc=1
+    command cat -- "$copy" || rc=1
+    command cat -- "$copy.stderr" >&2 || rc=1
+    if [ -s "$copy.stderr" ]; then
+      { printf '%s\n' '--- stderr ---' && command cat -- "$copy.stderr"; } >> "$copy" || rc=1
+    fi
+    rm -f -- "$copy.stderr"
+  else
+    rm -f -- "$copy" "$copy.stderr"
+  fi
+  old=$(for name in "$STATE"/.last-drain.*.txt; do
+    [ -f "$name" ] && printf '%s\n' "${name##*/}"
+  done | sort -t . -k3,3n -k4,4n | awk '{ row[NR] = $0 } END { for (i = 1; i <= NR - 5; i++) print row[i] }')
+  while IFS= read -r name; do
+    [ -z "$name" ] || rm -f -- "$STATE/$name" "$STATE/$name.stderr"
+  done <<EOF
+$old
+EOF
+  return "$rc"
+}
+
 # shellcheck disable=SC2317,SC2329 # Invoked by trap handlers below.
 cleanup() {
   local status=$?
@@ -937,12 +979,27 @@ cleanup() {
   if [ "$DRAIN_LOCK_HELD" = true ]; then
     fm_lock_release "$FM_WAKE_QUEUE_LOCK"
   fi
+  if ! finish_presentation_copy && [ "$status" -eq 0 ]; then
+    status=1
+  fi
   exit "$status"
 }
 
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+
+if [ -z "$ACK_THROUGH" ]; then
+  DRAIN_COPY_EPOCH=$(date +%s)
+  DRAIN_COPY="$STATE/.last-drain.$DRAIN_COPY_EPOCH.$$.txt"
+  if ! (umask 077 && : > "$DRAIN_COPY" && : > "$DRAIN_COPY.stderr") 2>/dev/null; then
+    rm -f -- "$DRAIN_COPY" "$DRAIN_COPY.stderr" 2>/dev/null
+    printf 'wake drain: presentation copy %s could not be created; nothing was presented or marked read\n' "$DRAIN_COPY" >&2
+    DRAIN_COPY=
+    exit 1
+  fi
+  exec 5>&1 6>&2 1>"$DRAIN_COPY" 2>"$DRAIN_COPY.stderr"
+fi
 
 if [ -n "$ACK_THROUGH" ]; then
   fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK"

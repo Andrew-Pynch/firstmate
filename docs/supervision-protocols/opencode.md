@@ -3,6 +3,7 @@ Mode: OpenCode TUI plugin background wake.
 When this session owns supervision and away mode is not active:
 1. Drain first with `bin/fm-wake-drain.sh`.
    After handling all emitted wakes and reconciling open decisions and unread status lines, run the exact `--ack-through` command printed as `WAKE_ACK_REQUIRED`; until then the work remains durable for idempotent re-handling after interruption.
+   A drain marks what it prints as read, so capture its output to a file or read the copy named on its first `DRAIN COPY:` line before acknowledging whenever you filter or truncate it.
 2. First cycle: let `.opencode/plugins/fm-primary-watch-arm.js` arm supervision after the OpenCode session goes idle.
 3. On OpenCode 2 the plugin subscribes to the terminal `session.execution.succeeded`, `session.execution.failed`, and `session.execution.interrupted` events (latched to the root worker session; OpenCode 1 uses `session.idle`), spawns `bin/fm-watch-arm.sh --restart` without awaiting it in the turn-end handler, and owns every later successor launch.
 4. After an actionable child close, the plugin rechecks session-lock ownership and verifies one singleton successor before it calls `ctx.session.prompt`; its bounded fallback is defined in `docs/watcher-continuity.md`.

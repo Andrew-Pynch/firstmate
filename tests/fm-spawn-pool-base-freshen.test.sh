@@ -100,6 +100,68 @@ REC
   pass "a remote-seeded secondmate home allocates and launches from its Treehouse pool"
 }
 
+# hold_project_lock <project>: take the shared Treehouse project lock in a
+# background holder until $CASE_DIR/holder.release appears; sets HOLDER_PID.
+hold_project_lock() {
+  local i=0
+  # shellcheck disable=SC2016 # expanded by the holder's own shell
+  FM_HOME="$HOME_DIR" bash -c '
+    . "$1/bin/fm-wake-lib.sh"
+    lock=$(fm_treehouse_project_lock_path "$2") || exit 1
+    fm_lock_try_acquire "$lock" || exit 1
+    : > "$3.held"
+    while [ ! -f "$3.release" ]; do sleep 0.05; done
+    fm_lock_release "$lock"
+  ' _ "$ROOT" "$1" "$CASE_DIR/holder" &
+  HOLDER_PID=$!
+  while [ ! -f "$CASE_DIR/holder.held" ]; do
+    i=$((i + 1))
+    [ "$i" -lt 200 ] || fail "the lock holder never took the project lock"
+    sleep 0.05
+  done
+}
+
+test_held_project_lock_retries_then_names_its_holder() {
+  local rec id out status lock spawn i
+  id='pool-lock-refused'
+  rec=$(make_case lock-refused "$id")
+  read_case_record "$rec"
+  lock=$(FM_HOME="$HOME_DIR" bash -c '. "$1"; fm_treehouse_project_lock_path "$2"' _ \
+    "$ROOT/bin/fm-wake-lib.sh" "$PROJECT_DIR") || fail "could not resolve the project lock"
+  hold_project_lock "$PROJECT_DIR"
+  out=$(FM_SPAWN_PROJECT_LOCK_RETRY_DELAY=0 run_spawn "$id" --scout 2>&1)
+  status=$?
+  : > "$CASE_DIR/holder.release"
+  wait "$HOLDER_PID" || true
+  expect_code 1 "$status" "a spawn ignored a held project lock: $out"
+  assert_contains "$out" "retry 3 of 3" "the spawn did not retry the held project lock"
+  assert_contains "$out" "refusing to race it (lock $lock, holder pid $HOLDER_PID (alive), after 3 retries)" \
+    "the refusal did not name the lock path and its live holder"
+  [ ! -e "$HOME_DIR/state/$id.meta" ] || fail "a refused spawn published a task record"
+
+  id='pool-lock-retried'
+  rec=$(make_case lock-retried "$id")
+  read_case_record "$rec"
+  hold_project_lock "$PROJECT_DIR"
+  FM_SPAWN_PROJECT_LOCK_RETRY_DELAY=2 run_spawn "$id" --scout > "$CASE_DIR/spawn.out" 2>&1 &
+  spawn=$!
+  i=0
+  until grep -F "retry 1 of 3" "$CASE_DIR/spawn.out" >/dev/null 2>&1; do
+    i=$((i + 1))
+    [ "$i" -lt 200 ] || fail "the spawn never reported a retry on the held lock: $(cat "$CASE_DIR/spawn.out")"
+    sleep 0.05
+  done
+  : > "$CASE_DIR/holder.release"
+  wait "$HOLDER_PID" || true
+  status=0
+  wait "$spawn" || status=$?
+  out=$(cat "$CASE_DIR/spawn.out")
+  expect_code 0 "$status" "the spawn did not proceed once the holder released the lock: $out"
+  assert_contains "$out" "held by pid $HOLDER_PID (alive); retry 1 of 3" "the retry did not name the live lock holder"
+  assert_contains "$out" "spawned $id" "the retried spawn did not launch"
+  pass "a held project lock is retried, named with its live holder, and released holds proceed"
+}
+
 test_linked_spawning_home_rejects_primary_before_refresh() {
   local rec id out status returned primary spawning before_reflog
   for returned in primary primary-alias spawning scout; do
@@ -1442,6 +1504,7 @@ test_opt_in_still_refuses_an_unclean_slot_first() {
 }
 
 test_remote_seeded_home_spawns_from_treehouse_pool
+test_held_project_lock_retries_then_names_its_holder
 test_pool_slot_claim_follows_the_spawn_outcome
 test_refused_launch_leaves_the_pool_for_a_retry_and_a_second_task
 test_refused_launch_spares_per_id_paths_under_a_contended_spawn_lock

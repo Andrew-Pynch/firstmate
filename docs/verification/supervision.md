@@ -65,6 +65,15 @@ Its relevant output is `ok - .omp watch extension: fm_watch_arm_omp arms once, r
 Its relevant outputs are `ok - omp omp/18.1.17: an actionable close spawned a ledger-linked successor and woke main exactly once through hidden custom input` and `# omp omp/18.1.17 model=openai-codex/gpt-6-astra: every live omp primary assertion passed`.
 The tracked extension remains auto-discovered with no config or installation change, but an omp process that loaded the previous extension must restart normally after the updated file lands.
 
+### omp held stall alarms, 2026-10-10
+
+Verified on 2026-10-10 against omp 18.6.1 on Linux (Arch, x86_64) with the openai-codex `gpt-6-astra` model through `FM_OMP_LIVE_E2E=1 bash tests/fm-omp-primary-live-e2e.test.sh`.
+omp holds a `followUp` watcher wake while main is inside one tool call and joins it to the run after that call ends.
+omp dispatches extension `message_start` handlers asynchronously, so the first provider request that carries a joined follow-up can be built before those handlers run.
+An earlier build that judged a stall alarm at `message_start` therefore let the first request carry the stale alarm text (`superseded=0 alarm=1`, then `superseded=1 alarm=0`, from a `before_provider_request` spy in the lab).
+The `context` hook runs before every request, so the extension judges a stall alarm there; with that build the live stage passed and no provider payload carried the stale alarm.
+Its relevant output is `ok - omp omp/18.6.1: a stall alarm held behind a busy tool call and read after a drain acknowledgement reached the provider only as the superseded notice`.
+
 ### Run-tier source vocabulary and context-reset injection
 
 The run tier depends on three facts only the vendor can supply: the session-open source it reports, whether hook stdout reaches model context on a context-RESET open rather than only a cold one, and whether a worker the hook detaches survives the hook returning.

@@ -13,7 +13,11 @@
 #      ledger-linked successor, and the wake arrives once as hidden custom input;
 #   4. with the successor watcher frozen until its beacon passes the lab grace,
 #      the next turn end is genuinely unsupervised, so session_stop must compel
-#      the turn-end guard continuation and the model reaches for the tool.
+#      the turn-end guard continuation and the model reaches for the tool;
+#   5. a real main-quiet stall alarm raised while main is busy in one tool call
+#      waits in omp's follow-up queue, and after a successful drain
+#      acknowledgement lands it reaches the provider only as the superseded
+#      notice (omp's dequeue, message_start, and context ordering).
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -125,6 +129,21 @@ SH
 chmod +x "$PROJECT/bin/fm-turnend-guard.sh"
 [ -f "$PROJECT/.omp/extensions/fm-primary-omp-watch.ts" ] || fail "lab checkout is missing the omp watch extension"
 [ -f "$PROJECT/.omp/extensions/fm-primary-turnend-guard.ts" ] || fail "lab checkout is missing the omp turn-end extension"
+# A provider-request spy: before_provider_request sees the payload built from
+# the transformed context, whatever order the extensions loaded in, so it
+# records what actually reaches the model.
+PROVIDER_SPY_LOG="$LAB/provider-spy.log"
+cat > "$PROJECT/.omp/extensions/zz-e2e-provider-spy.ts" <<TS
+import { appendFileSync } from "node:fs";
+export default function (pi: { on?: (event: string, handler: (event: any) => unknown) => void }) {
+  pi.on?.("before_provider_request", (event) => {
+    const text = JSON.stringify(event?.payload ?? null);
+    const superseded = text.includes("FIRSTMATE WATCHER WAKE superseded:") ? 1 : 0;
+    const alarm = text.includes("FIRSTMATE WATCHER WAKE: check: main wake-loop stalled") ? 1 : 0;
+    appendFileSync("$PROVIDER_SPY_LOG", \`superseded=\${superseded} alarm=\${alarm}\\n\`);
+  });
+}
+TS
 
 # --- rpc plumbing --------------------------------------------------------------
 rpc_send() {  # <json-line>
@@ -295,6 +314,68 @@ if [ -z "$repaired_pid" ] || ! kill -0 "$repaired_pid" 2>/dev/null; then
   fail "no live watcher after the guard stage"
 fi
 pass "omp $OMP_VERSION: session_stop compelled the guard continuation (guard rc=2, then a stop_hook_active stop) and the model reached for fm_watch_arm_omp"
+
+# --- 4. a held stall alarm read after a successful drain -----------------------
+# config/x-mode.env is the file the extension sources into every arm child, so
+# writing it and restarting the cycle gives only the new watcher a short
+# main-quiet interval. Killing the lab watcher ends its cycle as a failure the
+# extension retries silently.
+lab_drain_and_ack() {
+  local err ack
+  err=$(FM_HOME="$PROJECT" "$PROJECT/bin/fm-wake-drain.sh" 2>&1 >/dev/null) || return 1
+  ack=$(printf '%s\n' "$err" | sed -n 's/^WAKE_ACK_REQUIRED:.*\(--ack-through [0-9][0-9]* --recovery-generation [A-Za-z0-9._-][A-Za-z0-9._-]*\)$/\1/p' | tail -1)
+  [ -z "$ack" ] && return 0
+  # shellcheck disable=SC2086 # the captured acknowledgement is two flag pairs
+  FM_HOME="$PROJECT" "$PROJECT/bin/fm-wake-drain.sh" $ack >/dev/null 2>&1
+}
+printf 'export FM_MAIN_QUIET_SECS=15\n' > "$PROJECT/config/x-mode.env"
+old_watcher=$(cat "$PROJECT/state/.watch.lock/pid" 2>/dev/null || true)
+lab_pid_is_safe "$old_watcher" || fail "refusing to stop a watcher outside the lab ($old_watcher)"
+kill -TERM "$old_watcher" 2>/dev/null || fail "could not stop the lab watcher to restart its cycle"
+i=0
+while [ "$i" -lt 120 ]; do
+  new_watcher=$(cat "$PROJECT/state/.watch.lock/pid" 2>/dev/null || true)
+  [ -n "$new_watcher" ] && [ "$new_watcher" != "$old_watcher" ] && kill -0 "$new_watcher" 2>/dev/null && break
+  sleep 0.5
+  i=$((i + 1))
+done
+[ -n "$new_watcher" ] && [ "$new_watcher" != "$old_watcher" ] || fail "the extension did not restart the watcher cycle"
+lab_drain_and_ack || fail "could not empty the lab queue before the stall probe"
+rm -f "$PROJECT/state/.main-quiet-alert"
+: > "$PROVIDER_SPY_LOG"
+ends_before=$(agent_end_count)
+line_before=$(($(wc -l < "$RPC_LOG") + 1))
+rpc_send '{"id":"p4","type":"prompt","message":"Run exactly one bash command, sleep 45, and when it finishes reply with exactly SLEPT and nothing else. Do not run any other tool."}'
+i=0
+while [ "$i" -lt 240 ]; do
+  tail -n +"$line_before" "$RPC_LOG" | jq -e 'select(.type == "tool_execution_start" and .toolName == "bash")' >/dev/null 2>&1 && break
+  sleep 0.5
+  i=$((i + 1))
+done
+[ "$i" -lt 240 ] || fail "the model did not start the busy bash call"
+FM_HOME="$PROJECT" bash -c '. "$FM_HOME/bin/fm-wake-lib.sh" && fm_wake_append check e2e-stall-probe "check: e2e stall probe"' \
+  || fail "could not queue the stall probe row"
+wait_for_file "$PROJECT/state/.main-quiet-alert" 80 || fail "the watcher raised no stall alarm while main was busy"
+lab_drain_and_ack || fail "the lab drain could not acknowledge the probe row"
+i=0
+while [ "$i" -lt 240 ]; do
+  tail -n +"$line_before" "$RPC_LOG" | jq -e 'select(.type == "message_start" and .message.role == "custom" and .message.customType == "firstmate-primary-omp-watcher-wake" and (.message.content | contains("wake-loop stalled")))' >/dev/null 2>&1 && break
+  sleep 0.5
+  i=$((i + 1))
+done
+[ "$i" -lt 240 ] || fail "omp never released the held stall alarm to main"
+wait_for_agent_ends "$((ends_before + 1))" 360 || fail "omp did not finish the busy turn"
+i=0
+while [ "$i" -lt 240 ]; do
+  grep -q '^superseded=1' "$PROVIDER_SPY_LOG" 2>/dev/null && break
+  sleep 0.5
+  i=$((i + 1))
+done
+grep -q '^superseded=1' "$PROVIDER_SPY_LOG" || fail "no provider request carried the superseded notice (spy: $(sort "$PROVIDER_SPY_LOG" | uniq -c | tr '\n' ' '))"
+if grep -q 'alarm=1' "$PROVIDER_SPY_LOG"; then
+  fail "the stale stall alarm reached the provider as an alarm (spy: $(sort "$PROVIDER_SPY_LOG" | uniq -c | tr '\n' ' '))"
+fi
+pass "omp $OMP_VERSION: a stall alarm held behind a busy tool call and read after a drain acknowledgement reached the provider only as the superseded notice"
 
 # --- shutdown -------------------------------------------------------------------
 # omp documents that closing rpc stdin disposes the session and exits 0. On

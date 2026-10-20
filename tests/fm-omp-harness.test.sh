@@ -1300,7 +1300,10 @@ test_watch_extension_never_delivers_a_stale_stall_alarm() {
   cat > "$repo/bin/fm-watch-arm.sh" <<'SH'
 #!/usr/bin/env bash
 set -u
-if [ "${1:-}" = --handling-delivered ]; then exit 0; fi
+if [ "${1:-}" = --handling-delivered ]; then
+  [ ! -e "${FM_HOME:?}/state/.handshake-fail" ] || { echo "handshake refused" >&2; exit 1; }
+  exit 0
+fi
 n=$(cat "${FM_HOME:?}/state/.arm-count" 2>/dev/null || echo 0)
 n=$((n + 1))
 printf '%s\n' "$n" > "$FM_HOME/state/.arm-count"
@@ -1386,10 +1389,25 @@ if (!shown[1].content.includes("FIRSTMATE WATCHER WAKE superseded:") || shown[1]
   throw new Error(`the stale alarm reached the model as an alarm: ${shown[1].content}`);
 if (shown[1].customType !== sent[1].m.customType || shown[1].display !== false) throw new Error("the superseded notice lost its message shape");
 if (shown[2].content !== sent[2].m.content) throw new Error("a still-owed alarm was rewritten");
+// Cycle 5: an alarm that also carries a handling-handshake failure must reach
+// the model intact even when a later drain makes the alarm part stale.
+writeFileSync(`${state}/.handshake-fail`, "");
+await pause(1200);
+go(5);
+await settle(() => sent.length === 4, "the failure-bearing stall alarm was not delivered");
+if (!sent[3].m.content.includes("handling delivery confirmation was rejected")) throw new Error(`the handshake failure was not appended: ${sent[3].m.content}`);
+writeFileSync(`${state}/.last-successful-drain`, "3000\n");
+await consume(sent[3]);
+// The already-shown fresh alarm keeps its text after this later drain too.
+const failing = await context({ type: "context", messages: asContext([sent[2], sent[3]]) }, {});
+if (failing !== undefined && failing.messages?.[0]?.content !== sent[2].m.content)
+  throw new Error(`an alarm the model already read changed text after a later drain: ${JSON.stringify(failing)}`);
+if (failing !== undefined && failing.messages?.[1]?.content !== sent[3].m.content)
+  throw new Error(`a failure-bearing alarm was superseded: ${JSON.stringify(failing)}`);
 // The replay decision owns the rule for a restart's replay too.
 const alarm = (value) => `check: main wake-loop stalled: last_successful_drain=${value} oldest_queued_wake_age=9s; drain and handle the durable queue`;
 if (replay(alarm(1000)) !== "skip\n") throw new Error("a replayed alarm older than the latest drain was owed");
-if (replay(alarm(2000)) !== `deliver\n${alarm(2000)}\n`) throw new Error("a replayed alarm naming the current drain was dropped");
+if (replay(alarm(3000)) !== `deliver\n${alarm(3000)}\n`) throw new Error("a replayed alarm naming the current drain was dropped");
 unlinkSync(`${state}/.last-successful-drain`);
 if (replay(alarm("never")) !== `deliver\n${alarm("never")}\n`) throw new Error("an alarm raised before any drain was dropped while none happened");
 writeFileSync(`${state}/.wake-queue`, "");

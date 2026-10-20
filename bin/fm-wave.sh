@@ -4,6 +4,7 @@
 # Usage:
 #   fm-wave.sh next [--project <name>] [--snapshot <file|->]
 #   fm-wave.sh plan [--project <name>] [--snapshot <file|->]
+#   fm-wave.sh summary --packet <json> [--snapshot <file|->]
 #   fm-wave.sh --help
 #
 # The dispatch rule itself is owned once by bin/fm-wave-lib.sh; this command is
@@ -43,6 +44,18 @@
 # from stdin. A caller that already holds a snapshot (bin/fm-fleet-view.sh
 # --json) passes it instead of paying for a second observation of the same home.
 #
+#
+# At landing, the supervisor supplies one packet for the wave rather than a
+# notification per ticket. Packet fields: id (stable wave label), project,
+# items (distinct landed task ids in one project layer), proves, not_done,
+# unblocks, ask (one plain line), and optional needs_review (default true).
+# Evidence prose comes from the supervisor, never inferred from task titles.
+# `summary` validates landing against the snapshot, writes one immutable
+# data/fm-wave-<project>-<id>/report.md artifact, and parks its ask as one
+# captain-held queue row. needs_review=false records a completed packet instead.
+# Only explicitly declared packet dependents wait; no dependency is added.
+# The one printed line is the wave's chat outcome; successful retries are silent.
+# A repeated id with changed content refuses rather than replacing its evidence.
 # Exit status:
 #   0  the report was printed
 #   1  an operational failure that names itself
@@ -94,15 +107,104 @@ wave_rows() { # <snapshot-file> <all|current>
   ' "$1"
 }
 
+publish_summary() {
+  local packet=$1 snapshot=$2 id project row artifact relative staged plan announced review result canonical
+  jq -e '
+    (.id | type == "string" and test("^[A-Za-z0-9][A-Za-z0-9._-]*$")) and
+    (.project | type == "string" and test("^[A-Za-z0-9][A-Za-z0-9._-]*$")) and
+    (.items | type == "array" and length > 0 and length == (unique | length)
+      and all(.[]; type == "string")) and
+    ([.proves,.not_done,.unblocks,.ask] | all(.[]; type == "string" and length > 0)) and
+    (.ask | test("[\r\n]") | not) and
+    (if has("needs_review") then (.needs_review | type == "boolean") else true end)
+  ' "$packet" >/dev/null || fail "invalid summary packet"
+  id=$(jq -r .id "$packet")
+  project=$(jq -r .project "$packet")
+  row="fm-wave-$project-$id"
+  relative="data/$row/report.md"
+  # shellcheck source=bin/fm-wake-lib.sh
+  . "$SCRIPT_DIR/fm-wake-lib.sh"
+  mkdir -p "$FM_HOME/data/$row" "$STATE" || fail "cannot create summary directory"
+  fm_lock_acquire_wait "$STATE/.$row.lock" || fail "cannot lock summary"
+  artifact="$FM_HOME/$relative"
+  announced="$STATE/.$row.announced"
+  canonical=$(jq -Sc . "$packet")
+  if [ -f "$announced" ] && [ -f "$artifact" ]; then
+    [ "$(cat "$announced")" = "$canonical" ] || fail "wave id already has different evidence"
+    fm_lock_release "$STATE/.$row.lock"
+    return 0
+  fi
+  staged=$(mktemp "$STATE/.$row.content.XXXXXX") || fail "cannot stage summary"
+  plan=$(wave_rows "$snapshot" all | fm_wave_plan)
+  if ! printf '%s\n' "$plan" | jq -Rse --slurpfile packet "$packet" '
+    $packet[0] as $p |
+    [split("\n")[] | split("\t") | select(length >= 5)
+      | select(.[2] as $id | $p.items | index($id) != null)] as $rows |
+    ($rows | length) == ($p.items | length) and
+    all($rows[]; .[0] == $p.project and .[3] == "done" and .[4] == "landed") and
+    ([$rows[][1]] | unique | length) == 1
+  ' >/dev/null; then
+    rm -f "$staged"
+    fail "summary items must have landed in one project wave"
+  fi
+  if ! jq -er --slurpfile packet "$packet" '
+    $packet[0] as $p |
+    [.backlog.records[] | select(.id as $id | $p.items | index($id) != null)
+      | {id, title, link:(.pr_url // .report_path // .local_note)}] as $items |
+    if any($items[]; .link == null or .link == "") then
+      error("every landed item needs a recorded link")
+    else
+      "# Wave \($p.project)/\($p.id)\n\n## Landed\n" +
+      ($items | sort_by(.id) | map("- [\(.id)](\(.link)): \(.title)") | join("\n")) +
+      "\n\n## Proves\n\($p.proves)\n\n## Deliberately not done\n\($p.not_done)" +
+      "\n\n## Unblocks\n\($p.unblocks)\n\n## Ask\n\($p.ask)\n"
+    end
+  ' "$snapshot" > "$staged"; then
+    rm -f "$staged"
+    fail "could not render summary evidence"
+  fi
+  if [ -f "$artifact" ]; then
+    cmp -s "$artifact" "$staged" || { rm -f "$staged"; fail "wave id already has different evidence"; }
+    rm -f "$staged"
+  else
+    chmod 0600 "$staged"
+    mv "$staged" "$artifact"
+  fi
+  if ! "$SCRIPT_DIR/fm-tasks-axi.sh" show "$row" >/dev/null 2>&1; then
+    result=$("$SCRIPT_DIR/fm-tasks-axi.sh" add "$row" "Review wave $project/$id" \
+      --repo "$project" --kind captain --report "$relative" --body-file "$artifact") \
+      || fail "could not record wave packet: $result"
+  fi
+  review=$(jq -r 'if .needs_review == false then "false" else "true" end' "$packet")
+  if [ "$review" = true ]; then
+    "$SCRIPT_DIR/fm-captain-hold.sh" hold "$row" --reason "$(jq -r .ask "$packet")" >/dev/null \
+      || fail "could not park wave ask"
+  else
+    "$SCRIPT_DIR/fm-tasks-axi.sh" 'done' "$row" --report "$relative" >/dev/null \
+      || fail "could not close action-free wave packet"
+  fi
+  printf 'Wave %s/%s landed: %s. Next: %s\n' "$project" "$id" "$artifact" "$(jq -r .ask "$packet")"
+  staged=$(mktemp "$STATE/.$row.receipt.XXXXXX") || fail "cannot stage summary receipt"
+  printf '%s\n' "$canonical" > "$staged"
+  _fm_atomic_replace "$staged" "$announced" || fail "cannot record summary receipt"
+  fm_lock_release "$STATE/.$row.lock"
+}
+
 MODE=next
 PROJECT_FILTER=''
 SNAPSHOT=''
+PACKET=''
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    next | plan) MODE=$1 ;;
+    next | plan | summary) MODE=$1 ;;
     --project)
       [ "$#" -ge 2 ] || { usage >&2; exit 2; }
       PROJECT_FILTER=$2
+      shift
+      ;;
+    --packet)
+      [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+      PACKET=$2
       shift
       ;;
     --snapshot)
@@ -157,6 +259,11 @@ cleanup() {
   return 0
 }
 trap cleanup EXIT
+if [ "$MODE" = summary ]; then
+  [ -n "$PACKET" ] && [ -f "$PACKET" ] || fail "summary requires --packet <json>"
+  publish_summary "$PACKET" "$snapshot_file"
+  exit 0
+fi
 
 if [ "$MODE" = plan ]; then
   wave_rows "$snapshot_file" current | fm_wave_plan | awk -v want="$PROJECT_FILTER" '

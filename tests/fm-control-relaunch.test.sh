@@ -923,6 +923,49 @@ test_omp_relaunch_keeps_its_service_tier_and_a_switch_drops_it() {
   pass "fm-control relaunch: an omp task keeps its service tier and a harness switch drops it"
 }
 
+test_omp_relaunch_keeps_its_per_spawn_account_and_checks_it_before_stop() {
+  local dir out rc id=rl-omp-acct
+  dir=$(new_case omp-acct "$id")
+  add_ship_task "$dir" "$id" omp
+  printf omp > "$dir/fake/command"
+  printf omp > "$dir/fake/becomes"
+  # Lists a login only for a root holding an omp-signed-in marker.
+  cat > "$dir/fakebin/omp" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = usage ]; then
+  if [ -f "${PI_CODING_AGENT_DIR:-/nonexistent}/omp-signed-in" ]; then
+    printf '{"accounts":[{"provider":"openai-codex","identityKey":"email:fm-test@example.invalid"}]}\n'
+  else
+    printf '{"accounts":[]}\n'
+  fi
+fi
+exit 0
+SH
+  chmod +x "$dir/fakebin/omp"
+  mkdir -p "$dir/omp-personal"
+  : > "$dir/omp-personal/omp-signed-in"
+  sed 's|^model=default$|model=openai-codex/gpt-6.1-sol|' "$dir/home/state/$id.meta" > "$dir/home/state/$id.meta.tmp"
+  mv "$dir/home/state/$id.meta.tmp" "$dir/home/state/$id.meta"
+  printf 'omp_account=%s\n' "$dir/omp-personal" >> "$dir/home/state/$id.meta"
+  out=$(run_control "$dir" "$id" relaunch --note "same runtime"); rc=$?
+  expect_code 0 "$rc" "a same-harness omp relaunch on its per-spawn account should succeed"$'\n'"$out"
+  [ "$(meta_field "$dir" "$id" omp_account)" = "$dir/omp-personal" ] || fail "the per-spawn omp account should carry across an omp relaunch"
+  assert_contains "$(cat "$dir/fake/literal")" "PI_CODING_AGENT_DIR='$dir/omp-personal'" "the replacement omp launch lost its per-spawn account"
+  rm "$dir/omp-personal/omp-signed-in"
+  : > "$dir/fake/literal"
+  out=$(run_control "$dir" "$id" relaunch --note "signed out"); rc=$?
+  expect_code 1 "$rc" "a signed-out per-spawn account must refuse"
+  assert_contains "$out" "--omp-account $dir/omp-personal pins omp workers" "the refusal should name the per-spawn account"
+  [ "$(cat "$dir/fake/command")" = omp ] || fail "a signed-out per-spawn account must refuse before the agent stops"
+  [ ! -s "$dir/fake/literal" ] || fail "a refused relaunch must send no lifecycle input"
+  : > "$dir/omp-personal/omp-signed-in"
+  printf claude > "$dir/fake/becomes"
+  out=$(run_control "$dir" "$id" relaunch --harness claude --note "switching runtime"); rc=$?
+  expect_code 0 "$rc" "a switch off omp should succeed"$'\n'"$out"
+  [ -z "$(meta_field "$dir" "$id" omp_account)" ] || fail "a harness without an omp account must not inherit it"
+  pass "fm-control relaunch: an omp task keeps its per-spawn account, checks it before stopping, and a switch drops it"
+}
+
 # A fake claude that answers `claude auth status` the way the real runner
 # does: signed in only when the selected config root holds a stored login.
 make_claude_auth_stub() {  # <case-dir>
@@ -3045,6 +3088,7 @@ test_prefixed_recorded_harness_requires_explicit_replacement
 test_same_harness_relaunch_keeps_the_profile_axes
 test_native_ultra_relaunch_preserves_profile_and_rejects_before_stop
 test_omp_relaunch_keeps_its_service_tier_and_a_switch_drops_it
+test_omp_relaunch_keeps_its_per_spawn_account_and_checks_it_before_stop
 test_signed_out_worker_account_pin_refuses_before_stop
 test_worker_account_pin_follows_the_relaunch
 test_secondmate_account_pin_follows_relaunch_and_refuses_before_stop

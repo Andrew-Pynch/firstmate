@@ -378,6 +378,60 @@ test_omp_pin_refusals() {
   pass "an omp pin refuses unqualified, undeclared, signed-out, and raw launches"
 }
 
+test_per_spawn_omp_account_pins_only_that_launch() {
+  local out rc id=acct-omp-flag launch
+  new_case omp-flag omp
+  mkdir -p "$CASE/omp-personal" "$CASE/omp-work"
+  printf 'openai-codex\n' > "$CASE/omp-personal/omp-signed-in"
+  # No pin file: an omp launch without the flag keeps the ambient account.
+  out=$(spawn_ship "$id-plain" --harness omp --model anthropic/claude-opus-4-8); rc=$?
+  expect_code 0 "$rc" "an unpinned omp spawn without --omp-account should succeed: $out"
+  launch=$(cat "$CASE/launch.log")
+  assert_not_contains "$launch" "PI_CODING_AGENT_DIR=" "an unflagged, unpinned omp launch must not select an account directory"
+  assert_not_contains "$launch" "-u OMP_PROFILE" "an unflagged, unpinned omp launch must leave the profile environment alone"
+  assert_no_grep "omp_account=" "$HOME_DIR/state/$id-plain.meta" "an unflagged task record must carry no omp_account"
+  # The flag pins that one launch.
+  out=$(spawn_ship "$id" --harness omp --model openai-codex/gpt-6.1-sol --service-tier ultrafast --omp-account "$CASE/omp-personal"); rc=$?
+  expect_code 0 "$rc" "a per-spawn omp account holding the provider's login should launch: $out"
+  assert_contains "$out" "account=$CASE/omp-personal account_provider=openai-codex" "the spawn should report the per-spawn account"
+  assert_grep "omp_account=$CASE/omp-personal" "$HOME_DIR/state/$id.meta" "the task record should keep the per-spawn account for relaunch"
+  run_pane
+  assert_grep "PI_CODING_AGENT_DIR=$CASE/omp-personal" "$CASE/omp-worker" "the worker should run under the per-spawn account"
+  assert_grep "OMP_PROFILE=unset" "$CASE/omp-worker" "an ambient OMP_PROFILE would replace the per-spawn account"
+  assert_grep "PI_PROFILE=unset" "$CASE/omp-worker" "an ambient PI_PROFILE would replace the per-spawn account"
+  # With a pin file for another provider, the flag still wins for its launch,
+  # and an unflagged launch still follows the file.
+  printf 'anthropic\n' > "$CASE/omp-work/omp-signed-in"
+  printf '%s\nanthropic\n' "$CASE/omp-work" > "$HOME_DIR/config/omp-account"
+  out=$(spawn_ship "$id-over" --harness omp --model openai-codex/gpt-6.1-sol --omp-account "$CASE/omp-personal"); rc=$?
+  expect_code 0 "$rc" "--omp-account should replace a pin file that declares another provider: $out"
+  assert_contains "$out" "account=$CASE/omp-personal" "the per-spawn account should replace the pin file for its launch"
+  out=$(spawn_ship "$id-file" --harness omp --model anthropic/claude-opus-4-8); rc=$?
+  expect_code 0 "$rc" "an unflagged omp spawn should still follow the pin file: $out"
+  assert_contains "$out" "account=$CASE/omp-work account_provider=anthropic" "the pin file should govern unflagged launches"
+  pass "--omp-account pins only its own launch, over or without a pin file"
+}
+
+test_per_spawn_omp_account_refusals() {
+  local out rc id=acct-omp-flag-bad
+  new_case omp-flag-refusals omp
+  mkdir -p "$CASE/omp-personal" "$CASE/omp-empty"
+  printf 'openai-codex\n' > "$CASE/omp-personal/omp-signed-in"
+  out=$(spawn_ship "$id-rel" --harness omp --model openai-codex/gpt-6.1-sol --omp-account omp-personal); rc=$?
+  expect_code 1 "$rc" "a relative --omp-account must refuse"
+  assert_refused_before_launch "$id-rel" "$out" "--omp-account must be an absolute directory"
+  out=$(spawn_ship "$id-out" --harness omp --model openai-codex/gpt-6.1-sol --omp-account "$CASE/omp-empty"); rc=$?
+  expect_code 1 "$rc" "a per-spawn account with no login for the provider must refuse"
+  assert_refused_before_launch "$id-out" "$out" "--omp-account $CASE/omp-empty pins omp workers to $CASE/omp-empty, which is not signed in for provider 'openai-codex'"
+  out=$(spawn_ship "$id-bare" --harness omp --model gpt-6.1-sol --omp-account "$CASE/omp-personal"); rc=$?
+  expect_code 1 "$rc" "an unqualified model must refuse with --omp-account"
+  assert_refused_before_launch "$id-bare" "$out" "'gpt-6.1-sol' names no provider"
+  out=$(spawn_ship "$id-claude" --harness claude --omp-account "$CASE/omp-personal"); rc=$?
+  expect_code 1 "$rc" "--omp-account on another harness must refuse"
+  assert_refused_before_launch "$id-claude" "$out" "--omp-account requires --harness omp"
+  pass "--omp-account refuses relative, signed-out, unqualified, and non-omp launches"
+}
+
 test_a_pin_governs_only_its_own_runner() {
   local out rc id=acct-scope
   new_case scope codex
@@ -574,6 +628,8 @@ test_pi_pin_refusals
 test_pi_extension_provider_and_old_pi_fall_back_to_the_model_listing
 test_omp_pin_selects_the_root_and_sheds_named_profiles
 test_omp_pin_refusals
+test_per_spawn_omp_account_pins_only_that_launch
+test_per_spawn_omp_account_refusals
 test_a_pin_governs_only_its_own_runner
 test_raw_claude_command_receives_the_pin
 test_raw_claude_account_override_refuses_under_a_pin

@@ -1599,6 +1599,15 @@ After changing a live mate's pin, use `bin/fm-control.sh <id> relaunch` to apply
 The file stays in the primary home and is not inherited or copied into the secondmate's home, because a secondmate does not launch secondmates.
 [`bin/fm-omp-profile-lib.sh`](../bin/fm-omp-profile-lib.sh) owns parsing and the refusals.
 
+### Per-spawn omp account (--omp-account)
+
+`config/omp-account` pins every omp launch from the home, so a home whose omp workers mostly spend another provider can leave it absent and choose an account for one task instead.
+`bin/fm-spawn.sh --omp-account <absolute dir>` pins that one ship or scout omp launch to the named omp agent directory, in place of `config/omp-account` when that file exists.
+The launch is pinned exactly as the file would pin it: `PI_CODING_AGENT_DIR` is set, `OMP_PROFILE` and `PI_PROFILE` are unset, `--model` must name its provider as `<provider>/<id>`, and the directory must hold a login for that provider under the same omp sign-in check.
+It is refused on every other harness, on a raw launch command, and on a secondmate spawn.
+The task record keeps it as `omp_account=` beside `account=` and `account_provider=`, and `bin/fm-control.sh relaunch` checks and passes it back while the task stays on omp.
+Launches without the flag are unchanged, with or without a pin file.
+
 ## Lavish server address (config/lavish-axi-host)
 
 The optional local, gitignored `config/lavish-axi-host` contains one non-empty address without whitespace for the per-machine Lavish server.

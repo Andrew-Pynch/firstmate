@@ -79,9 +79,11 @@
 #              plus its optional model and effort tokens) exactly as any other
 #              respawn does, while a ship or scout keeps the exact adapter
 #              already recorded for it.
-#              A recorded omp service tier (state/<id>.meta service_tier=) is
-#              passed back to the replacement while the task stays on omp, and
-#              dropped when it moves to a harness that has no such flag.
+#              A recorded omp service tier and per-spawn omp account
+#              (state/<id>.meta service_tier= and omp_account=) are passed
+#              back to the replacement while the task stays on omp, and
+#              dropped when it moves to a harness that has no such flags; a
+#              recorded omp account is checked before the old agent stops.
 #              A prefixed raw-command basename cannot reconstruct its launch
 #              command, so relaunch requires an explicit --harness for it.
 #              A replacement Claude, Pi, or omp profile must also pass this home's
@@ -920,6 +922,7 @@ TARGET_HARNESS=$HARNESS
 TARGET_MODEL=
 TARGET_EFFORT=
 TARGET_SERVICE_TIER=
+TARGET_OMP_ACCOUNT=
 
 journal_write() {  # <phase> [extra-line]...
   local phase=$1
@@ -1097,8 +1100,11 @@ resolve_relaunch_profile() {
   # A recorded omp service tier (bin/fm-spawn.sh --service-tier) rides the
   # replacement only while the task stays on omp, the one harness that accepts it.
   TARGET_SERVICE_TIER=
+  TARGET_OMP_ACCOUNT=
   if [ "$TARGET_HARNESS" = omp ] && [ "$PRIOR_HARNESS" = omp ]; then
     TARGET_SERVICE_TIER=$(fm_meta_get "$META" service_tier)
+    # Likewise a per-spawn omp account (bin/fm-spawn.sh --omp-account).
+    TARGET_OMP_ACCOUNT=$(fm_meta_get "$META" omp_account)
   fi
   if [ "$TARGET_EFFORT" = ultra ]; then
     "$SCRIPT_DIR/fm-harness.sh" validate-native-effort "$TARGET_HARNESS" "$TARGET_MODEL" "$TARGET_EFFORT" || return 1
@@ -1109,8 +1115,12 @@ resolve_relaunch_profile() {
   local account_model=$TARGET_MODEL account_mate=
   [ "$account_model" != default ] || account_model=
   [ "$KIND" != secondmate ] || account_mate=$ID
-  fm_worker_account_select "$TARGET_HARNESS" "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}" \
-    "$account_model" "$TARGET_HARNESS" "" "$account_mate" >/dev/null || return 1
+  if [ -n "$TARGET_OMP_ACCOUNT" ]; then
+    fm_worker_account_omp_explicit "$TARGET_OMP_ACCOUNT" "$account_model" omp >/dev/null || return 1
+  else
+    fm_worker_account_select "$TARGET_HARNESS" "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}" \
+      "$account_model" "$TARGET_HARNESS" "" "$account_mate" >/dev/null || return 1
+  fi
   fm_omp_profile_select "$TARGET_HARNESS" "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}" \
     "$account_mate" >/dev/null || return 1
   # Likewise polytoken's launch profile and wiring refusals
@@ -1291,6 +1301,7 @@ do_relaunch() {
   # stays there across this relaunch (bin/fm-spawn.sh owns the validation).
   [ "$CODE_ROOT_SET" = 0 ] || spawn_args+=(--code-root "$NEW_CODE_ROOT")
   [ -z "$TARGET_SERVICE_TIER" ] || spawn_args+=(--service-tier "$TARGET_SERVICE_TIER")
+  [ -z "$TARGET_OMP_ACCOUNT" ] || spawn_args+=(--omp-account "$TARGET_OMP_ACCOUNT")
   if FM_CONTROL_RELAUNCH_TX="$RELAUNCH_TX" \
       "$SCRIPT_DIR/fm-spawn.sh" "${spawn_args[@]}" >/dev/null; then
     RELAUNCH_META_PUBLISHED=1

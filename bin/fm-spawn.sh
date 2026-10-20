@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Spawn a direct report: a crewmate in a treehouse or Orca worktree, or a
 # secondmate in its isolated firstmate home.
-# Usage: fm-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--branch-prefix <prefix>] [--base-branch <branch>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--service-tier <tier>] [--backend <name>] [--herdr-resume-lock-wait] [--project-token <token>] [--force-local]
-#        fm-spawn.sh <task-id> <project-dir> --scout [--base-branch <branch>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--service-tier <tier>] [--backend <name>] [--herdr-resume-lock-wait] [--project-token <token>] [--force-local]
+# Usage: fm-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--branch-prefix <prefix>] [--base-branch <branch>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--service-tier <tier>] [--omp-account <dir>] [--backend <name>] [--herdr-resume-lock-wait] [--project-token <token>] [--force-local]
+#        fm-spawn.sh <task-id> <project-dir> --scout [--base-branch <branch>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--service-tier <tier>] [--omp-account <dir>] [--backend <name>] [--herdr-resume-lock-wait] [--project-token <token>] [--force-local]
 #        fm-spawn.sh <task-id> [<firstmate-home>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] --secondmate [--code-root <dir>]
 #   --mode and --yolo are this task's delivery contract, REQUIRED for every ship
 #   spawn and refused on --scout and --secondmate spawns. Firstmate resolves both
@@ -70,7 +70,7 @@
 #   first in the private launch-brief overlay, including the exact task-owned
 #   steering inbox. This never rewrites a project's instruction files or a
 #   secondmate's charter.
-#        fm-spawn.sh <task-id> --relaunch [--harness <name>] [--model <name>] [--effort <level>] [--service-tier <tier>]
+#        fm-spawn.sh <task-id> --relaunch [--harness <name>] [--model <name>] [--effort <level>] [--service-tier <tier>] [--omp-account <dir>]
 #   --relaunch launches a replacement agent for an EXISTING task into that
 #   task's own recorded worktree, reusing its recorded endpoint when that
 #   endpoint still exists, instead of creating either from scratch. It is
@@ -144,6 +144,15 @@
 #   and is recorded as service_tier= in the task record; fm-control relaunch
 #   passes the recorded tier back while the task stays on omp. Absent, the
 #   launch and the record are byte-identical and omp's own tier.openai applies.
+#   --omp-account <absolute dir> pins ONE ship or scout omp launch to that omp
+#   agent directory, instead of config/omp-account, exactly as the pin file
+#   would: PI_CODING_AGENT_DIR is set, OMP_PROFILE and PI_PROFILE are unset,
+#   --model must be <provider>/<id>, and the directory must hold a login for
+#   that provider (bin/fm-worker-account-lib.sh fm_worker_account_omp_explicit).
+#   It is refused on every other harness, a raw launch command, and a
+#   --secondmate spawn, is recorded as omp_account= (plus account= and
+#   account_provider=), and fm-control relaunch passes it back while the task
+#   stays on omp. Launches without it are unchanged, pinned or not.
 #   --backend <name> is the explicit runtime session-provider backend for this
 #   exact task only (docs/configuration.md "Runtime backend" owns when that flag
 #   is authorized). Without it, the script resolves FM_BACKEND, then
@@ -1020,6 +1029,7 @@ HARNESS_ARG=
 MODEL=
 EFFORT=
 SERVICE_TIER=
+OMP_ACCOUNT=
 BACKEND_ARG=
 MODE=
 YOLO=
@@ -1033,6 +1043,7 @@ HARNESS_SET=0
 MODEL_SET=0
 EFFORT_SET=0
 SERVICE_TIER_SET=0
+OMP_ACCOUNT_SET=0
 BACKEND_SET=0
 MODE_SET=0
 YOLO_SET=0
@@ -1074,6 +1085,10 @@ for a in "$@"; do
     service-tier)
       SERVICE_TIER=$a
       SERVICE_TIER_SET=1
+      ;;
+    omp-account)
+      OMP_ACCOUNT=$a
+      OMP_ACCOUNT_SET=1
       ;;
     backend)
       BACKEND_ARG=$a
@@ -1150,6 +1165,11 @@ for a in "$@"; do
   --service-tier=*)
     SERVICE_TIER=${a#--service-tier=}
     SERVICE_TIER_SET=1
+    ;;
+  --omp-account) want_value="omp-account" ;;
+  --omp-account=*)
+    OMP_ACCOUNT=${a#--omp-account=}
+    OMP_ACCOUNT_SET=1
     ;;
   --backend) want_value=backend ;;
   --backend=*)
@@ -1302,6 +1322,14 @@ case "$SERVICE_TIER" in
 esac
 [ "$SERVICE_TIER_SET" -eq 0 ] || [ "$KIND" != secondmate ] || {
   echo "error: --service-tier applies only to ship and scout spawns; a secondmate records no per-task service tier" >&2
+  exit 1
+}
+[ "$OMP_ACCOUNT_SET" -eq 0 ] || [ -n "$OMP_ACCOUNT" ] || {
+  echo "error: --omp-account requires a non-empty value" >&2
+  exit 1
+}
+[ "$OMP_ACCOUNT_SET" -eq 0 ] || [ "$KIND" != secondmate ] || {
+  echo "error: --omp-account applies only to ship and scout spawns; a secondmate launches on its home's pin" >&2
   exit 1
 }
 
@@ -1901,6 +1929,7 @@ spawn_abort_cleanup() {
             echo "model=${MODEL:-default}"
             echo "effort=${EFFORT:-default}"
             [ -z "${SERVICE_TIER:-}" ] || echo "service_tier=$SERVICE_TIER"
+            [ -z "${OMP_ACCOUNT:-}" ] || echo "omp_account=$OMP_ACCOUNT"
             echo "backend=orca"
             echo "orca_worktree_id=$ORCA_WORKTREE_ID"
             [ -z "${ORCA_TERMINAL:-}" ] || echo "terminal=$ORCA_TERMINAL"
@@ -2199,6 +2228,7 @@ if [ "${#POS[@]}" -gt 0 ] && [ "${POS[0]}" != "$idpart" ] && case "$idpart" in *
   [ -z "$MODEL" ] || shared_args+=(--model "$MODEL")
   [ -z "$EFFORT" ] || shared_args+=(--effort "$EFFORT")
   [ -z "$SERVICE_TIER" ] || shared_args+=(--service-tier "$SERVICE_TIER")
+  [ -z "$OMP_ACCOUNT" ] || shared_args+=(--omp-account "$OMP_ACCOUNT")
   [ -z "$BACKEND_ARG" ] || shared_args+=(--backend "$BACKEND_ARG")
   # One delivery contract applies to every pair in a batch, exactly like the shared
   # harness. Each pair still re-validates it against its own brief, so a batch
@@ -3462,6 +3492,22 @@ if [ -n "$SERVICE_TIER" ]; then
     exit 1
   }
 fi
+# --omp-account pins this one omp launch to an account directory (header
+# above); like --service-tier it rides only the canonical omp template.
+if [ -n "$OMP_ACCOUNT" ]; then
+  [ "$HARNESS" = omp ] || {
+    echo "error: --omp-account requires --harness omp; '$HARNESS' does not read an omp account directory" >&2
+    exit 1
+  }
+  [ "$RAW_LAUNCH" = 0 ] || {
+    echo "error: --omp-account requires the canonical --harness omp launch; a raw launch command runs verbatim and could select its own profile or agent directory" >&2
+    exit 1
+  }
+  [ "$KIND" != secondmate ] || {
+    echo "error: --omp-account applies only to ship and scout tasks; a secondmate launches on its home's pin" >&2
+    exit 1
+  }
+fi
 if [ "$HARNESS" = omp ]; then
   omp_model_validate "$OMP_BIN" "$MODEL" "$OMP_PROFILE_PIN" || exit 1
 fi
@@ -3487,7 +3533,12 @@ RAW_COMMAND=
 [ "$RAW_LAUNCH" = 0 ] || RAW_COMMAND=$ARG3
 WORKER_ACCOUNT_MATE=
 [ "$KIND" != secondmate ] || WORKER_ACCOUNT_MATE=$ID
-WORKER_ACCOUNT=$(fm_worker_account_select "$HARNESS" "$CONFIG" "$MODEL" "${PI_BIN:-${OMP_BIN:-$HARNESS}}" "$RAW_COMMAND" "$WORKER_ACCOUNT_MATE") || exit 1
+# A per-spawn --omp-account replaces config/omp-account for this launch only.
+if [ -n "$OMP_ACCOUNT" ]; then
+  WORKER_ACCOUNT=$(fm_worker_account_omp_explicit "$OMP_ACCOUNT" "$MODEL" "$OMP_BIN") || exit 1
+else
+  WORKER_ACCOUNT=$(fm_worker_account_select "$HARNESS" "$CONFIG" "$MODEL" "${PI_BIN:-${OMP_BIN:-$HARNESS}}" "$RAW_COMMAND" "$WORKER_ACCOUNT_MATE") || exit 1
+fi
 WORKER_ACCOUNT_DECLARED=${WORKER_ACCOUNT%%$'\t'*}
 WORKER_ACCOUNT_ROOT=${WORKER_ACCOUNT#*$'\t'}
 WORKER_ACCOUNT_PROVIDER=${WORKER_ACCOUNT_ROOT#*$'\t'}
@@ -7157,7 +7208,7 @@ SPAWN_META_PATH=$SPAWN_META_TMP
 preserve_relaunch_meta() {
   awk -F= '
     BEGIN {
-      split("window endpoint_task_id worktree project harness kind mode yolo branch tasktmp base_branch upstream_consent forge backup_remote backup_prefix model effort service_tier opencode_version account account_provider omp_profile busy_gen spawn_gen approval_mode traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id paseo_terminal_id paseo_workspace_id rex_server rex_session_id rex_window_id rex_block_id t3_thread_id t3_project_id tern_session_id tern_tab_id tern_block_id home code_root projects control_relaunch_tx polytoken_session polytoken_port polytoken_credential", keys, " ")
+      split("window endpoint_task_id worktree project harness kind mode yolo branch tasktmp base_branch upstream_consent forge backup_remote backup_prefix model effort service_tier omp_account opencode_version account account_provider omp_profile busy_gen spawn_gen approval_mode traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id paseo_terminal_id paseo_workspace_id rex_server rex_session_id rex_window_id rex_block_id t3_thread_id t3_project_id tern_session_id tern_tab_id tern_block_id home code_root projects control_relaunch_tx polytoken_session polytoken_port polytoken_credential", keys, " ")
       for (i in keys) owned[keys[i]] = 1
     }
     !($1 in owned)
@@ -7203,6 +7254,9 @@ preserve_relaunch_meta() {
   # The per-launch omp service tier, only when one was requested, so an
   # untiered task record stays byte-identical.
   [ -z "$SERVICE_TIER" ] || echo "service_tier=$SERVICE_TIER"
+  # A per-spawn omp account, only when one was given; fm-control relaunch
+  # passes it back so the replacement keeps the same account.
+  [ -z "$OMP_ACCOUNT" ] || echo "omp_account=$OMP_ACCOUNT"
   # The worker account pin, only when this home declares one, so an unpinned
   # task record stays byte-identical.
   [ -z "$WORKER_ACCOUNT" ] || echo "account=$WORKER_ACCOUNT_DECLARED"

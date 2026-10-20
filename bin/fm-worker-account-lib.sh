@@ -202,7 +202,8 @@ fm_worker_account_pi_provider() {
 
 # fm_worker_account_check <harness> <declared> <root> <executable> [<provider>] [<setting>]
 # Returns 0 only when the runner's own check says the selected root is signed
-# in for this launch; otherwise prints one error and returns 1.
+# in for this launch; otherwise prints one error and returns 1. <setting>
+# names the pin's source in an omp refusal (default config/omp-account).
 fm_worker_account_check() {
   local harness=$1 declared=$2 root=$3 executable=$4 provider=${5:-} setting=${6:-} out verdict name
   [ -n "$setting" ] || setting="config/$(fm_worker_account_file "$harness")"
@@ -264,7 +265,7 @@ fm_worker_account_check() {
       else "no OAuth login stored for provider \($p)"
       end' 2>/dev/null)
     [ "$verdict" != ready ] || return 0
-    echo "error: config/omp-account pins omp workers to $declared, which is not signed in for provider '$provider' (${verdict:-no account listing}); sign in with PI_CODING_AGENT_DIR=$root omp, then /login, or change the pin" >&2
+    echo "error: $setting pins omp workers to $declared, which is not signed in for provider '$provider' (${verdict:-no account listing}); sign in with PI_CODING_AGENT_DIR=$root omp, then /login, or change the pin" >&2
     return 1
     ;;
   esac
@@ -333,6 +334,38 @@ fm_worker_account_select() {
   fi
   fm_worker_account_check "$harness" "$declared" "$root" "$executable" "$provider" "$setting" || return 1
   printf '%s\t%s\t%s\n' "$declared" "$root" "$provider"
+}
+
+# fm_worker_account_omp_explicit <dir> <model> <executable>
+# The per-spawn omp account (bin/fm-spawn.sh --omp-account): one absolute,
+# readable, searchable omp agent directory for that launch alone, used instead
+# of config/omp-account. The launch model must name its provider as
+# <provider>/<id>, and the directory must hold a login for that provider (the
+# same omp sign-in check the pin file uses). Prints "dir<TAB>dir<TAB>provider",
+# the fm_worker_account_select shape; on refusal prints one error and returns 1.
+fm_worker_account_omp_explicit() {
+  local dir=$1 model=$2 executable=$3 provider
+  case "$dir" in
+  *[[:cntrl:]]*)
+    echo "error: --omp-account must not contain control characters" >&2
+    return 1
+    ;;
+  /*) ;;
+  *)
+    echo "error: --omp-account must be an absolute directory: '$dir'" >&2
+    return 1
+    ;;
+  esac
+  if [ ! -d "$dir" ] || [ ! -r "$dir" ] || [ ! -x "$dir" ]; then
+    echo "error: --omp-account must name a readable, searchable existing directory: $dir" >&2
+    return 1
+  fi
+  provider=$(fm_worker_account_pi_provider "$model") || {
+    echo "error: --omp-account needs --model <provider>/<id> so the account's login can be checked for that provider; '${model:-none}' names no provider, and Firstmate does not guess one" >&2
+    return 1
+  }
+  fm_worker_account_check omp "$dir" "$dir" "$executable" "$provider" "--omp-account $dir" || return 1
+  printf '%s\t%s\t%s\n' "$dir" "$dir" "$provider"
 }
 
 # fm_worker_account_claude_shed

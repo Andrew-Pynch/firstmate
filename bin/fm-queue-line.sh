@@ -8,7 +8,10 @@
 # and this command holds no second copy of the counting rule.
 #
 # What it counts: the rows that model reads `waiting on you`, which is
-# bin/fm-queue.sh's own state for a live captain hold. Fleet maintenance is never
+# bin/fm-queue.sh's own state for a live, undated, question-bearing captain hold.
+# A hold the captain deferred to a later date reads `deferred` and a hold with no
+# question behind it reads `tracking`; neither is counted here, and both stay
+# visible under those labels in bin/fm-queue.sh. Fleet maintenance is never
 # counted, because the model already groups those rows as not the captain's
 # request.
 #
@@ -94,7 +97,7 @@ if [ -z "$TODAY" ]; then
   }
 fi
 
-MODEL=$(fm_run_timed "$TIMEOUT" "$QUEUE" --json) || {
+MODEL=$(FM_QUEUE_TODAY="$TODAY" fm_run_timed "$TIMEOUT" "$QUEUE" --json) || {
   echo "fm-queue-line: the queue model could not be read (bin/fm-queue.sh --json failed)" >&2
   exit 1
 }

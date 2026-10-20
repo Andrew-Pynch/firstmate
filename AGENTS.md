@@ -221,6 +221,7 @@ Drive a worker's lifecycle through `bin/fm-control.sh <task-id> interrupt|exit|r
 A secondmate's routed reply returns through status or a document pointer, not by firstmate peeking into its chat.
 For the parent-owned correlation, recovery, and escalation contract on marked secondmate requests, see `bin/fm-pending-reply-lib.sh`.
 When the captain adds or changes an ask mid-task, append the captain's words without added speaker labels or direct address to that brief's `## Captain's intent` and relay those words to the worker; Firstmate build constraints stay in `## Firstmate spec` or the steer.
+For an authority or scope change that affects several live owners at once, `bin/fm-authority-amend.sh` owns the whole propagation: it amends each named task's `## Captain's intent`, delivers the same words through that task's existing steering inbox, refuses a secret-shaped body, and reports which owners acknowledged.
 Supervise all live work under section 8.
 
 ### Selected delivery path and merge authority

@@ -34,9 +34,13 @@
 #     Prints the pid of the herdr process that holds <socket-path>, or nothing
 #     when no herdr process does. Reads `lsof -U -a -c herdr -F pn`; on macOS
 #     `pgrep -f` cannot see the herdr server's argv, so lsof is the owner
-#     source. When several herdr processes list the path, the one whose argv
-#     runs `server` wins. Returns 2, printing nothing, when lsof does not
-#     resolve; the caller decides what an unprovable owner means.
+#     source. The NAME field is compared by exact path, and one trailing
+#     ` type=<type>` suffix is dropped first: Linux lsof appends the socket
+#     type (`<path> type=STREAM`), while macOS prints the bare path, so
+#     dropping that suffix leaves both hosts comparing only the path. When
+#     several herdr processes list the path, the one whose argv runs `server`
+#     wins. Returns 2, printing nothing, when lsof does not resolve; the caller
+#     decides what an unprovable owner means.
 #   fm_remote_herdr_process_env <pid>
 #     Prints the process environment as NAME=VALUE lines: `ps -Eww` on darwin
 #     (own-uid processes only), /proc/<pid>/environ elsewhere. Used ONLY to
@@ -92,7 +96,7 @@ FM_REMOTE_HERDR_AGENT_LABEL=dev.firstmate.herdr.fm-remote
 FM_REMOTE_HERDR_WORKER_LABEL=dev.firstmate.remote-job
 
 fm_remote_herdr_socket_owner() { # <socket-path>
-  local socket=$1 real pid='' line candidates='' candidate cmd
+  local socket=$1 real pid='' line candidates='' candidate cmd name
   [ -n "$socket" ] || return 1
   command -v lsof >/dev/null 2>&1 || return 2
   real=$(CDPATH='' cd -- "$(dirname "$socket")" 2>/dev/null && printf '%s/%s' "$(pwd -P)" "$(basename "$socket")") || real=$socket
@@ -101,7 +105,9 @@ fm_remote_herdr_socket_owner() { # <socket-path>
       p*) pid=${line#p} ;;
       n*)
         [ -n "$pid" ] || continue
-        case "${line#n}" in
+        name=${line#n}
+        name=${name% type=*}
+        case "$name" in
           "$socket"|"$real") candidates="${candidates}${pid}"$'\n' ;;
         esac
         ;;

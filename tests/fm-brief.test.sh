@@ -213,6 +213,10 @@ test_ship_modes_generate_clean_briefs() {
     assert_grep "{FIRSTMATE_SPEC}" "$brief" "$id: brief missing the {FIRSTMATE_SPEC} placeholder"
     assert_grep "## Captain's intent" "$brief" "$id: brief missing Captain's intent subsection"
     assert_grep "## Firstmate spec" "$brief" "$id: brief missing Firstmate spec subsection"
+    assert_grep "## Acceptance record" "$brief" "$id: brief missing the acceptance record section"
+    assert_grep "Accept when: {ACCEPT_WHEN}" "$brief" "$id: brief missing the acceptance record's Accept when field"
+    assert_grep "Proof: {ACCEPT_PROOF}" "$brief" "$id: brief missing the acceptance record's Proof field"
+    assert_grep "Evidence gate: {ACCEPT_GATE}" "$brief" "$id: brief missing the acceptance record's Evidence gate field"
     assert_grep 'never a bare number such as "PR 108"' "$brief" "$id: brief missing the full-PR-URL rule"
     assert_grep "mid-task \`working:\` line (including setup complete) is nonterminal" "$brief" \
       "$id: brief missing nonterminal working:/setup-complete gate protection"

@@ -24,6 +24,11 @@ Exercise Orca dispatch.
 
 ## Firstmate spec
 Verify the Orca lifecycle behavior under test.
+
+## Acceptance record
+Accept when: Orca backend dispatch is exercised
+Proof: the recorded lifecycle behavior this fixture asserts
+Evidence gate: NONE
 EOF
 }
 

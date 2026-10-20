@@ -20,6 +20,11 @@ Exercise trace propagation for $2.
 
 ## Firstmate spec
 Verify the spawned process receives the expected trace context.
+
+## Acceptance record
+Accept when: trace propagation is exercised for $2
+Proof: the spawned process receives the expected trace context
+Evidence gate: NONE
 EOF
 }
 

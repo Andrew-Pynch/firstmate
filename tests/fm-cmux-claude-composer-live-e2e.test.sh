@@ -58,12 +58,21 @@ import sys
 
 brief = Path(sys.argv[1])
 status = sys.argv[2]
-brief.write_text(brief.read_text().replace("{TASK}", f'''Run a cmux communication probe.
+text = brief.read_text()
+text = text.replace("{TASK}", f'''Run a cmux communication probe.
 
 Immediately append `working [at=<epoch>]: cmux composer probe ready` to `{status}`, substituting `<epoch>` as rule 4 instructs.
 Then append exactly `needs-decision [at=<epoch>] [key=probe-decision]: awaiting codeword` to that file and stop to wait for a firstmate message.
 When you receive a firstmate message containing `ALBATROSS`, append `done [at=<epoch>]: received ALBATROSS` to that status file and stop.
 Do not change project files or make a commit.'''))
+# The scaffold's remaining fill sites: a scout brief carries its own Firstmate
+# spec and the acceptance record every dispatch requires (bin/fm-dod-lib.sh
+# owns the record's grammar), and spawn refuses the leftovers.
+text = text.replace("{FIRSTMATE_SPEC}", "Drive the real cmux composer probe; change nothing else.")
+text = text.replace("{ACCEPT_WHEN}", "the cmux composer probe completes")
+text = text.replace("{ACCEPT_PROOF}", "the status lines the probe appended")
+text = text.replace("{ACCEPT_GATE}", "NONE")
+brief.write_text(text)
 PY
 
 FM_HOME="$LAB" "$ROOT/bin/fm-spawn.sh" "$TASK" "$LAB/projects/comms" --scout --harness claude --model haiku --backend cmux \

@@ -103,6 +103,11 @@ Exercise Herdr backend auto-detection.
 
 ## Firstmate spec
 Verify the real spawn path selects Herdr.
+
+## Acceptance record
+Accept when: backend auto-detection is exercised
+Proof: the recorded launch notice and backend selection
+Evidence gate: NONE
 EOF
 
 PROJ="$TMP_ROOT/scratch-project"

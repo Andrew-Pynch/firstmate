@@ -46,6 +46,11 @@ Ship a change through the review tool.
 ## Firstmate spec
 Exercise the external review spawn path.
 
+## Acceptance record
+Accept when: the external review spawn path behaves as asserted
+Proof: this test's assertions
+Evidence gate: NONE
+
 # Definition of done
 Delivery contract: mode=direct-PR forge=external
 Ship branch: fm/$id

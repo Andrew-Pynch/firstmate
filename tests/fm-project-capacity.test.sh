@@ -36,6 +36,11 @@ Run the project's heavy suite for $2.
 ## Firstmate spec
 Exercise project capacity admission.
 
+## Acceptance record
+Accept when: project capacity admits or defers this spawn as declared
+Proof: this test's assertions
+Evidence gate: NONE
+
 # Definition of done
 Delivery contract: mode=no-mistakes
 EOF

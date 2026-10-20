@@ -1268,6 +1268,11 @@ Exercise an ordinary crew launch.
 
 ## Firstmate spec
 Verify secondmate harness settings do not affect it.
+
+## Acceptance record
+Accept when: an ordinary crew launch is exercised
+Proof: the recorded launch command the crew received
+Evidence gate: NONE
 EOF
   : > "$launchlog"
   PATH="$fakebin:$BASE_PATH" TMUX="fake,1,0" CLAUDECODE=1 \

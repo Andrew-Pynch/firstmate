@@ -61,6 +61,11 @@ Exercise the fleet ledger for $TASK.
 
 ## Firstmate spec
 Nothing to build.
+
+## Acceptance record
+Accept when: the fleet ledger records this task's lifecycle
+Proof: this test's assertions
+Evidence gate: NONE
 EOF
   FAKEBIN=$(make_fakebin "$dir")
 }

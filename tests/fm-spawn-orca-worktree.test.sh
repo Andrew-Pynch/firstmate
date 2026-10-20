@@ -163,6 +163,11 @@ Exercise an Orca-backed spawn for $id.
 
 ## Firstmate spec
 Confirm the launch enters the worktree Orca created for it.
+
+## Acceptance record
+Accept when: the Orca spawn behavior under test is observable
+Proof: this test's assertions
+Evidence gate: NONE
 EOF
   fb=$(make_orca_fakebin "$case_dir")
 
@@ -201,6 +206,11 @@ Exercise a relaunch attempt against a recorded Orca task.
 
 ## Firstmate spec
 Confirm the relaunch is refused before any worktree re-entry logic runs.
+
+## Acceptance record
+Accept when: the Orca spawn behavior under test is observable
+Proof: this test's assertions
+Evidence gate: NONE
 EOF
   {
     echo "window=fm-$id"
@@ -259,6 +269,11 @@ Verify the controlled Orca environment source.
 
 ## Firstmate spec
 Execute read-only environment checks.
+
+## Acceptance record
+Accept when: the Orca spawn behavior under test is observable
+Proof: this test's assertions
+Evidence gate: NONE
 EOF
     cat > "$case_dir/probe.sh" <<'EOF'
 #!/bin/sh
@@ -401,6 +416,11 @@ Exercise a failed Orca spawn after launch delivery.
 
 ## Firstmate spec
 Confirm a slow pane still receives the staged launch file before the spawn fails later.
+
+## Acceptance record
+Accept when: the Orca spawn behavior under test is observable
+Proof: this test's assertions
+Evidence gate: NONE
 EOF
   fb=$(make_orca_fakebin "$case_dir")
   printf '#!/bin/sh\necho "GH_TOKEN=synthetic-token"\n' > "$fb/tmux"
@@ -449,6 +469,11 @@ Exercise an Orca pane that never runs the launch command.
 
 ## Firstmate spec
 Confirm the staged credential file is reclaimed.
+
+## Acceptance record
+Accept when: the Orca spawn behavior under test is observable
+Proof: this test's assertions
+Evidence gate: NONE
 EOF
   fb=$(make_orca_fakebin "$case_dir")
   printf '#!/bin/sh\necho "GH_TOKEN=synthetic-token"\n' > "$fb/tmux"
@@ -491,6 +516,11 @@ Exercise an Orca pane that unlinks the launch file at the reclaim deadline.
 
 ## Firstmate spec
 Confirm the spawn treats the launch as consumed.
+
+## Acceptance record
+Accept when: the Orca spawn behavior under test is observable
+Proof: this test's assertions
+Evidence gate: NONE
 EOF
   fb=$(make_orca_fakebin "$case_dir")
   real_rm=$(command -v rm)
@@ -542,6 +572,11 @@ Exercise an Orca pane that cannot remove the launch file.
 
 ## Firstmate spec
 Confirm the worker is refused and the terminal stays open.
+
+## Acceptance record
+Accept when: the Orca spawn behavior under test is observable
+Proof: this test's assertions
+Evidence gate: NONE
 EOF
   fb=$(make_orca_fakebin "$case_dir")
   printf '#!/bin/sh\necho "GH_TOKEN=synthetic-token"\n' > "$fb/tmux"
@@ -590,6 +625,11 @@ Exercise an interrupted Orca spawn after launch delivery.
 
 ## Firstmate spec
 Confirm the staged credential file is reclaimed.
+
+## Acceptance record
+Accept when: the Orca spawn behavior under test is observable
+Proof: this test's assertions
+Evidence gate: NONE
 EOF
       fb=$(make_orca_fakebin "$case_dir")
       printf '#!/bin/sh\necho "GH_TOKEN=synthetic-interrupt-token"\n' > "$fb/tmux"
@@ -675,6 +715,11 @@ Exercise an Orca spawn interrupted before launch delivery.
 
 ## Firstmate spec
 Confirm the staged credential file is removed.
+
+## Acceptance record
+Accept when: the Orca spawn behavior under test is observable
+Proof: this test's assertions
+Evidence gate: NONE
 EOF
     fb=$(make_orca_fakebin "$case_dir")
     printf '#!/bin/sh\necho "GH_TOKEN=synthetic-interrupt-token"\n' > "$fb/tmux"
@@ -773,6 +818,11 @@ Exercise an Orca allowlist without a configured source.
 
 ## Firstmate spec
 Confirm the spawn reports where allowlisted values come from.
+
+## Acceptance record
+Accept when: the Orca spawn behavior under test is observable
+Proof: this test's assertions
+Evidence gate: NONE
 EOF
     fb=$(make_orca_fakebin "$case_dir")
     out=$(FM_ROOT_OVERRIDE='' FM_HOME="$home" HOME="$case_dir/user-home" \

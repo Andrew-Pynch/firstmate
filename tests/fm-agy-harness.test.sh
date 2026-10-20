@@ -577,6 +577,11 @@ Exercise Antigravity dispatch.
 
 ## Firstmate spec
 Verify launch and delivery behavior.
+
+## Acceptance record
+Accept when: Antigravity dispatch is exercised
+Proof: the recorded launch and delivery behavior
+Evidence gate: NONE
 EOF
   printf 'agy\n' > "$home/config/crew-harness"
   mkdir -p "$home/.gemini/antigravity-cli"

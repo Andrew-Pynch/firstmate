@@ -5,7 +5,7 @@ set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 TMP_ROOT=$(fm_test_tmproot fm-status-page)
 FM_STATUS_TEST_ROOT="$ROOT" FM_STATUS_TEST_HOME="$TMP_ROOT/home" python3 - <<'PY'
-import json, os, pathlib, socket, subprocess, time, urllib.error, urllib.parse, urllib.request
+import json, os, pathlib, re, socket, subprocess, time, urllib.error, urllib.parse, urllib.request
 root = pathlib.Path(os.environ['FM_STATUS_TEST_ROOT'])
 home = pathlib.Path(os.environ['FM_STATUS_TEST_HOME'])
 for name in ('state', 'data', 'config'):
@@ -59,7 +59,13 @@ try:
     cards = json.loads((home / 'state/.status-page/cards.json').read_text())
     card, entry = next(iter(cards.items()))
     assert entry['options'] == ['A: fake red', 'B: fake blue']
-    token = (home / 'state/.status-page/token').read_text()
+    def form_token(markup):
+        return re.search(r'name="token" value="([^"]+)"', markup).group(1)
+    token = form_token(page)
+    for _ in range(4):
+        render()
+    fresh_token = form_token((home / 'state/status-page-public/index.html').read_text())
+    assert fresh_token != token
     data = urllib.parse.urlencode({'card':card, 'option':'0', 'detail':'', 'token':token}).encode()
     headers = {'Host':'demo.tail.ts.net', 'Origin':'https://demo.tail.ts.net',
                'Sec-Fetch-Site':'same-origin', 'Tailscale-User-Login':'captain@example.com'}
@@ -69,28 +75,29 @@ try:
                                       headers=request_headers), timeout=10)
     for overrides in ({'Tailscale-User-Login':None}, {'Tailscale-User-Login':'someone@example.com'},
                       {'Origin':'https://attacker.example'}, {'Sec-Fetch-Site':'cross-site'}):
-        try:
-            submit(overrides=overrides)
-            raise AssertionError('unauthorized decision accepted')
-        except urllib.error.HTTPError as error:
-            assert error.code == 403
+        with submit(overrides=overrides) as response:
+            assert response.url.endswith('/?notice=forbidden')
+            assert 'Decision requests require the owner' in response.read().decode()
     stale = urllib.parse.urlencode({'card':card, 'option':'0', 'detail':'', 'token':'old-token'}).encode()
-    try:
-        submit(body=stale)
-        raise AssertionError('stale token accepted')
-    except urllib.error.HTTPError as error:
-        assert error.code == 409
+    with submit(body=stale) as response:
+        assert response.url.endswith('/?notice=stale')
+        assert 'Page changed; reload before answering' in response.read().decode()
     assert not (home / 'state/inbox').exists()
+    with urllib.request.urlopen(url, timeout=10) as response:
+        assert 'name="option" value="0"' in response.read().decode()
     with submit() as response:
-        assert 'recorded, waiting for Main' in response.read().decode()
+        assert response.url.endswith('/')
+        assert re.search(r'recorded: A: fake red at \d{4}-\d\d-\d\d \d\d:\d\d:\d\d UTC', response.read().decode())
     notes = list((home / 'state/inbox').glob('*.note'))
     assert len(notes) == 1 and 'decision fm-status-page-decisions-demo A: fake red:' in notes[0].read_text()
     assert (home / 'state/.wake-queue').read_text().count('\tcheck\tinbox:') == 1
-    try:
-        submit()
-        raise AssertionError('duplicate accepted')
-    except urllib.error.HTTPError as error:
-        assert error.code == 409
+    with submit() as response:
+        assert response.url.endswith('/?notice=stale')
+        assert 'recorded: A: fake red at ' in response.read().decode()
+    duplicate = urllib.parse.urlencode({'card':card, 'option':'0', 'detail':'', 'token':fresh_token}).encode()
+    with submit(body=duplicate) as response:
+        assert response.url.endswith('/?notice=unavailable')
+        assert 'already recorded' in response.read().decode()
     assert len(list((home / 'state/inbox').glob('*.note'))) == 1
     assert (home / 'state/.wake-queue').read_text().count('\tcheck\tinbox:') == 1
     snap['page_rows'] = [snap['page_rows'][1]]
@@ -104,14 +111,30 @@ try:
     reopened = json.loads((home / 'state/.status-page/cards.json').read_text())
     second_card = next(iter(reopened))
     assert second_card != card
+    second_page = (home / 'state/status-page-public/index.html').read_text()
     second_data = urllib.parse.urlencode({'card':second_card, 'option':'1', 'detail':'',
-                                          'token':(home / 'state/.status-page/token').read_text()}).encode()
+                                          'token':form_token(second_page)}).encode()
+    for _ in range(20):
+        render()
     with submit(body=second_data) as response:
-        assert 'recorded, waiting for Main' in response.read().decode()
+        assert response.url.endswith('/?notice=stale')
+        markup = response.read().decode()
+        assert 'Page changed; reload before answering' in markup
+        assert 'name="option" value="1"' in markup
+    latest = (home / 'state/status-page-public/index.html').read_text()
+    second_data = urllib.parse.urlencode({'card':second_card, 'option':'1', 'detail':'',
+                                          'token':form_token(latest)}).encode()
+    invalid = urllib.parse.urlencode({'card':second_card, 'option':'9', 'detail':'',
+                                      'token':form_token(latest)}).encode()
+    with submit(body=invalid) as response:
+        assert response.url.endswith('/?notice=invalid')
+        assert 'Invalid decision' in response.read().decode()
+    with submit(body=second_data) as response:
+        assert 'recorded: B: fake blue at ' in response.read().decode()
     assert len(list((home / 'state/inbox').glob('*.note'))) == 2
     assert (home / 'state/.wake-queue').read_text().count('\tcheck\tinbox:') == 2
 finally:
     server.terminate()
     server.wait(timeout=5)
-print('PASS: owner, origin, token rejection; replay refusal and reopened-call capture')
+print('PASS: owner and origin checks; stale-tab window, redirect banner, recorded receipt, replay and reopened-call capture')
 PY

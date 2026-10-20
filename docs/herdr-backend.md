@@ -204,7 +204,7 @@ On those releases, that close moves the active workspace for roughly a seventh o
 An unconfigured home is therefore projected only on a release at or above the 0.8.0 floor.
 On those releases every workspace-removal primitive preserves focus, and that proof stops being load-bearing.
 
-Below the floor, an unconfigured home uses the ordinary flat per-home layout instead.
+Below the floor, an unconfigured home uses the ordinary flat layout instead, with the task in its own workspace labelled with the task id (never a tab in the home workspace, captain rule 2026-10-01).
 It warns once per home per detected release, naming the running release and the upgrade that restores the projection.
 That one-warning-per-release record is a `state/.herdr-presentation-floor-<release>` marker.
 Deleting it only makes the same warning appear again.
@@ -239,7 +239,6 @@ The default needs no special convergence.
 The primary's absent file and the secondmate's absent file both mean the same unconfigured default.
 So leaving the file absent converges a secondmate to that same default rather than turning it off.
 Only an explicit primary `off` propagates the opt-out.
-
 A secondmate agent itself always stays in its ordinary parent workspace; only children launched by that home are eligible.
 An unconverged opt-out keeps the default projection in that home until convergence.
 
@@ -384,7 +383,7 @@ Then the journal advances atomically to the replacement endpoint before metadata
 The reclaim path never moves, closes, deletes, or renames a workspace and never touches a parent, sibling, captain, or foreign pane.
 A failed replacement rolls back only the exact response-derived new pane when focus-safe verification permits it.
 
-These cases fall back flat without mutating the old projection when duplicate-agent risk is positively absent:
+These cases fall back flat (the task still gets its own workspace, `fm_backend_herdr_task_workspace_create`; only a secondmate or a home that opted out of presentation uses the home workspace) without mutating the old projection when duplicate-agent risk is positively absent:
 
 - Version 1 journals.
 - Dead or missing panes.
@@ -394,7 +393,6 @@ These cases fall back flat without mutating the old projection when duplicate-ag
 - Inconsistent endpoint bindings.
 - Active target tabs.
 - Ambiguous identity or focus.
-
 A live or unknown recorded or token-matched endpoint refuses duplicate launch.
 
 ### Startup cleanup of restored projections

@@ -384,7 +384,7 @@ test_return_brief_composes_from_record_store_and_held_set() {
   (cd "$dir/home" && tasks-axi add fix-windows 'Fix the windows lane' --file data/backlog.md >/dev/null \
     && tasks-axi hold fix-windows --reason 'awaiting the captain on the merge' --kind captain --file data/backlog.md >/dev/null) \
     || fail "could not seed the held backlog"
-  contract_in "$dir" enter --words $'merge the windows fix when green, then cut a prerelease\nif the install deadlocks abort the competing run' >/dev/null 2>&1 || fail "could not confirm the away-posture record"
+  contract_in "$dir" enter --objective 'the accepted objective for this window' --words $'merge the windows fix when green, then cut a prerelease\nif the install deadlocks abort the competing run' >/dev/null 2>&1 || fail "could not confirm the away-posture record"
   # Two live blockers, one on a task with a captain-verdict outcome and one on a
   # task with a routine outcome. A third task failed outright.
   printf 'window=synthetic:fm-fix-windows\nbackend=tmux\nkind=ship\n' > "$dir/home/state/fix-windows.meta"
@@ -491,7 +491,7 @@ test_return_brief_points_at_the_drain_on_a_host_home_only() {
     fakebin="$dir/fakebin"
     mkdir -p "$fakebin"
     ln -s /bin/bash "$fakebin/$harness"
-    contract_in "$dir" enter --words 'watch the fleet' >/dev/null 2>&1 || fail "could not record the away posture"
+    contract_in "$dir" enter --objective 'the accepted objective for this window' --words 'watch the fleet' >/dev/null 2>&1 || fail "could not record the away posture"
     for n in 1 2 3 4 5 6; do
       outcome_in "$dir" append --task demo --verdict routine --summary "routine $n" >/dev/null || fail "could not seed routine $n"
     done
@@ -528,7 +528,7 @@ test_return_brief_all_silent_window_does_not_point_at_drain() {
   fakebin="$dir/fakebin"
   mkdir -p "$fakebin"
   ln -s /bin/bash "$fakebin/claude"
-  contract_in "$dir" enter --words 'watch the fleet' >/dev/null 2>&1 || fail "could not record the away posture"
+  contract_in "$dir" enter --objective 'the accepted objective for this window' --words 'watch the fleet' >/dev/null 2>&1 || fail "could not record the away posture"
   outcome_in "$dir" append --task demo --verdict routine --summary 'still building; nothing new has happened; no action was taken' --silent true >/dev/null \
     || fail "could not seed the silent routine outcome"
   touch "$dir/home/state/.last-watcher-beat"
@@ -563,7 +563,7 @@ test_return_keeps_catchup_gated_when_the_drain_cannot_record_outcomes() {
   fakebin="$dir/fakebin"
   mkdir -p "$fakebin"
   ln -s /bin/bash "$fakebin/claude"
-  contract_in "$dir" enter --words 'watch the fleet' >/dev/null 2>&1 || fail "could not record the away posture"
+  contract_in "$dir" enter --objective 'the accepted objective for this window' --words 'watch the fleet' >/dev/null 2>&1 || fail "could not record the away posture"
   outcome_in "$dir" append --task demo --verdict routine --summary 'rebased while away' >/dev/null || fail "could not seed the routine row"
   outcome_in "$dir" append --task demo --verdict captain --summary 'PR ready for review' >/dev/null || fail "could not seed the captain row"
   mv "$dir/bin/fm-branch-outcome.sh" "$dir/bin/fm-branch-outcome.real.sh"
@@ -608,7 +608,7 @@ test_return_brief_lists_landed_work_awaiting_cleanup() {
   local dir out landed_line failed_line handled_line
   dir="$TMP_ROOT/brief-landed"
   install_runner "$dir"
-  contract_in "$dir" enter --words 'merge the exemption changes when green' >/dev/null 2>&1 || fail "could not confirm the away-posture record"
+  contract_in "$dir" enter --objective 'the accepted objective for this window' --words 'merge the exemption changes when green' >/dev/null 2>&1 || fail "could not confirm the away-posture record"
   # The 2026-09-22 away window: exemption workers whose pull requests had
   # merged were left sitting, and the return brief never listed them. Two done
   # workers with recorded PRs: the merge outcome path marked the first merged
@@ -653,12 +653,12 @@ test_return_brief_keeps_refresh_history() {
   local dir out first_epoch
   dir="$TMP_ROOT/brief-refresh"
   install_runner "$dir"
-  contract_in "$dir" enter --words 'first mandate: merge task first PR when green' >/dev/null 2>&1 || fail "could not confirm the first mandate"
+  contract_in "$dir" enter --objective 'the accepted objective for this window' --words 'first mandate: merge task first PR when green' >/dev/null 2>&1 || fail "could not confirm the first mandate"
   first_epoch=$(contract_in "$dir" field entered_epoch)
   outcome_in "$dir" append --task first --verdict routine \
     --summary 'completed before the mandate refresh' --wake 'signal: first.status' >/dev/null \
     || fail "could not seed the pre-refresh outcome"
-  contract_in "$dir" enter --words $'replacement mandate\n\n' >/dev/null 2>&1 || fail "could not confirm the replacement mandate"
+  contract_in "$dir" enter --objective 'the accepted objective for this window' --words $'replacement mandate\n\n' >/dev/null 2>&1 || fail "could not confirm the replacement mandate"
   [ "$(contract_in "$dir" field entered_epoch)" = "$first_epoch" ] || fail "refresh changed the away-window boundary"
   touch "$dir/home/state/.last-watcher-beat"
   : > "$dir/home/state/.fake-drain"
@@ -702,7 +702,7 @@ test_missing_epoch_record_stays_required_after_disappearing() {
   gate="$dir/home/state/.afk-return-catchup"
   record="$dir/home/state/.afk-contract"
   backup="$dir/valid-record.backup"
-  contract_in "$dir" enter --words 'captain words survive' >/dev/null 2>&1 || fail "could not confirm the posture record"
+  contract_in "$dir" enter --objective 'the accepted objective for this window' --words 'captain words survive' >/dev/null 2>&1 || fail "could not confirm the posture record"
   epoch=$(contract_in "$dir" field entered_epoch)
   entered=$(contract_in "$dir" field entered)
   cp "$record" "$backup"
@@ -882,7 +882,7 @@ test_return_guard_refuses_while_the_record_exists() {
   local dir out rc
   dir="$TMP_ROOT/guard-record"
   install_runner "$dir"
-  contract_in "$dir" enter >/dev/null 2>&1 || fail "could not write the away-posture record"
+  contract_in "$dir" enter --objective 'the accepted objective for this window' >/dev/null 2>&1 || fail "could not write the away-posture record"
   set +e
   out=$(FM_HOME="$dir/home" FM_STATE_OVERRIDE="$dir/home/state" "$dir/bin/fm-afk-return.sh" guard 2>&1)
   rc=$?
@@ -897,7 +897,7 @@ test_return_brief_health_leads_with_a_gap() {
   local dir out gap_line clean_line
   dir="$TMP_ROOT/brief-gap"
   install_runner "$dir"
-  contract_in "$dir" enter >/dev/null 2>&1 || fail "could not write the away-posture record"
+  contract_in "$dir" enter --objective 'the accepted objective for this window' >/dev/null 2>&1 || fail "could not write the away-posture record"
   : > "$dir/home/state/.watcher-down"
   # A beacon older than the grace, on either date flavor.
   touch "$dir/home/state/.last-watcher-beat"
@@ -918,7 +918,7 @@ test_return_brief_does_not_report_an_acked_watcher_down_marker_as_a_gap() {
   local dir out
   dir="$TMP_ROOT/brief-acked-marker"
   install_runner "$dir"
-  contract_in "$dir" enter >/dev/null 2>&1 || fail "could not write the away-posture record"
+  contract_in "$dir" enter --objective 'the accepted objective for this window' >/dev/null 2>&1 || fail "could not write the away-posture record"
   # An episode that was detected and fully handled during the away window
   # leaves the marker behind in an acked state (fm-wake-lib.sh
   # _fm_recovery_marker_ack); that is not an open gap.
@@ -939,7 +939,7 @@ test_return_brief_reports_only_an_open_downtime_episode_as_a_gap() {
   for token in announced:handling pending:handling pending:downtime announced:downtime; do
     dir="$TMP_ROOT/brief-open-marker-${token%%:*}-${token#*:}"
     install_runner "$dir"
-    contract_in "$dir" enter >/dev/null 2>&1 || fail "could not write the away-posture record"
+    contract_in "$dir" enter --objective 'the accepted objective for this window' >/dev/null 2>&1 || fail "could not write the away-posture record"
     printf '%s:fixture-generation\n' "$token" > "$dir/home/state/.watcher-down"
     touch "$dir/home/state/.last-watcher-beat"
     : > "$dir/home/state/.fake-drain"
@@ -984,7 +984,7 @@ test_return_brief_reports_an_engine_latch_in_the_window() {
   tab=$(printf '\t')
   dir="$TMP_ROOT/brief-engine-latch"
   install_runner "$dir"
-  contract_in "$dir" enter >/dev/null 2>&1 || fail "could not write the away-posture record"
+  contract_in "$dir" enter --objective 'the accepted objective for this window' >/dev/null 2>&1 || fail "could not write the away-posture record"
   now=$(date +%s)
   before=$((now - 3600))
   retry=$((now + 300))
@@ -1010,7 +1010,7 @@ $now${tab}to-main${tab}the away session could not take this wake: the engine tur
   # engine errors without a trip are still reported.
   dir="$TMP_ROOT/brief-engine-recovered"
   install_runner "$dir"
-  contract_in "$dir" enter >/dev/null 2>&1 || fail "could not write the away-posture record"
+  contract_in "$dir" enter --objective 'the accepted objective for this window' >/dev/null 2>&1 || fail "could not write the away-posture record"
   now=$(date +%s)
   seed_host_latch "$dir" 0 0 0 "$now${tab}latch${tab}errors=2${tab}cooldown=300s
 $now${tab}recovered${tab}after a successful probe"
@@ -1024,7 +1024,7 @@ $now${tab}recovered${tab}after a successful probe"
   # failed probe inside it keeps that episode's trip time.
   dir="$TMP_ROOT/brief-engine-relatched"
   install_runner "$dir"
-  contract_in "$dir" enter >/dev/null 2>&1 || fail "could not write the away-posture record"
+  contract_in "$dir" enter --objective 'the accepted objective for this window' >/dev/null 2>&1 || fail "could not write the away-posture record"
   now=$(date +%s)
   seed_host_latch "$dir" 3 600 "$((now + 600))" "$now${tab}latch${tab}errors=2${tab}cooldown=300s
 $now${tab}recovered${tab}after a successful probe
@@ -1041,7 +1041,7 @@ $((now + 120))${tab}latch${tab}errors=3${tab}cooldown=600s"
   # a probe succeeds.
   dir="$TMP_ROOT/brief-engine-cooled"
   install_runner "$dir"
-  contract_in "$dir" enter >/dev/null 2>&1 || fail "could not write the away-posture record"
+  contract_in "$dir" enter --objective 'the accepted objective for this window' >/dev/null 2>&1 || fail "could not write the away-posture record"
   seed_host_latch "$dir" 2 300 1 "$((now - 3600))${tab}latch${tab}errors=2${tab}cooldown=300s"
   touch "$dir/home/state/.last-watcher-beat"
   : > "$dir/home/state/.fake-drain"
@@ -1052,7 +1052,7 @@ $((now + 120))${tab}latch${tab}errors=3${tab}cooldown=600s"
 
   dir="$TMP_ROOT/brief-engine-errors"
   install_runner "$dir"
-  contract_in "$dir" enter >/dev/null 2>&1 || fail "could not write the away-posture record"
+  contract_in "$dir" enter --objective 'the accepted objective for this window' >/dev/null 2>&1 || fail "could not write the away-posture record"
   now=$(date +%s)
   seed_host_latch "$dir" 1 0 0 "$now${tab}failed${tab}turn=t.1${tab}posture=away${tab}rc=124${tab}reports=0${tab}unacked=2${tab}no-result${tab}${tab}signal: a"
   touch "$dir/home/state/.last-watcher-beat"
@@ -1066,7 +1066,7 @@ $((now + 120))${tab}latch${tab}errors=3${tab}cooldown=600s"
   # or whose ledger is missing, is still a failure, named without a trip time.
   dir="$TMP_ROOT/brief-engine-trimmed"
   install_runner "$dir"
-  contract_in "$dir" enter >/dev/null 2>&1 || fail "could not write the away-posture record"
+  contract_in "$dir" enter --objective 'the accepted objective for this window' >/dev/null 2>&1 || fail "could not write the away-posture record"
   now=$(date +%s)
   seed_host_latch "$dir" 3 600 "$((now + 600))" "$now${tab}failed${tab}turn=t.9${tab}posture=away${tab}rc=1${tab}reports=0${tab}unacked=2${tab}error=1 cost=0${tab}boom${tab}signal: a"
   touch "$dir/home/state/.last-watcher-beat"
@@ -1080,7 +1080,7 @@ $((now + 120))${tab}latch${tab}errors=3${tab}cooldown=600s"
   # time is never reported as when the session latched.
   dir="$TMP_ROOT/brief-engine-probe-only"
   install_runner "$dir"
-  contract_in "$dir" enter >/dev/null 2>&1 || fail "could not write the away-posture record"
+  contract_in "$dir" enter --objective 'the accepted objective for this window' >/dev/null 2>&1 || fail "could not write the away-posture record"
   now=$(date +%s)
   seed_host_latch "$dir" 3 600 "$((now + 600))" "$now${tab}failed${tab}turn=t.9${tab}posture=away${tab}rc=1${tab}reports=0${tab}unacked=2${tab}error=1 cost=0${tab}boom${tab}signal: a
 $now${tab}latch${tab}errors=3${tab}cooldown=600s"
@@ -1096,7 +1096,7 @@ $now${tab}latch${tab}errors=3${tab}cooldown=600s"
   # tripped, so the latch is not called already in effect.
   dir="$TMP_ROOT/brief-engine-probe-before"
   install_runner "$dir"
-  contract_in "$dir" enter >/dev/null 2>&1 || fail "could not write the away-posture record"
+  contract_in "$dir" enter --objective 'the accepted objective for this window' >/dev/null 2>&1 || fail "could not write the away-posture record"
   seed_host_latch "$dir" 3 600 "$((now + 600))" "$((now - 3600))${tab}latch${tab}errors=3${tab}cooldown=600s"
   touch "$dir/home/state/.last-watcher-beat"
   : > "$dir/home/state/.fake-drain"
@@ -1108,7 +1108,7 @@ $now${tab}latch${tab}errors=3${tab}cooldown=600s"
 
   dir="$TMP_ROOT/brief-engine-no-ledger"
   install_runner "$dir"
-  contract_in "$dir" enter >/dev/null 2>&1 || fail "could not write the away-posture record"
+  contract_in "$dir" enter --objective 'the accepted objective for this window' >/dev/null 2>&1 || fail "could not write the away-posture record"
   seed_host_latch "$dir" 2 300 "$((now + 300))" ""
   rm -f "$dir/home/state/.supervision-host.log"
   touch "$dir/home/state/.last-watcher-beat"
@@ -1180,7 +1180,7 @@ test_return_brief_keeps_trip_row_count_after_probe() {
   dir="$TMP_ROOT/brief-trip-count"
   tab=$(printf '\t')
   install_runner "$dir"
-  contract_in "$dir" enter >/dev/null 2>&1 || fail "could not write the away-posture record"
+  contract_in "$dir" enter --objective 'the accepted objective for this window' >/dev/null 2>&1 || fail "could not write the away-posture record"
   now=$(date +%s)
   seed_host_latch "$dir" 3 600 "$((now + 600))" "$now${tab}latch${tab}errors=2${tab}cooldown=300s
 $((now + 1))${tab}latch${tab}errors=3${tab}cooldown=600s"
@@ -1199,7 +1199,7 @@ test_return_brief_ignores_previous_main_session() {
   dir="$TMP_ROOT/brief-session-boundary"
   tab=$(printf '\t')
   install_runner "$dir"
-  contract_in "$dir" enter >/dev/null 2>&1 || fail "could not write the away-posture record"
+  contract_in "$dir" enter --objective 'the accepted objective for this window' >/dev/null 2>&1 || fail "could not write the away-posture record"
   now=$(date +%s)
   old=$((now - 3600))
   seed_host_latch "$dir" 3 600 "$((now + 600))" "$old${tab}latch${tab}errors=2${tab}cooldown=300s
@@ -1283,15 +1283,31 @@ test_return_brief_without_a_record_reports_the_legacy_flag() {
   pass "a return with only the legacy away flag still renders the brief and measures the window from the flag"
 }
 
+# The window's objective is durable state the brief re-prints, so a compaction
+# during the away window cannot lose what the work was for.
+test_return_brief_re_prints_the_objective_from_the_record() {
+  local dir out
+  dir="$TMP_ROOT/brief-objective"
+  install_runner "$dir"
+  contract_in "$dir" enter --objective 'ship the windows fix and merge it when green' --words 'merge when green' >/dev/null 2>&1 \
+    || fail "could not enter the objective record"
+  touch "$dir/home/state/.last-watcher-beat"
+  : > "$dir/home/state/.fake-drain"
+  out=$(run_return "$dir" begin) || fail "the objective return should clear with no blockers: $out"
+  assert_contains "$out" 'objective: ship the windows fix and merge it when green' "the brief did not re-print the recorded objective"
+  pass "the return brief re-prints the objective from the archived record"
+}
+
+
 
 
 test_unreadable_superseded_archive_keeps_return_gated() {
   local dir out rc epoch archive backup
   dir="$TMP_ROOT/superseded-unreadable"
   install_runner "$dir"
-  contract_in "$dir" enter --words 'first mandate' >/dev/null 2>&1 || fail "could not confirm the first mandate"
+  contract_in "$dir" enter --objective 'the accepted objective for this window' --words 'first mandate' >/dev/null 2>&1 || fail "could not confirm the first mandate"
   epoch=$(contract_in "$dir" field entered_epoch)
-  contract_in "$dir" enter --words 'replacement mandate' >/dev/null 2>&1 || fail "could not confirm the replacement mandate"
+  contract_in "$dir" enter --objective 'the accepted objective for this window' --words 'replacement mandate' >/dev/null 2>&1 || fail "could not confirm the replacement mandate"
   archive=""
   for archive in "$dir/home/state/afk-contracts/$epoch-superseded-"*.afk-contract; do break; done
   [ -f "$archive" ] || fail "no superseded archive was written"
@@ -1324,7 +1340,7 @@ test_missing_final_archive_keeps_retained_contract_gated() {
   local dir out rc epoch archive backup
   dir="$TMP_ROOT/final-archive-missing"
   install_runner "$dir"
-  contract_in "$dir" enter --words 'durable mandate' >/dev/null 2>&1 || fail "could not confirm the mandate"
+  contract_in "$dir" enter --objective 'the accepted objective for this window' --words 'durable mandate' >/dev/null 2>&1 || fail "could not confirm the mandate"
   epoch=$(contract_in "$dir" field entered_epoch)
   seed_live_blocker "$dir" tmux repair-final
   touch "$dir/home/state/.last-watcher-beat"
@@ -1386,3 +1402,4 @@ test_return_brief_keeps_trip_row_count_after_probe
 test_return_brief_ignores_previous_main_session
 test_return_brief_keeps_in_window_history_across_main_restart
 test_return_brief_without_a_record_reports_the_legacy_flag
+test_return_brief_re_prints_the_objective_from_the_record

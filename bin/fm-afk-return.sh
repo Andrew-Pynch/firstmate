@@ -534,7 +534,7 @@ scan_landed_awaiting_cleanup() {  # -> <task>\t<url> rows
 
 render_return_brief() {  # <evidence-file> <blockers-file> <since-epoch> <drain-ok>
   local evidence=$1 blockers=$2 since=$3 drain_ok=$4 now record superseded superseded_at archive_dir stamp
-  local tag task key summary count routine routine_visible captain visible_outcomes live held_err last verb rows status url drained=0 pointer
+  local tag task key summary count routine routine_visible captain visible_outcomes live held_err last verb rows status url drained=0 pointer objective
   now=$(date +%s)
   # Where main processes outcomes through the drain's BRANCH OUTCOMES section
   # (the supervision host off Pi, docs/supervision-host.md "Captain outcomes"),
@@ -567,6 +567,13 @@ render_return_brief() {  # <evidence-file> <blockers-file> <since-epoch> <drain-
   MANDATE_COUNT=0
   [ -z "$since" ] || record=$("$CONTRACT" archived "$since" 2>/dev/null || true)
   if [ -n "$record" ]; then
+    # The objective is re-printed from the archived record itself, never from
+    # memory, so the brief says what this window was for even after compaction.
+    if objective=$("$CONTRACT" objective --path "$record" 2>/dev/null) && [ -n "$objective" ]; then
+      printf '  objective: %s\n' "$(fm_afk_contract_one_line "$objective")"
+    else
+      printf '  objective: not recorded - this window entered without one\n'
+    fi
     archive_dir=$(fm_afk_contract_archive_dir "$STATE")
     for superseded in "$archive_dir/$since-superseded-"*.afk-contract; do
       [ -f "$superseded" ] || continue

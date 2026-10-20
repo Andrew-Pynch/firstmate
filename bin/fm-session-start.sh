@@ -977,36 +977,46 @@ done
 [ "$ORPHAN_STATUS_FOUND" -eq 1 ] || printf '(none)\n'
 
 subsection "AFK"
-# The away posture is the record (bin/fm-afk-contract.sh); the legacy flag
-# still marks a running daemon on the harnesses that launch one.
-# A quiet record (bin/fm-afk-contract.sh mode) is a present captain: it holds
-# nothing for a return.
-if [ -f "$STATE/.afk-contract" ]; then
-  if [ "$("$SCRIPT_DIR/fm-afk-contract.sh" mode 2>/dev/null)" = quiet ]; then
-    printf 'present - quiet mode recorded at %s (the captain is present and nothing is held for a return: requested actions proceed under ordinary attended authority; only an explicit /quiet off exits it)' \
-      "$("$SCRIPT_DIR/fm-afk-contract.sh" field entered 2>/dev/null || printf unknown)"
-  else
-    printf 'present - away posture recorded at %s (hold-for-return only; bin/fm-afk-contract.sh readback for the mandate)' \
-      "$("$SCRIPT_DIR/fm-afk-contract.sh" field entered 2>/dev/null || printf unknown)"
-  fi
-  if [ -e "$STATE/.afk" ]; then
-    if [ "$AFK_MODE" = quiet ]; then
-      printf '; the quiet daemon owns the watcher.\n'
-    else
-      printf '; the away daemon owns the watcher.\n'
-    fi
-  else
-    printf '; no daemon runs, the ordinary supervision session continues.\n'
-  fi
-elif [ -e "$STATE/.afk" ]; then
+# The away posture comes from its owner (bin/fm-afk-contract.sh): the state line
+# names a standing record, and the accepted objective is re-printed from the
+# durable record so it survives compaction. A quiet record
+# (bin/fm-afk-contract.sh mode) is a present captain: it holds nothing for a
+# return and carries no objective. The legacy flag still marks a running daemon
+# on the harnesses that launch one.
+AFK_CONTRACT_STATE=$(FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/fm-afk-contract.sh" state 2>/dev/null) || AFK_CONTRACT_STATE=
+AFK_CONTRACT_OBJECTIVE=$(FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/fm-afk-contract.sh" objective 2>/dev/null) || AFK_CONTRACT_OBJECTIVE=
+AFK_CONTRACT_OBJECTIVE=$(printf '%s' "$AFK_CONTRACT_OBJECTIVE" | tr '\n\t' '  ')
+AFK_CONTRACT_DAEMON='; no daemon runs, the ordinary supervision session continues.'
+if [ -e "$STATE/.afk" ]; then
   if [ "$AFK_MODE" = quiet ]; then
-    printf 'present - quiet-mode supervision is active; the daemon owns the watcher, only an explicit /quiet off exits it (legacy flag with no posture record).\n'
+    AFK_CONTRACT_DAEMON='; the quiet daemon owns the watcher.'
   else
-    printf 'present - away-mode supervision is active; the daemon owns the watcher (legacy flag with no posture record).\n'
+    AFK_CONTRACT_DAEMON='; the away daemon owns the watcher.'
   fi
-else
-  printf 'absent\n'
 fi
+case "$AFK_CONTRACT_STATE" in
+  confirmed\ *)
+    if [ "$("$SCRIPT_DIR/fm-afk-contract.sh" mode 2>/dev/null)" = quiet ]; then
+      printf 'present - quiet mode recorded at %s (the captain is present and nothing is held for a return: requested actions proceed under ordinary attended authority; only an explicit /quiet off exits it)%s\n' \
+        "${AFK_CONTRACT_STATE#confirmed }" "$AFK_CONTRACT_DAEMON"
+    else
+      printf 'present - away posture recorded at %s; objective: %s (hold-for-return only; bin/fm-afk-contract.sh readback for the mandate)%s\n' \
+        "${AFK_CONTRACT_STATE#confirmed }" "${AFK_CONTRACT_OBJECTIVE:-not recorded - this window entered without one}" "$AFK_CONTRACT_DAEMON"
+    fi ;;
+  invalid\ *)
+    printf 'unreadable - %s exists but is not a valid posture record, so it is not a usable away mandate; nothing is reported as active from it.%s\n' \
+      "${AFK_CONTRACT_STATE#invalid }" "$AFK_CONTRACT_DAEMON" ;;
+  *)
+    if [ -e "$STATE/.afk" ]; then
+      if [ "$AFK_MODE" = quiet ]; then
+        printf 'present - quiet-mode supervision is active; the daemon owns the watcher, only an explicit /quiet off exits it (legacy flag with no posture record).\n'
+      else
+        printf 'present - away-mode supervision is active; the daemon owns the watcher (legacy flag with no posture record).\n'
+      fi
+    else
+      printf 'absent\n'
+    fi ;;
+esac
 
 # Public commitments made through the myfirstmate relay. A promise to reply in a
 # public thread must survive compaction and restart, so it is surfaced from disk

@@ -1356,7 +1356,7 @@ test_away_record_relocates_main_owned_actions_to_the_branch() {
   assert_contains "$out" "$refusal" "attended refusal lost its wording"
 
   # /afk is the go: the one entry call writes the record that relocates.
-  FM_HOME="$home" "$ROOT/bin/fm-afk-contract.sh" enter --spend 2 >/dev/null || fail "away entry failed"
+  FM_HOME="$home" "$ROOT/bin/fm-afk-contract.sh" enter --objective 'the accepted objective for this window' --spend 2 >/dev/null || fail "away entry failed"
 
   # Under the record the partition passes and the merge script reaches its
   # OWN gate (no task record here), never the partition refusal.
@@ -1421,7 +1421,7 @@ WRAPPER
   out=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$root" "$root/bin/fm-spawn.sh" task-new --mode no-mistakes --yolo off 2>&1) || true
   assert_not_contains "$out" "caps concurrent workers" "a field-read after archive refused a main spawn via the spend cap"
   assert_not_contains "$out" "no readable spend cap" "a field-read after archive killed the spawn instead of restoring attended behavior"
-  FM_HOME="$home" "$ROOT/bin/fm-afk-contract.sh" enter --spend 2 >/dev/null || fail "away re-entry failed"
+  FM_HOME="$home" "$ROOT/bin/fm-afk-contract.sh" enter --objective 'the accepted objective for this window' --spend 2 >/dev/null || fail "away re-entry failed"
 
   # Archive is absence: the attended refusal returns, byte for byte.
   FM_HOME="$home" "$ROOT/bin/fm-afk-contract.sh" archive >/dev/null || fail "away archive failed"
@@ -1473,7 +1473,7 @@ test_away_branch_spawn_requires_queued_dispatchable_work() {
 
 ## Done
 EOF
-  FM_HOME="$home" "$ROOT/bin/fm-afk-contract.sh" enter --spend 2 >/dev/null || fail "away entry failed"
+  FM_HOME="$home" "$ROOT/bin/fm-afk-contract.sh" enter --objective 'the accepted objective for this window' --spend 2 >/dev/null || fail "away entry failed"
 
   out=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$root" FM_SUPERVISION_ACTOR=branch \
     "$ROOT/bin/fm-spawn.sh" task-arbitrary --mode no-mistakes --yolo off 2>&1)
@@ -1550,7 +1550,7 @@ test_quiet_record_never_caps_a_present_captains_spawn() {
   fm_write_meta "$home/state/task-b.meta" "window=fm-task-b" "kind=ship"
   out=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$root" "$ROOT/bin/fm-spawn.sh" task-new --mode no-mistakes --yolo off 2>&1)
   assert_not_contains "$out" "caps concurrent workers" "a quiet record capped a present captain's spawn"
-  FM_HOME="$home" "$ROOT/bin/fm-afk-contract.sh" enter --spend 1 >/dev/null 2>&1 || fail "away entry over quiet failed"
+  FM_HOME="$home" "$ROOT/bin/fm-afk-contract.sh" enter --objective 'the accepted objective for this window' --spend 1 >/dev/null 2>&1 || fail "away entry over quiet failed"
   out=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$root" "$ROOT/bin/fm-spawn.sh" task-new --mode no-mistakes --yolo off 2>&1)
   assert_contains "$out" "caps concurrent workers at 1 and 2 ordinary task(s) are live" "the away record's cap no longer binds"
   pass "a quiet-mode record never caps a present captain's spawn, while the away record's cap still binds"
@@ -1590,7 +1590,7 @@ fi
 exec "\$REAL" "\$@"
 WRAPPER
   chmod +x "$root/bin/fm-afk-contract.sh"
-  FM_HOME="$home" "$ROOT/bin/fm-afk-contract.sh" enter --spend 1 >/dev/null || fail "away entry failed"
+  FM_HOME="$home" "$ROOT/bin/fm-afk-contract.sh" enter --objective 'the accepted objective for this window' --spend 1 >/dev/null || fail "away entry failed"
 
   FM_HOME="$home" FM_ROOT_OVERRIDE="$root" \
     "$root/bin/fm-spawn.sh" task-q1 --mode no-mistakes --yolo off \

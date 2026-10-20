@@ -4682,6 +4682,7 @@ test_afk_paused_changed_pane_hands_off_plain_stale() {
 }
 
 
+
 # The recorded Claude background-task exit picker. The footer is the last
 # non-blank row, which is what fm_composer_blocking_dialog requires.
 write_exit_picker() {  # <file>

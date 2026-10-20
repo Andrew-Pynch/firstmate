@@ -41,6 +41,8 @@ For captain-held rechecks under quiet, see [architecture](../../../docs/architec
    this harness uses without the host; `start` and `start-native` take quiet
    mode from the record `enter` wrote.
    Keep `FM_AFK_MODE=quiet` on a quiet refresh: an `/afk` entry, even without new words, replaces a quiet record with an away record and starts hold-for-return.
+   Quiet entry needs no objective: the `afk` skill's objective gate applies to
+   away entries only, because a quiet record is a present captain.
 
 2. **Acknowledge** in `AGENTS.md` section 9 language: "Captain, quiet mode is
    active; I will batch routine updates and surface only decisions, failures,

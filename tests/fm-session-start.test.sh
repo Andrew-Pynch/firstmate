@@ -1754,7 +1754,7 @@ EOF
     || fail "could not store the captain outcome"
   FM_HOME="$home" "$ROOT/bin/fm-branch-outcome.sh" mark-read --through 1 || fail "could not mark the outcome read"
   rm -f "$tail"
-  FM_HOME="$home" "$ROOT/bin/fm-afk-contract.sh" enter --words 'away for the afternoon' >/dev/null \
+  FM_HOME="$home" "$ROOT/bin/fm-afk-contract.sh" enter --objective 'the accepted objective for this window' --words 'away for the afternoon' >/dev/null \
     || fail "could not record the away posture"
 
   out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
@@ -2801,7 +2801,7 @@ EOF
   assert_contains "$out" "the quiet daemon owns the watcher" "AFK digest lost the quiet daemon line"
   assert_not_contains "$out" "hold-for-return" "AFK digest read the quiet record as hold-for-return"
 
-  FM_HOME="$home" "$ROOT/bin/fm-afk-contract.sh" enter >/dev/null 2>&1 || fail "away entry over quiet failed"
+  FM_HOME="$home" "$ROOT/bin/fm-afk-contract.sh" enter --objective 'the accepted objective for this window' >/dev/null 2>&1 || fail "away entry over quiet failed"
   out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
   assert_contains "$out" "present - away posture recorded at" "AFK digest did not name the away record"
   assert_contains "$out" "hold-for-return only" "AFK digest lost hold-for-return for an away record"
@@ -2826,6 +2826,49 @@ EOF
   assert_not_contains "$out" "Quiet mode" "a legacy empty .afk flag leaked quiet-mode text"
 
   pass "a legacy empty .afk flag (written before mode existed) still reads as away mode"
+}
+
+# The objective is durable state the digest re-prints, so a compaction or a
+# restart cannot lose what the away window was for and fall back on memory.
+test_afk_digest_re_prints_the_recorded_objective() {
+  local rec root home fakebin out
+  rec=$(new_world afk-digest-objective)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  make_fake_ps_claude "$fakebin"
+  FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$ROOT/bin/fm-afk-contract.sh" enter \
+    --objective 'ship the windows fix and merge it when green' >/dev/null 2>&1 || fail "could not enter the away posture"
+
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+
+  assert_contains "$out" 'away posture recorded at ' 'the digest did not report the standing posture'
+  assert_contains "$out" 'objective: ship the windows fix and merge it when green' 'the digest did not re-print the recorded objective'
+  pass "the digest re-prints the away objective from the durable record"
+}
+
+# A record that carries no objective - a pre-field v1 record, or a window that
+# entered before the objective was required - is reported with the objective
+# missing, never as a window working to an aim nobody recorded.
+test_afk_digest_reports_a_record_without_an_objective() {
+  local rec root home fakebin out
+  rec=$(new_world afk-digest-no-objective)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  make_fake_ps_claude "$fakebin"
+  FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$ROOT/bin/fm-afk-contract.sh" enter \
+    --objective 'the objective this window had' >/dev/null 2>&1 || fail "could not enter the away posture"
+  grep -v '^objective: ' "$home/state/.afk-contract" > "$home/pre-field-record" || fail "could not strip the objective for the fixture"
+  mv "$home/pre-field-record" "$home/state/.afk-contract"
+
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+
+  assert_contains "$out" 'away posture recorded at ' 'the digest did not report the standing posture'
+  assert_contains "$out" 'objective: not recorded' 'the digest did not surface the missing objective'
+  pass "the digest surfaces a record that carries no objective instead of implying one"
 }
 
 test_supervision_block_exactly_one_and_pi_diagnostic() {
@@ -3137,6 +3180,8 @@ test_next_step_afk_delegates_to_daemon
 test_next_step_quiet_mode_delegates_to_daemon
 test_quiet_record_digest_holds_nothing_for_a_return
 test_next_step_afk_legacy_empty_flag_defaults_away
+test_afk_digest_re_prints_the_recorded_objective
+test_afk_digest_reports_a_record_without_an_objective
 test_supervision_block_exactly_one_and_pi_diagnostic
 test_pi_signed_primary_uses_pi_extensions_without_identity_normalization
 test_pi_diagnostic_rejects_stale_loaded_marker

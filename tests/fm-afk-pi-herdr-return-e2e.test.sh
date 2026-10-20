@@ -182,7 +182,7 @@ set -e
 [ "$START_RC" -ne 0 ] || fail "the away daemon launched on a Pi primary"
 assert_contains "$START_OUT" 'the away daemon is no longer launched on pi' "the Pi refusal did not name its reason"
 ENTER_OUT=$(PATH="$FAKEBIN:$ORIGINAL_PATH" HERDR_SESSION="$SESSION" FM_HOME="$HOME_DIR" FM_STATE_OVERRIDE="$STATE" \
-  PI_CODING_AGENT=true "$ROOT/bin/fm-afk-launch.sh" enter 2>&1) || fail "the away posture could not be recorded on Pi: $ENTER_OUT"
+  PI_CODING_AGENT=true "$ROOT/bin/fm-afk-launch.sh" enter --objective 'the accepted objective for this window' 2>&1) || fail "the away posture could not be recorded on Pi: $ENTER_OUT"
 assert_contains "$ENTER_OUT" 'hold-for-return only' "the entry announcement did not say hold-for-return"
 [ -f "$STATE/.afk-contract" ] || fail "enter did not write the away-posture record"
 [ ! -e "$STATE/.afk" ] || fail "enter wrote the daemon flag on Pi"
@@ -272,7 +272,7 @@ PATH="$FAKEBIN:$ORIGINAL_PATH" HERDR_SESSION="$SESSION" FM_ROOT_OVERRIDE="$PROJE
 # A clean re-entry records a fresh posture, and an immediate return is
 # idempotently clear because the keyed blocker is resolved.
 PATH="$FAKEBIN:$ORIGINAL_PATH" HERDR_SESSION="$SESSION" FM_HOME="$HOME_DIR" FM_STATE_OVERRIDE="$STATE" \
-  PI_CODING_AGENT=true "$ROOT/bin/fm-afk-launch.sh" enter >/dev/null || fail "clean away re-entry failed"
+  PI_CODING_AGENT=true "$ROOT/bin/fm-afk-launch.sh" enter --objective 'the accepted objective for this window' >/dev/null || fail "clean away re-entry failed"
 PATH="$FAKEBIN:$ORIGINAL_PATH" HERDR_SESSION="$SESSION" FM_ROOT_OVERRIDE="$PROJECT" FM_HOME="$HOME_DIR" FM_STATE_OVERRIDE="$STATE" \
   PI_CODING_AGENT=true "$ROOT/bin/fm-afk-return.sh" begin >/dev/null \
   || fail "clean away re-entry/return was not idempotent"

@@ -49,6 +49,15 @@
 #   version: 2
 #   entered: <UTC ISO 8601>
 #   entered_epoch: <seconds>
+#   objective: e:<reversible escaped text> | -
+#                                the concrete accepted objective this away
+#                                window is for. `-`, or no line at all on a
+#                                pre-field record, reads as absent, so an
+#                                upgrade never strands a live window. Any text
+#                                round-trips; only the read-back, the
+#                                announcement, the digest, and the return brief
+#                                collapse its newlines to spaces so the
+#                                objective renders on one line.
 #   expected_return: <UTC ISO 8601> | -
 #   reach_channels: none
 #   reach_announced: <the one-sentence reach announcement>
@@ -82,7 +91,8 @@
 # owner: no incident motivates them.
 #
 # Usage:
-#   fm-afk-contract.sh enter [--words-file <path> | --words <text>]
+#   fm-afk-contract.sh enter --objective <text>
+#       [--words-file <path> | --words <text>]
 #       [--expected-return <UTC ISO 8601>] [--spend <n>]
 #     Write the record now, with no separate confirmation step, then print the
 #     entry announcement and the read-back. Exit 0 on success and 2 on a usage
@@ -93,13 +103,21 @@
 #     record. A replacement is staged before the prior record is archived and
 #     replaced. `propose` and `confirm` were retired with the wait-for-go gate.
 #     Without --spend the recorded cap follows SPEND CAP below.
+#     Exit 4, writing nothing, when an away entry that writes a record carries
+#     no concrete accepted objective: an away window is never entered on an
+#     empty mandate. That refusal needs no captain step; restate the objective
+#     derived from the captain's words and enter again in the same turn. A
+#     quiet entry needs no objective, because a quiet record is a present
+#     captain.
 #   fm-afk-contract.sh readback
-#     The record's content for the captain and for the away session: the words
-#     verbatim plus the entry time, expected return, spend cap, and reach line
-#     (for a quiet record, the entry time and that nothing is held).
+#     The record's content for the captain and for the away session: the
+#     objective, words verbatim, entry time, expected return, spend cap, and
+#     reach line (for a quiet record, the entry time and that nothing is held).
 #   fm-afk-contract.sh mode [--path <record>]
 #     Print `away` or `quiet` (AWAY OR QUIET above); exit 1 with no record.
 #   fm-afk-contract.sh field <name> [--path <record>]
+#   fm-afk-contract.sh objective [--path <record>]   the decoded objective, empty when absent
+#   fm-afk-contract.sh state      one line: absent | confirmed <entered> | invalid <path>
 #   fm-afk-contract.sh words [--path <record>]
 #   fm-afk-contract.sh validate [--path <record>]  exit 0 when the record is readable and complete
 #   fm-afk-contract.sh live-workers
@@ -289,6 +307,31 @@ fm_afk_contract_now_iso() {
   date -u +%Y-%m-%dT%H:%M:%SZ
 }
 
+fm_afk_contract_blank() {  # <text>
+  [ -z "$(printf '%s' "$1" | tr -d '[:space:]')" ]
+}
+
+fm_afk_contract_escape() {  # <text>
+  local value=$1
+  value=${value//\\/\\\\}
+  value=${value//$'\t'/\\t}
+  value=${value//$'\r'/\\r}
+  value=${value//$'\n'/\\n}
+  [ "$value" != - ] || value='\x2d'
+  printf '%s' "$value"
+}
+
+fm_afk_contract_unescape() {  # <escaped-text>
+  printf '%b' "$1"
+}
+
+# Presentation-only: every captain-facing surface renders the objective on one
+# line so a multi-line objective never breaks a read-back, digest, or return
+# brief. The stored text and the `objective` subcommand stay verbatim.
+fm_afk_contract_one_line() {  # <text>
+  printf '%s' "$1" | tr '\n\t' '  '
+}
+
 # --- record writing ---------------------------------------------------------
 
 fm_afk_contract_validate_iso() {  # <ts>
@@ -296,12 +339,17 @@ fm_afk_contract_validate_iso() {  # <ts>
 }
 
 # Render a whole record on stdout.
-# Inputs: WORDS (verbatim), EXPECTED_RETURN, SPEND.
+# Inputs: WORDS and OBJECTIVE (verbatim), EXPECTED_RETURN, SPEND.
 fm_afk_contract_render_record() {  # <entered-iso> <entered-epoch> <confirmed-iso> <confirmed-epoch>
   local entered=$1 entered_epoch=$2 confirmed=$3 confirmed_epoch=$4
   printf 'version: %s\n' "$FM_AFK_CONTRACT_VERSION"
   printf 'entered: %s\n' "$entered"
   printf 'entered_epoch: %s\n' "$entered_epoch"
+  if [ -n "$OBJECTIVE" ]; then
+    printf 'objective: e:%s\n' "$(fm_afk_contract_escape "$OBJECTIVE")"
+  else
+    printf 'objective: -\n'
+  fi
   printf 'expected_return: %s\n' "${EXPECTED_RETURN:--}"
   printf 'reach_channels: none\n'
   printf 'reach_announced: %s\n' "$FM_AFK_CONTRACT_REACH_ANNOUNCED"
@@ -379,11 +427,34 @@ fm_afk_contract_read_words() {  # <path>
   ' "$path"
 }
 
+# Exit 0 and print the decoded objective when present, exit 1 when absent, and
+# exit 2 when a present field is malformed or blank. Missing objective fields in
+# pre-field records stay readable; enter enforces the field for new entries.
+fm_afk_contract_read_objective() {  # <path>
+  local path=$1 line decoded
+  [ -f "$path" ] || return 1
+  line=$(fm_afk_contract_read_field "$path" objective)
+  case "$line" in
+    ''|-) return 1 ;;
+    e:*) ;;
+    *)
+      fm_afk_contract_log "record $path has an invalid objective field"
+      return 2 ;;
+  esac
+  decoded=$(fm_afk_contract_unescape "${line#e:}"; printf x)
+  decoded=${decoded%x}
+  if fm_afk_contract_blank "$decoded"; then
+    fm_afk_contract_log "record $path has an invalid objective field"
+    return 2
+  fi
+  printf '%s' "$decoded"
+}
+
 # A record is valid when its version is one this script reads and the required
 # scalar fields and words block are present. Refuses rather than guessing at a
 # foreign schema. A version 1 record's clause and grant sections are ignored.
 fm_afk_contract_validate() {  # <path>
-  local path=$1 version entered entered_epoch expected reach announced spend words_header confirmed
+  local path=$1 version entered entered_epoch expected reach announced spend words_header confirmed objective_rc
   [ -f "$path" ] || return 1
   version=$(fm_afk_contract_read_field "$path" version)
   case " $FM_AFK_CONTRACT_READABLE_VERSIONS " in
@@ -411,6 +482,12 @@ fm_afk_contract_validate() {  # <path>
   words_header=$(sed -n '/^words: /{p;q;}' "$path")
   case "$words_header" in 'words: -'|'words: |'|'words: |-') ;; *) fm_afk_contract_log "record $path has no valid words field"; return 1 ;; esac
   fm_afk_contract_read_words "$path" >/dev/null || return 1
+  objective_rc=0
+  fm_afk_contract_read_objective "$path" >/dev/null || objective_rc=$?
+  if [ "$objective_rc" -gt 1 ]; then
+    fm_afk_contract_log "record $path has no valid objective field"
+    return 1
+  fi
   confirmed=$(fm_afk_contract_read_field "$path" confirmed)
   fm_afk_contract_validate_iso "$confirmed" || { fm_afk_contract_log "record $path has no valid confirmed time"; return 1; }
   case "$(fm_afk_contract_read_field "$path" confirmed_epoch)" in
@@ -429,7 +506,7 @@ fm_afk_contract_validate() {  # <path>
 # A quiet record reads back as quiet mode: no return, reach, or spend cap
 # applies while the captain is present.
 fm_afk_contract_render_readback() {  # <path>
-  local path=$1 words expected spend
+  local path=$1 words expected spend objective
   if [ "$(fm_afk_contract_record_mode "$path")" = quiet ]; then
     printf 'Quiet mode (recorded):\n'
     printf '  entered: %s\n' "$(fm_afk_contract_read_field "$path" entered)"
@@ -439,6 +516,11 @@ fm_afk_contract_render_readback() {  # <path>
     spend=$(fm_afk_contract_read_field "$path" spend_max_concurrent_workers)
     printf 'Away posture (recorded):\n'
     printf '  entered: %s\n' "$(fm_afk_contract_read_field "$path" entered)"
+    if objective=$(fm_afk_contract_read_objective "$path"); then
+      printf '  objective: %s\n' "$(fm_afk_contract_one_line "$objective")"
+    else
+      printf '  objective: (none recorded) - entry requires the concrete accepted objective; restate it with enter --objective\n'
+    fi
     printf '  expected return: %s\n' "$( [ "$expected" = - ] && printf 'not given' || printf '%s' "$expected")"
     printf '  spend cap: %s concurrent workers\n' "$spend"
     printf '  reach: hold-for-return only. %s\n' "$(fm_afk_contract_read_field "$path" reach_announced)"
@@ -455,13 +537,18 @@ fm_afk_contract_render_readback() {  # <path>
 }
 
 fm_afk_contract_render_announcement() {  # <path>
-  local path=$1 expected words mandate_text
+  local path=$1 expected words mandate_text objective objective_text
   if [ "$(fm_afk_contract_record_mode "$path")" = quiet ]; then
     printf 'Quiet mode recorded at %s: %s Only an explicit /quiet off ends it.\n' \
       "$(fm_afk_contract_read_field "$path" confirmed)" "$FM_AFK_CONTRACT_QUIET_HOLDS_NOTHING"
     return 0
   fi
   expected=$(fm_afk_contract_read_field "$path" expected_return)
+  if objective=$(fm_afk_contract_read_objective "$path"); then
+    objective_text=$(fm_afk_contract_one_line "$objective")
+  else
+    objective_text='not recorded'
+  fi
   words=$(fm_afk_contract_read_words "$path"; rc=$?; printf x; exit "$rc") || return 1
   words=${words%x}
   if [ -n "$words" ]; then
@@ -469,9 +556,10 @@ fm_afk_contract_render_announcement() {  # <path>
   else
     mandate_text='No away instructions were recorded; the away session acts on standing authority only, and anything that needs you waits for your return.'
   fi
-  printf 'Away posture recorded at %s: hold-for-return only. %s %s Destructive, irreversible, and security-sensitive actions are never pre-authorizable, whatever the words say. Expected return: %s. Spend cap: %s concurrent workers.\n' \
+  printf 'Away posture recorded at %s: hold-for-return only. %s Objective: %s. %s Destructive, irreversible, and security-sensitive actions are never pre-authorizable, whatever the words say. Expected return: %s. Spend cap: %s concurrent workers.\n' \
     "$(fm_afk_contract_read_field "$path" confirmed)" \
     "$(fm_afk_contract_read_field "$path" reach_announced)" \
+    "$objective_text" \
     "$mandate_text" \
     "$( [ "$expected" = - ] && printf 'not given' || printf '%s' "$expected")" \
     "$(fm_afk_contract_read_field "$path" spend_max_concurrent_workers)"
@@ -479,9 +567,9 @@ fm_afk_contract_render_announcement() {  # <path>
 
 # --- subcommands ------------------------------------------------------------
 
-fm_afk_contract_parse_inputs() {  # <args...>; sets WORDS, EXPECTED_RETURN, SPEND
+fm_afk_contract_parse_inputs() {  # <args...>; sets WORDS, OBJECTIVE, EXPECTED_RETURN, SPEND
   local words_file='' spend_given=0
-  WORDS=; EXPECTED_RETURN=-; SPEND=$FM_AFK_CONTRACT_SPEND_DEFAULT; FM_AFK_CONTRACT_SCALARS_GIVEN=0
+  WORDS=; OBJECTIVE=; EXPECTED_RETURN=-; SPEND=$FM_AFK_CONTRACT_SPEND_DEFAULT; FM_AFK_CONTRACT_SCALARS_GIVEN=0
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --words-file)
@@ -491,6 +579,11 @@ fm_afk_contract_parse_inputs() {  # <args...>; sets WORDS, EXPECTED_RETURN, SPEN
       --words)
         [ "$#" -gt 1 ] || { fm_afk_contract_log '--words requires text'; return 2; }
         WORDS=$2
+        shift 2 ;;
+      --objective)
+        [ "$#" -gt 1 ] || { fm_afk_contract_log '--objective requires the concrete accepted objective'; return 2; }
+        fm_afk_contract_blank "$2" && { fm_afk_contract_log '--objective must carry the concrete accepted objective, not blank text'; return 2; }
+        OBJECTIVE=$2
         shift 2 ;;
       --expected-return)
         [ "$#" -gt 1 ] || { fm_afk_contract_log '--expected-return requires a UTC ISO 8601 time'; return 2; }
@@ -543,7 +636,7 @@ fm_afk_contract_archive_target() {  # <record> [superseded-stamp]
 }
 
 # /afk is the go: write the record in this same call, with no proposal and no
-# later confirmation step. Inputs were parsed before the lock (WORDS,
+# later confirmation step. Inputs were parsed before the lock (WORDS, OBJECTIVE,
 # EXPECTED_RETURN, SPEND, FM_AFK_CONTRACT_SCALARS_GIVEN). The written mode
 # follows the header's AWAY OR QUIET rules.
 fm_afk_contract_cmd_enter() {
@@ -570,6 +663,15 @@ fm_afk_contract_cmd_enter() {
     fm_afk_contract_render_announcement "$record" || return 1
     fm_afk_contract_render_readback "$record"
     return
+  fi
+  # The entry gate: an away window is never entered on an empty mandate. The
+  # objective is the mandate's minimum, so an away entry that would write a
+  # record without one is refused here - nothing is written, and the refusal
+  # names what to restate. /afk stays the go: the refusal waits on no captain
+  # step. A quiet entry is a present captain and needs no objective.
+  if [ -z "$OBJECTIVE" ] && [ "$FM_AFK_CONTRACT_ENTRY_MODE" != quiet ]; then
+    fm_afk_contract_log "refusing to enter: this away mandate has no concrete accepted objective, so nothing is recorded and the posture is not active; enter again with --objective <text> derived from the captain's words (the session-start digest and the afk return brief re-print this objective, so it must be the real one)"
+    return 4
   fi
   now=$(fm_afk_contract_now_iso)
   now_epoch=$(date +%s)
@@ -626,6 +728,24 @@ fm_afk_contract_cmd_archive() {
   printf '%s\n' "$target"
 }
 
+# The posture state, for consumers that report to the captain rather than act on
+# authority: the session-start digest and the afk return brief. One line, one of
+# `absent`, `confirmed <entered>`, or `invalid <path>`. A record that does not
+# validate is never reported as a usable one.
+fm_afk_contract_cmd_state() {
+  local record
+  record=$(fm_afk_contract_path)
+  if [ -f "$record" ]; then
+    if fm_afk_contract_validate "$record" >/dev/null 2>&1; then
+      printf 'confirmed %s\n' "$(fm_afk_contract_read_field "$record" entered)"
+    else
+      printf 'invalid %s\n' "$record"
+    fi
+  else
+    printf 'absent\n'
+  fi
+}
+
 fm_afk_contract_select_path() {  # <args...> -> prints the record path chosen by --path
   local path
   path=$(fm_afk_contract_path)
@@ -655,7 +775,7 @@ fm_afk_contract_locked_cmd() {  # <command> [args...]
 }
 
 fm_afk_contract_main() {
-  local cmd=${1:-} path
+  local cmd=${1:-} path rc
   [ -n "$cmd" ] || { fm_afk_contract_usage >&2; return 2; }
   shift
   case "$cmd" in
@@ -675,6 +795,18 @@ fm_afk_contract_main() {
       local name=$1; shift
       path=$(fm_afk_contract_select_path "$@") || { fm_afk_contract_usage >&2; return 2; }
       fm_afk_contract_read_field "$path" "$name" ;;
+    objective)
+      path=$(fm_afk_contract_select_path "$@") || { fm_afk_contract_usage >&2; return 2; }
+      # An absent objective is not an error for a reader that only reports it.
+      rc=0
+      fm_afk_contract_read_objective "$path" || rc=$?
+      case "$rc" in
+        0|1) return 0 ;;
+        *) return "$rc" ;;
+      esac ;;
+    state)
+      [ "$#" -eq 0 ] || { fm_afk_contract_usage >&2; return 2; }
+      fm_afk_contract_cmd_state ;;
     words)
       path=$(fm_afk_contract_select_path "$@") || { fm_afk_contract_usage >&2; return 2; }
       fm_afk_contract_read_words "$path" ;;

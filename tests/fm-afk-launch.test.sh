@@ -59,7 +59,7 @@ GLOBAL_CLEANUP() {
 trap GLOBAL_CLEANUP EXIT
 
 enter_posture() {  # <home>
-  FM_HOME="$1" FM_STATE_OVERRIDE="$1/state" "$CONTRACT" enter >/dev/null 2>&1
+  FM_HOME="$1" FM_STATE_OVERRIDE="$1/state" "$CONTRACT" enter --objective 'the accepted objective for this window' >/dev/null 2>&1
 }
 
 # ---------------------------------------------------------------------------
@@ -72,7 +72,7 @@ unit_enter_records_the_posture_in_one_step_without_a_daemon() {
   local st out rc
   st=$(mktemp -d "${TMPDIR:-/tmp}/fm-afk-enter.XXXXXX")
   mkdir -p "$st/state"
-  out=$(FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" "$LAUNCH" enter \
+  out=$(FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" "$LAUNCH" enter --objective 'the accepted objective for this window' \
     --words 'merge the windows fix when green' --expected-return 2026-09-08T08:00Z --spend 2 2>&1)
   rc=$?
   if [ "$rc" -eq 0 ] && [ -f "$st/state/.afk-contract" ] && [ ! -e "$st/state/.afk-contract.proposed" ] \
@@ -87,7 +87,7 @@ unit_enter_records_the_posture_in_one_step_without_a_daemon() {
   else
     fail "enter: record, read-back, or daemon state wrong (rc=$rc): $out"
   fi
-  out=$(FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" "$LAUNCH" enter --words 'merge it' --grant fix-windows 2>&1)
+  out=$(FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" "$LAUNCH" enter --objective 'the accepted objective for this window' --words 'merge it' --grant fix-windows 2>&1)
   rc=$?
   if [ "$rc" -eq 2 ] && printf '%s' "$out" | grep -F -- '--grant was retired' >/dev/null \
     && [ "$(FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" "$CONTRACT" words)" = 'merge the windows fix when green' ]; then
@@ -96,7 +96,7 @@ unit_enter_records_the_posture_in_one_step_without_a_daemon() {
     fail "enter: --grant was not refused by name (rc=$rc): $out"
   fi
   printf 'schema\tfm-afk-return.v1\nphase\tblocked\n' > "$st/state/.afk-return-catchup"
-  if FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" "$LAUNCH" enter --words 'merge task a PR when green' >/dev/null 2>&1; then
+  if FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" "$LAUNCH" enter --objective 'the accepted objective for this window' --words 'merge task a PR when green' >/dev/null 2>&1; then
     fail "enter: accepted a new mandate while the prior return catch-up was pending"
   elif [ "$(FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" "$CONTRACT" words)" = 'merge the windows fix when green' ]; then
     pass "enter: refuses while the prior return catch-up is pending"
@@ -212,7 +212,7 @@ unit_daemon_entry_requires_the_record() {
   else
     fail "daemon entry: started without a record or the refusal was unclear (rc=$rc): $out"
   fi
-  if FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" "$LAUNCH" enter --words 'merge task a PR when green' >/dev/null 2>&1 \
+  if FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" "$LAUNCH" enter --objective 'the accepted objective for this window' --words 'merge task a PR when green' >/dev/null 2>&1 \
     && FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" "$LAUNCH" start-native >/dev/null 2>&1 \
     && [ -e "$st/state/.afk" ]; then
     pass "daemon entry: enter then start-native run back to back with no confirmation between them"
@@ -463,7 +463,7 @@ unit_mode_quiet_daemon_to_away() {
       fail "$command: quiet refresh changed the record or flag (rc=$rc, record=$mode)"
     fi
 
-    FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" "$LAUNCH" enter >/dev/null 2>&1
+    FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" "$LAUNCH" enter --objective 'the accepted objective for this window' >/dev/null 2>&1
     rc=$?
     mode=$(FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" "$CONTRACT" mode)
     if [ "$rc" -ne 0 ] || [ "$mode" != away ]; then
@@ -1020,7 +1020,7 @@ unit_supervision_host_other_harnesses_run_no_away_daemon() {
       *) printf '%s\n' "$2" > "$st/config/supervision-host" ;;
     esac
     FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" FM_CONFIG_OVERRIDE="$st/config" FM_TEST_HARNESS="$1" \
-      bash -c '. "$1"; fm_afk_launch_primary_harness() { printf "%s" "$FM_TEST_HARNESS"; }; fm_afk_launch_main enter --words "watch the fleet"' _ "$LAUNCH" 2>&1
+      bash -c '. "$1"; fm_afk_launch_primary_harness() { printf "%s" "$FM_TEST_HARNESS"; }; fm_afk_launch_main enter --objective "the accepted objective for this window" --words "watch the fleet"' _ "$LAUNCH" 2>&1
   }
   out=$(enter_with cursor ''); rc=$?
   [ "$rc" -eq 0 ] && [ -f "$st/state/.afk-contract" ] || fail "enter on an opted-in cursor home failed (rc=$rc): $out"
@@ -1085,7 +1085,7 @@ unit_daemon_quiet_entry_holds_nothing_for_a_return() {
   else
     fail "quiet entry: the quiet record read as away or hold-for-return (rc=$rc): $out"
   fi
-  out=$(FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" "$LAUNCH" enter 2>&1)
+  out=$(FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" "$LAUNCH" enter --objective 'the accepted objective for this window' 2>&1)
   rc=$?
   if [ "$rc" -eq 0 ] \
     && [ "$(FM_HOME="$st" FM_STATE_OVERRIDE="$st/state" "$CONTRACT" mode)" = away ] \
@@ -1230,7 +1230,7 @@ unit_supervision_host_quiet_after_afk() {
     cmp -s "$st/state/.afk-contract" "$st/away-record" || fail "$1: a refused quiet enter must leave the away record untouched"
   }
 
-  out=$(quiet_in "$st" "$LAUNCH" enter --words "back after lunch"); rc=$?
+  out=$(quiet_in "$st" "$LAUNCH" enter --objective 'the accepted objective for this window' --words "back after lunch"); rc=$?
   [ "$rc" -eq 0 ] && [ -f "$st/state/.afk-contract" ] && [ ! -e "$st/state/.afk" ] \
     || fail "/afk on an opted-in claude home must write the away record and no daemon flag (rc=$rc): $out"
   refuses_under_away_record "ready host"
@@ -1243,7 +1243,7 @@ unit_supervision_host_quiet_after_afk() {
   quiet_in "$st" env FM_AFK_MODE=quiet "$LAUNCH" enter --words "stay quiet" >/dev/null \
     && quiet_in "$st" "$LAUNCH" start-native >/dev/null && [ "$(head -n 1 "$st/state/.afk")" = quiet ] \
     || fail "a quiet entry without the dialog mirror must prepare the quiet daemon"
-  out=$(quiet_in "$st" "$LAUNCH" enter --words "back after lunch"); rc=$?
+  out=$(quiet_in "$st" "$LAUNCH" enter --objective 'the accepted objective for this window' --words "back after lunch"); rc=$?
   [ "$rc" -eq 0 ] && [ -z "$(quiet_in "$st" "$CONTRACT" field mode)" ] && [ "$(head -n 1 "$st/state/.afk")" = quiet ] \
     || fail "/afk over the quiet daemon must record away words and leave the quiet flag (rc=$rc): $out"
   refuses_under_away_record "over a quiet daemon"
@@ -1285,7 +1285,7 @@ unit_supervision_host_quiet_failed_start() {
   pass "supervision host: a failed quiet start archives its quiet record so the present captain is not parked"
 
   : > "$st/config/supervision-host-off"
-  quiet_in "$st" "$LAUNCH" enter --words "back after lunch" >/dev/null || fail "an away entry must record the away words"
+  quiet_in "$st" "$LAUNCH" enter --objective 'the accepted objective for this window' --words "back after lunch" >/dev/null || fail "an away entry must record the away words"
   cp "$st/state/.afk-contract" "$st/away-record"
   out=$(quiet_in "$st" env FM_SUPERVISOR_TARGET=unused FM_SUPERVISOR_BACKEND=unsupported "$LAUNCH" start); rc=$?
   [ "$rc" -ne 0 ] && cmp -s "$st/state/.afk-contract" "$st/away-record" && [ ! -e "$st/state/.afk" ] \

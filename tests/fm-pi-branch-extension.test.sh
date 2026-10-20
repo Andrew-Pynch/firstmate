@@ -2333,7 +2333,7 @@ const outcomes = () => outcomeScript(["list", "--recent", "100"]).split("\n").fi
 const captains = () => outcomes().filter((row) => row.verdict === "captain");
 const unprocessedSeqs = () => outcomeScript(["unprocessed"]).split("\n").filter(Boolean).map((line) => JSON.parse(line).seq);
 
-run([`${realRoot}/bin/fm-afk-contract.sh`, "enter", "--words", "watch the fleet; merge nothing"], "away record");
+run([`${realRoot}/bin/fm-afk-contract.sh`, "enter", "--objective", "the accepted objective for this window", "--words", "watch the fleet; merge nothing"], "away record");
 await fire("session_start", {}, defaultSessionCtx);
 
 globalThis.__fmExecuteBranchBash = async (context) => {

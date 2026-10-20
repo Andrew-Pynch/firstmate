@@ -1263,7 +1263,7 @@ test_housekeeping_captain_held_silenced_only_by_an_away_record() {
     printf 'idle prompt $\n' > "$pane"
     key=$(printf '%s' "held-w11r" | tr ':/.' '___')
     echo $(( $(date +%s) - 5000 )) > "$state/.subsuper-paused-$key"
-    FM_HOME="$dir" FM_STATE_OVERRIDE="$state" FM_AFK_MODE="$mode" "$ROOT/bin/fm-afk-contract.sh" enter --words 'fixture words' >/dev/null 2>&1 \
+    FM_HOME="$dir" FM_STATE_OVERRIDE="$state" FM_AFK_MODE="$mode" "$ROOT/bin/fm-afk-contract.sh" enter --objective 'the accepted objective for this window' --words 'fixture words' >/dev/null 2>&1 \
       || fail "fixture: could not record the $mode posture"
     [ "$(FM_HOME="$dir" FM_STATE_OVERRIDE="$state" "$ROOT/bin/fm-afk-contract.sh" mode)" = "$mode" ] || fail "fixture: the record is not $mode"
     PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$win" FM_FAKE_TMUX_CAPTURE="$pane" \

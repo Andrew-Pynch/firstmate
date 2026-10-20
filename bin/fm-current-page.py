@@ -999,6 +999,8 @@ button,a.go{min-height:44px;padding:8px 14px;font-size:14px}a.go{display:inline-
 .ans-btn{min-height:52px;flex:1 1 40%;font-size:16px}.ans-text input{min-height:44px;font-size:16px}.ans-send{min-width:84px}
 .receipt{font-size:14px}
 #factory{margin:10px 10px 0}.fx{flex-wrap:wrap;gap:6px 10px;padding:8px 0}.fx-q{flex-basis:100%;white-space:normal;font-size:15px}
+.fx-u{white-space:normal;flex:1 1 100%}.fx-a{flex-wrap:wrap;flex:1 1 100%}.fx-k{flex-basis:100%}
+.overlay.bt .box{width:calc(100vw - 24px)}.bt .answer.compact .ans-opts{flex-wrap:wrap}
 .answer.compact .ans-btn{min-height:40px;flex:0 0 auto;font-size:14px;padding:6px 12px}
 .zero{height:auto;padding:28px 0}
 .overlay .box{min-width:0;width:calc(100vw - 24px);max-height:85vh}.timeline li{white-space:normal}

@@ -696,7 +696,7 @@ retire_busy_incarnation() {
 # do_exit: stop the running agent, preserving endpoint and worktree. Prints
 # `already-stopped`, `endpoint-gone`, or `stopped`.
 do_exit() {
-  local state cmd hazard verdict composer_state cancel absence interrupt_result=not-needed dialog
+  local state cmd hazard verdict composer_state submission cancel absence interrupt_result=not-needed dialog
   require_state_verified_backend exit
   fm_control_backend_exit_supported "$BACKEND" \
     || die "task $ID runs on the $BACKEND backend, whose T3 Orchestrator V2 tools have no session stop, so 'exit' cannot stop its agent; 'interrupt' ends the running turn and teardown archives the thread"
@@ -766,8 +766,28 @@ do_exit() {
   if [ -n "$hazard" ] && rendered_matches "$hazard"; then
     die "task $ID shows the $HARNESS revert picker, where typed text becomes a search and Enter reverts file changes; refusing to type the $cmd exit command. Close it with $(fm_control_interrupt_key "$HARNESS"), never Enter, then retry '$VERB'"
   fi
+  if [ "$cmd" = C-c ]; then
+    # OpenCode 2 exits by key after clearing any restored composer text.
+    fm_backend_send_key "$BACKEND" "$T" C-u "$LABEL" \
+      || die "the exit key could not be sent to task $ID on $BACKEND"
+    fm_backend_send_key "$BACKEND" "$T" C-c "$LABEL" \
+      || die "the exit key could not be sent to task $ID on $BACKEND"
+    if ! wait_agent_state "$SETTLE_WAIT" dead >/dev/null; then
+      fm_backend_send_key "$BACKEND" "$T" C-c "$LABEL" \
+        || die "the exit key could not be sent to task $ID on $BACKEND"
+    fi
+  else
   : > "$FM_COMPOSER_DIALOG_SINK" \
     || die "task $ID's dialog check could not be recorded"
+  # The composer gate below is upstream's, kept intact wherever the composer can
+  # actually be read. It is relaxed for exactly one measured pair: an idle, empty
+  # omp composer on Herdr reads `unknown` (measured 2026-09-15, omp 18.2.0 on
+  # Herdr 0.9.0, in an isolated lab session), so refusing every composer that is
+  # not proven empty would make omp exit on Herdr impossible rather than unsafe -
+  # the failure the atomic submit below exists to remove. A composer that is
+  # provably PENDING still refuses on every path, because that is real text the
+  # exit command would concatenate onto.
+  submission=$(fm_control_exit_submission "$HARNESS" "$BACKEND")
   composer_state=$(fm_backend_composer_state "$BACKEND" "$T" "$LABEL" 2>/dev/null) \
     || composer_state=unknown
   # The classify that filled the sink ran in a subshell, so read the file
@@ -782,47 +802,46 @@ do_exit() {
       die "task $ID's composer visibly holds pending text; refusing to type the $cmd exit command because it would concatenate onto that text. Clear or submit the pending text, then retry '$VERB'"
       ;;
     *)
-      die "task $ID's composer state is '$composer_state', not proven empty; refusing to type the $cmd exit command because it could concatenate onto existing text. Clear the composer, then retry '$VERB'"
+      [ "$submission" = atomic-line ] \
+        || die "task $ID's composer state is '$composer_state', not proven empty; refusing to type the $cmd exit command because it could concatenate onto existing text. Clear the composer, then retry '$VERB'"
       ;;
   esac
-  # The submit verdict is NOT the postcondition here: a successful exit command
-  # destroys the composer the verdict is read from, so a post-exit read can
-  # legitimately report anything. Only a hard transport failure aborts; the
-  # authoritative proof is the agent-state wait below. The retried Enter still
-  # matters, because a slash command opens a completion popup on some TUIs that
-  # swallows the first Enter. OpenCode 2 exits from an empty composer on a
-  # single Ctrl-C (verified on 2.0.11, 2.0.21, and 2.0.22); typing /exit also
-  # exits but opens a completion popup, so the raw key plane avoids that popup
-  # interacting with the typed submit verification. A Ctrl-C over leftover
-  # composer text only clears it, so Ctrl-U clears the composer first and one
-  # more Ctrl-C follows if the agent is still alive.
-  case "$cmd" in
-    C-c)
-      fm_backend_send_key "$BACKEND" "$T" C-u "$LABEL" \
-        || die "the exit key could not be sent to task $ID on $BACKEND"
-      fm_backend_send_key "$BACKEND" "$T" C-c "$LABEL" \
-        || die "the exit key could not be sent to task $ID on $BACKEND"
-      if ! wait_agent_state "$SETTLE_WAIT" dead >/dev/null; then
-        fm_backend_send_key "$BACKEND" "$T" C-c "$LABEL" \
-          || die "the exit key could not be sent to task $ID on $BACKEND"
-      fi
+  case "$submission" in
+    atomic-line)
+      # Herdr's atomic pane-run submit is the measured-deterministic exit for
+      # omp on Herdr (patch 0002; re-measured 2026-09-15 on omp 18.2.0, where
+      # the shared literal+Enter loop also stopped omp but reported no verdict,
+      # and where a submit onto a pending draft concatenated). Like every other
+      # path here, it is submitted only with a composer that is empty or
+      # unreadable, and the authoritative proof remains the agent-state wait
+      # below: a concatenated submit leaves the agent running and this verb
+      # reports exit-unconfirmed instead of claiming a stop.
+      fm_backend_send_text_line "$BACKEND" "$T" "$cmd" "$LABEL" \
+        || die "the exit command could not be sent to task $ID on $BACKEND"
       ;;
-    *)
+    verified-submit)
+      # The submit verdict is NOT the postcondition here: a successful exit
+      # command destroys the composer the verdict is read from, so a post-exit
+      # read can legitimately report anything. Only a hard transport failure
+      # aborts; the authoritative proof is the agent-state wait below. The
+      # retried Enter still matters, because a slash command opens a completion
+      # popup on some TUIs that swallows the first Enter.
       verdict=$(fm_backend_send_text_submit "$BACKEND" "$T" "$cmd" "$EXIT_RETRIES" "$POLL" 1.2 "$LABEL") \
         || die "the exit command could not be sent to task $ID on $BACKEND"
       [ "$verdict" != send-failed ] \
         || die "the exit command could not be sent to task $ID on $BACKEND"
-      # The submitting Enter can open the picker. The agent is still alive, and
-      # another Enter would confirm the selected row. A dead agent may leave the
-      # same text behind; that is not a prompt still waiting.
-      if [ -s "${FM_COMPOSER_DIALOG_SINK:-}" ]; then
-        dialog=$(cat "$FM_COMPOSER_DIALOG_SINK")
-        if [ "$(agent_state)" != dead ]; then
-          refuse_blocking_prompt "$dialog"
-        fi
-      fi
       ;;
   esac
+  # The submitting Enter can open the picker. The agent is still alive, and
+  # another Enter would confirm the selected row. A dead agent may leave the
+  # same text behind; that is not a prompt still waiting.
+  if [ -s "${FM_COMPOSER_DIALOG_SINK:-}" ]; then
+    dialog=$(cat "$FM_COMPOSER_DIALOG_SINK")
+    if [ "$(agent_state)" != dead ]; then
+      refuse_blocking_prompt "$dialog"
+    fi
+  fi
+  fi
   state=$(wait_agent_state "$EXIT_WAIT" dead) || {
     # A submit can return before any read sees the picker: a native busy
     # verdict needs no composer read, and a cleared composer can be read

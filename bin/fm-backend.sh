@@ -1039,6 +1039,25 @@ fm_backend_send_key() {  # <backend> <target> <key> [expected-label]
   esac
 }
 
+# fm_backend_send_text_line: atomically type and submit one line through the
+# backend's native primitive. Lifecycle control uses this only for a
+# harness/backend pair whose measured TUI cannot consume the shared
+# literal-then-Enter path; ordinary text continues through the proof-carrying
+# submit loop below.
+fm_backend_send_text_line() {  # <backend> <target> <text> [expected-label]
+  local backend=$1
+  shift
+  fm_backend_source "$backend" || return 1
+  case "$backend" in
+    tmux) fm_backend_tmux_send_text_line "$@" ;;
+    herdr) fm_backend_herdr_send_text_line "$@" ;;
+    zellij) fm_backend_zellij_send_text_line "$@" ;;
+    orca) fm_backend_orca_send_text_line "$@" ;;
+    cmux) fm_backend_cmux_send_text_line "$@" ;;
+    *) echo "error: no atomic send-text implementation for backend '$backend'" >&2; return 1 ;;
+  esac
+}
+
 # fm_backend_send_text_submit: submit and verify through the selected adapter.
 # Pane backends type once and retry only submission; T3 uses a native send.
 # Echoes the backend's verdict; callers require exact empty for confirmed delivery.

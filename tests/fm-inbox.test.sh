@@ -407,6 +407,36 @@ assert_contains "$malformed" "malformed replies without a valid sequence: 1 ($ba
   "receipts name the malformed reply"
 pass "a reply without a valid sequence is reported as malformed"
 
+# Reply options must never become answer text. File input reads the bytes rather
+# than recording the option or pathname, while prose can still mention flags.
+home=$(make_home reply-input)
+input_note=$(run_inbox "$home" note --json "file reply request")
+input_id=$(printf '%s' "$input_note" | json_get id)
+assert_reply_usage() {
+  local out code
+  set +e
+  out=$(run_inbox "$home" reply "$input_id" "$@" 2>&1)
+  code=$?
+  set -e
+  expect_code 1 "$code" "option-looking reply text should be refused"
+  assert_contains "$out" "usage: fm-inbox.sh reply" "refusal should give reply usage"
+  assert_absent "$home/state/inbox/.replies/$input_id" "bad arguments must not save a reply"
+}
+assert_reply_usage -- --body-file /var/tmp/tg-reply-slack.txt
+assert_reply_usage $'--\n--body-file /var/tmp/tg-reply-slack.txt'
+assert_reply_usage "answer" --unexpected
+assert_reply_usage --body-file
+assert_reply_usage --body-file /missing/reply.txt extra
+reply_file="$home/reply text.txt"
+printf 'answer from a file\nUse --verbose to see details.' > "$reply_file"
+run_inbox "$home" reply --json "$input_id" --body-file "$reply_file" >/dev/null \
+  || fail "reply --body-file should read the file"
+file_reply=$(run_inbox "$home" receipts --all-replies)
+assert_equals $'answer from a file\nUse --verbose to see details.' \
+  "$(printf '%s' "$file_reply" | json_get replies 0 body)" \
+  "reply should contain file text, not arguments or pathname"
+pass "reply file input reads content and refuses option-looking positional text"
+
 # One undecodable note must not fail the whole receipts view.
 home=$(make_home non-utf8)
 run_inbox "$home" note "readable note" >/dev/null || fail "seed note failed"

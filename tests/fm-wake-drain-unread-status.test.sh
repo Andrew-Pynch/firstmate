@@ -449,6 +449,67 @@ test_routine_working_and_covered_done_stay_silent_on_the_empty_queue() {
   pass "routine working and branch-covered done lines print nothing on an empty-queue drain"
 }
 
+# A logging span reader for the drain's FM_STATUS_SPAN_READER seam: records the
+# file name, start, and length of every status span read, then reads it.
+make_logging_span_reader() {  # <reader-path> <log-path>
+  cat > "$1" <<SH
+#!/usr/bin/env bash
+printf '%s %s %s\n' "\${1##*/}" "\$2" "\$3" >> '$2'
+exec perl -e 'open(my \$f, "<", \$ARGV[0]) or exit 1; seek(\$f, \$ARGV[1], 0) or exit 1; read(\$f, my \$b, \$ARGV[2]) == \$ARGV[2] or exit 1; print \$b' "\$@"
+SH
+  chmod +x "$1"
+}
+
+test_note_after_a_scanned_routine_run_surfaces_reading_only_new_bytes() {
+  local dir state out status reader log presented routine_end i
+  dir=$(make_case routine-run-then-note)
+  state="$dir/state"; out="$dir/drain.out"; status="$state/task9.status"
+  reader="$dir/span-reader"; log="$dir/span.log"
+  prime_cursor "$state" "$status"
+  presented=$(wc -c < "$status" | tr -d ' ')
+
+  for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
+    printf 'working: routine step %s\n' "$i" >> "$status"
+  done
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "drain over the routine run failed"
+  [ ! -s "$out" ] || fail "a routine-only run printed something: $(cat "$out")"
+  routine_end=$(wc -c < "$status" | tr -d ' ')
+
+  printf 'note: answer after a long routine run\n' >> "$status"
+  make_logging_span_reader "$reader" "$log"
+  FM_STATUS_SPAN_READER="$reader" FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" \
+    || fail "drain after the note failed"
+  [ "$(grep -c -F 'task9 note: answer after a long routine run' "$out")" = 1 ] \
+    || fail "the note after an already-scanned routine run was not surfaced once: $(cat "$out")"
+  grep -F "task9.status $routine_end " "$log" >/dev/null \
+    || fail "no span read started where the last drain's scan ended: $(cat "$log")"
+  if grep -F "task9.status $presented " "$log" >/dev/null; then
+    fail "the drain re-read routine lines an earlier drain already scanned: $(cat "$log")"
+  fi
+
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "drain after presenting the note failed"
+  if grep -F 'answer after a long routine run' "$out" >/dev/null; then
+    fail "the presented note was replayed: $(cat "$out")"
+  fi
+  pass "a note after an already-scanned routine run surfaces once while the scan reads only new bytes"
+}
+
+test_replaced_log_is_scanned_whole_despite_an_earlier_scan() {
+  local dir state out status
+  dir=$(make_case replaced-log-rescan)
+  state="$dir/state"; out="$dir/drain.out"; status="$state/task10.status"
+  printf 'working: first routine line\nworking: second routine line\n' > "$status"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "drain over the original routine log failed"
+  [ ! -s "$out" ] || fail "the original routine log printed something: $(cat "$out")"
+
+  printf 'note: answer inside the replaced log\nworking: second routine line\n' > "$dir/replacement"
+  mv -f "$dir/replacement" "$status" || fail "could not replace the status log"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "drain over the replaced log failed"
+  grep -F 'task10 note: answer inside the replaced log' "$out" >/dev/null \
+    || fail "an earlier scan of the replaced log hid its note: $(cat "$out")"
+  pass "a replaced status log is scanned whole even where the old log was already scanned"
+}
+
 test_incident_note_answer_buried_under_routine_note_surfaces_both
 test_already_presented_notes_are_not_replayed
 test_brand_new_note_after_presentation_is_surfaced
@@ -463,3 +524,5 @@ test_snapshot_failure_is_visible
 test_open_decisions_fold_is_unchanged
 test_empty_queue_does_not_swallow_later_signal_annotation
 test_routine_working_and_covered_done_stay_silent_on_the_empty_queue
+test_note_after_a_scanned_routine_run_surfaces_reading_only_new_bytes
+test_replaced_log_is_scanned_whole_despite_an_earlier_scan

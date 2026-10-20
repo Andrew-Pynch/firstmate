@@ -488,6 +488,144 @@ test_pr_based_dod_requires_non_draft() {
   pass "fm-brief.sh: PR-based done requires a non-draft PR; a deliberate draft declares a wait"
 }
 
+# The fenced shell block a rendered brief's Sol review step carries.
+sol_review_block() {  # <brief>
+  awk '/^```sh$/ { f = 1; next } /^```$/ { f = 0 } f' "$1"
+}
+
+# Every PR-based ship consults Sol, the omp advisor the tracked worker overlay
+# pins, on its full diff at the PR handoff: before the push in direct-PR, before
+# the pipeline-starting done in no-mistakes. local-only opens no PR. The rendered
+# commands must parse as shell and name the overlay under this Firstmate root.
+test_pr_based_dod_consults_sol_before_pr() {
+  local home mode id brief block sol_line handoff_line handoff
+  home="$TMP_ROOT/sol-dod-home"
+  mkdir -p "$home/data"
+  for mode in no-mistakes direct-PR local-only; do
+    id="brief-sol-$mode"
+    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode "$mode" >/dev/null 2>&1
+    brief="$home/data/$id/brief.md"
+    assert_present "$brief" "$mode: brief was not scaffolded"
+    if [ "$mode" = local-only ]; then
+      assert_no_grep "Have Sol review" "$brief" "$mode: a branch-only delivery opens no PR to review before"
+      continue
+    fi
+    block=$(sol_review_block "$brief")
+    [ -n "$block" ] || fail "$mode: brief did not render the headless Sol review commands"
+    bash -n -c "$block" 2>/dev/null || fail "$mode: the rendered Sol review commands do not parse as shell: $block"
+    case "$block" in
+      *"--config $(printf '%q' "$ROOT/.omp/fm-worker-overlay.yml") --config $(printf '%q' "$ROOT/.omp/fm-sol-review.yml") "*) ;;
+      *) fail "$mode: the Sol review does not name this root's tracked worker and read-only review overlays: $block" ;;
+    esac
+    # shellcheck disable=SC2016  # single quotes are deliberate: the backticks must stay literal
+    case "$mode" in
+      direct-PR) handoff='^Then push your branch and open a PR' ;;
+      no-mistakes) handoff='^Then append `done \[at=<epoch>\]: {summary}`' ;;
+    esac
+    sol_line=$(grep -n '^Have Sol review your full diff' "$brief" | cut -d: -f1)
+    handoff_line=$(grep -n "$handoff" "$brief" | cut -d: -f1)
+    [ -n "$sol_line" ] && [ -n "$handoff_line" ] && [ "$sol_line" -lt "$handoff_line" ] \
+      || fail "$mode: the Sol review must come before the PR handoff (sol line '$sol_line', handoff line '$handoff_line')"
+  done
+  pass "fm-brief.sh: PR-based ships consult Sol on the full diff before the PR; local-only does not"
+}
+
+# The rendered Sol review commands, run as a worker runs them against a stub
+# omp that answers the rpc tool check and writes the advisor transcript a real
+# run leaves in --session-dir: an unfilled base or an empty diff never reaches
+# omp, a tool check reporting any tool beyond read, grep, and glob stops the
+# review before it runs, and the proof line accepts only a completed answer
+# from the pinned model in this run's own transcript, so a failed, fallback,
+# or earlier successful run cannot pass.
+# The fixture overlay carries the YAML forms the pin read must survive: a
+# top-level `advisor:` block, a quoted value, a comment, a colon inside the
+# model id, a thinking suffix, and trailing whitespace. An overlay with no
+# advisor role, or a root with no read-only review overlay, refuses.
+test_sol_review_commands_prove_only_a_completed_sol_answer() {
+  local home root brief block run proof pin repo fakebin out rc
+  pin=ollama/llama3:8b
+  home="$TMP_ROOT/sol-run-home"
+  root="$TMP_ROOT/sol-run-root"
+  mkdir -p "$home/data" "$root/.omp"
+  cp "$ROOT/.omp/fm-sol-review.yml" "$root/.omp/fm-sol-review.yml"
+  printf '%s\n' 'advisor:' '  enabled: true' 'modelRoles:' '  default: x/y' \
+    "  advisor: \"$pin:high\"  # fixture" > "$root/.omp/fm-worker-overlay.yml"
+  FM_HOME="$home" FM_ROOT_OVERRIDE="$root" "$ROOT/bin/fm-brief.sh" brief-sol-run some-proj --mode direct-PR >/dev/null 2>&1
+  brief="$home/data/brief-sol-run/brief.md"
+  block=$(sol_review_block "$brief")
+  run=$(printf '%s\n' "$block" | sed -n 2p)
+  proof=$(printf '%s\n' "$block" | sed -n 3p)
+  [ -n "$run" ] && [ -n "$proof" ] || fail "could not read the rendered Sol review commands: $block"
+  printf '%s\n' 'modelRoles:' "  advisor: $pin:high " > "$root/.omp/fm-worker-overlay.yml"
+  FM_HOME="$home" FM_ROOT_OVERRIDE="$root" "$ROOT/bin/fm-brief.sh" brief-sol-trail some-proj --mode direct-PR >/dev/null 2>&1
+  [ "$(sol_review_block "$home/data/brief-sol-trail/brief.md" | sed -n 3p)" = "$proof" ] \
+    || fail "trailing whitespace after the advisor pin changed the model the proof names"
+  printf '%s\n' 'modelRoles:' '  default: x/y' > "$root/.omp/fm-worker-overlay.yml"
+  rc=0
+  FM_HOME="$home" FM_ROOT_OVERRIDE="$root" "$ROOT/bin/fm-brief.sh" brief-sol-nopin some-proj --mode direct-PR >/dev/null 2>&1 || rc=$?
+  [ "$rc" -ne 0 ] || fail "a PR-based brief rendered a Sol review from an overlay with no advisor role"
+  printf '%s\n' 'modelRoles:' "  advisor: $pin" > "$root/.omp/fm-worker-overlay.yml"
+  mv "$root/.omp/fm-sol-review.yml" "$root/.omp/review.away"
+  rc=0
+  FM_HOME="$home" FM_ROOT_OVERRIDE="$root" "$ROOT/bin/fm-brief.sh" brief-sol-noreview some-proj --mode direct-PR >/dev/null 2>&1 || rc=$?
+  [ "$rc" -ne 0 ] || fail "a PR-based brief rendered a Sol review with no read-only review overlay"
+  mv "$root/.omp/review.away" "$root/.omp/fm-sol-review.yml"
+  repo="$TMP_ROOT/sol-run-repo"
+  fakebin="$TMP_ROOT/sol-run-bin"
+  mkdir -p "$repo" "$fakebin"
+  git -C "$repo" init -q
+  git -C "$repo" -c user.name=t -c user.email=t@t commit -q --allow-empty -m base
+  echo change > "$repo/file"
+  git -C "$repo" add file
+  git -C "$repo" -c user.name=t -c user.email=t@t commit -q -m change
+  # shellcheck disable=SC2016  # the stub's own expansions run when it is invoked
+  printf '%s\n' '#!/usr/bin/env bash' \
+    'touch "$FAKE_OMP_CALLED"' \
+    'case " $* " in *" --mode rpc "*)' \
+    '  cat > /dev/null' \
+    '  printf "{\"type\":\"ready\"}\n{\"id\":\"tools\",\"type\":\"response\",\"command\":\"get_state\",\"success\":true,\"data\":{\"dumpTools\":[%s]}}\n" "$FAKE_TOOLS"' \
+    '  exit 0 ;;' \
+    'esac' \
+    'touch "$FAKE_OMP_REVIEWED"' \
+    'while [ $# -gt 0 ]; do [ "$1" = --session-dir ] && dir=$2; shift; done' \
+    'mkdir -p "$dir/session"' \
+    'printf "{\"type\":\"message\",\"message\":{\"role\":\"assistant\",\"provider\":\"%s\",\"model\":\"%s\",\"stopReason\":\"%s\"}}\n" "${FAKE_ADVISOR%%/*}" "${FAKE_ADVISOR#*/}" "$FAKE_STOP" > "$dir/session/__advisor.sol.jsonl"' \
+    > "$fakebin/omp"
+  chmod +x "$fakebin/omp"
+  sol_run() {  # <base> <advisor> <stop> [tool-check names]; prints the proof output
+    rm -f "$TMP_ROOT/sol-omp-called" "$TMP_ROOT/sol-omp-reviewed"
+    (
+      cd "$repo" || exit 1
+      export PATH="$fakebin:$PATH" FAKE_OMP_CALLED="$TMP_ROOT/sol-omp-called" \
+        FAKE_OMP_REVIEWED="$TMP_ROOT/sol-omp-reviewed" FAKE_ADVISOR=$2 FAKE_STOP=$3 \
+        FAKE_TOOLS=${4-'{"name":"read"},{"name":"grep"},{"name":"glob"}'}
+      base=$1
+      eval "$run" || exit 0
+      eval "$proof"
+    )
+  }
+  out=$(sol_run '<base>' "$pin" stop)
+  [ ! -e "$TMP_ROOT/sol-omp-called" ] && [ -z "$out" ] \
+    || fail "an unfilled base reached omp or passed the proof: '$out'"
+  out=$(sol_run HEAD "$pin" stop)
+  [ ! -e "$TMP_ROOT/sol-omp-called" ] && [ -z "$out" ] \
+    || fail "an empty diff reached omp or passed the proof: '$out'"
+  out=$(sol_run HEAD~1 "$pin" stop)
+  [ -e "$TMP_ROOT/sol-omp-called" ] && [ "$out" = 'Sol reviewed' ] \
+    || fail "a completed answer from $pin did not pass the proof: '$out'"
+  out=$(sol_run HEAD~1 "$pin" error)
+  [ -z "$out" ] || fail "a failed advisor answer passed the proof, even after an earlier successful run"
+  out=$(sol_run HEAD~1 openai-codex/gpt-6-astra stop)
+  [ -z "$out" ] || fail "a fallback advisor model passed the proof"
+  out=$(sol_run HEAD~1 "$pin" stop '{"name":"read"},{"name":"grep"},{"name":"glob"},{"name":"mcp__drive_write"}')
+  [ -e "$TMP_ROOT/sol-omp-called" ] && [ ! -e "$TMP_ROOT/sol-omp-reviewed" ] && [ -z "$out" ] \
+    || fail "a review whose tool check reported a tool beyond read, grep, and glob still ran or passed the proof: '$out'"
+  out=$(sol_run HEAD~1 "$pin" stop '{"name":"read"},{"name":"grep"}')
+  [ ! -e "$TMP_ROOT/sol-omp-reviewed" ] && [ -z "$out" ] \
+    || fail "a review whose tool check reported a different tool set still ran: '$out'"
+  pass "fm-brief.sh: the Sol review refuses an unfilled base, empty diff, unpinned overlay, missing review overlay, or any tool beyond read, grep, and glob, and proves only a completed answer from the pinned model"
+}
+
 # Pin the specific line the bug lived on: the no-mistakes DOD's no-mistakes
 # reference must render as plain prose with no dangling apostrophe artifact.
 test_no_mistakes_dod_wording() {
@@ -1704,6 +1842,8 @@ test_ship_mode_is_required_and_closed_set
 test_ship_mode_is_explicit_not_registry
 test_delivery_flags_are_refused_where_they_do_not_apply
 test_faster_paths_use_configured_authority_without_stacked_review
+test_pr_based_dod_consults_sol_before_pr
+test_sol_review_commands_prove_only_a_completed_sol_answer
 test_no_mistakes_dod_wording
 test_no_mistakes_dod_green_detection
 test_pr_based_dod_requires_non_draft

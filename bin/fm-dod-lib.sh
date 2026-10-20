@@ -50,6 +50,9 @@
 # also hold the result of a passed run. These live reads are the one check at the ready
 # decision; a later rebase or patch set on the server does not revoke an armed
 # task's done. Teardown's landed-work test remains the complete discard gate.
+# The optional seventh argument <fm-root> locates the tracked omp worker and
+# review overlays the Sol review step names; it defaults to this library's own
+# code root.
 # The block opens with the fixed machine-readable "Delivery contract: mode=<mode>"
 # line that bin/fm-spawn.sh checks a ship brief against; a forge=gerrit block
 # appends " forge=gerrit shape=squash" to that line, and a forge=forgejo or
@@ -725,11 +728,73 @@ There is no pull request, no \`gh-axi\` call, and no forge CI result to report: 
 EOF
 }
 
-fm_dod_block() {  # <mode> <task-id> [branch] [<forge>] [<base>] [<consent>]
-  local mode=$1 id=$2 forge=${4:-none} base=${5:-} consent=${6:-}
+# The Sol review step both PR-based blocks render at their PR handoff: the
+# worker runs the omp advisor headless on its full diff, so a worker on any
+# harness gets the review. The advisor role is pinned by .omp/fm-worker-overlay.yml,
+# read here so the proof names the same model. In omp's headless print mode the
+# advisor reviews the turn and print mode waits for it to drain, but the run
+# exits 0 even when no advisor model resolves, and a quota-exhausted or failed
+# advisor still emits `advisor_yielded` and leaves a transcript. So the proof is
+# a completed (`stopReason` stop) answer from the pinned model in this run's own
+# advisor transcript, in a fresh directory per run, never the exit code.
+# The review must not be able to change anything, whatever the host
+# configures: .omp/fm-sol-review.yml owns how its second `--config` layer keeps
+# host MCP servers, custom tools, hooks, and extensions out and refuses every
+# built-in tool except read, grep, and glob, for the primary and every advisor;
+# tests/fm-omp-worker-overlay-live-e2e.test.sh fails when an omp upgrade adds a
+# built-in that list does not refuse. `--tools read,grep,glob` limits the
+# primary's built-ins (no subagents whose advisor transcripts the proof would
+# also find), `--no-extensions` drops discovered extensions, and
+# `--approval-mode always-ask` refuses headless any other write- or exec-tier
+# call. Before the review spends a model turn, omp's rpc `get_state` must report
+# exactly read, grep, and glob as the primary's tools, so a discovery source a
+# later omp adds that gives the primary a tool stops the review; that check
+# starts omp with the same configuration, so it cannot see a source that runs
+# code without adding a tool.
+# Returns 1 when the overlay names no advisor role under modelRoles or the
+# review overlay is missing.
+fm_sol_review_step() {  # <fm-root>
+  local overlay="$1/.omp/fm-worker-overlay.yml" review="$1/.omp/fm-sol-review.yml" pin q_overlay q_review q_pin
+  pin=$(awk '/^[^ #]/ { roles = ($0 ~ /^modelRoles:/) }
+    roles && /^  advisor:/ { sub(/^  advisor:[ \t]*/, ""); sub(/[ \t]+#.*$/, ""); sub(/[ \t]+$/, ""); gsub(/["\047]/, ""); print; exit }' "$overlay" 2>/dev/null)
+  case "${pin##*:}" in
+    inherit|off|minimal|low|medium|high|xhigh|max) pin=${pin%:*} ;;
+  esac
+  [ -n "$pin" ] || {
+    echo "error: fm_sol_review_step: no modelRoles advisor pin in $overlay" >&2
+    return 1
+  }
+  [ -f "$review" ] || {
+    echo "error: fm_sol_review_step: no read-only review overlay at $review" >&2
+    return 1
+  }
+  q_overlay=$(printf '%q' "$overlay")
+  q_review=$(printf '%q' "$review")
+  q_pin=$(printf '%q' "$pin")
+  cat <<EOF
+Have Sol review your full diff for defects, security slips, and missed tests.
+Sol is the omp advisor that Firstmate's worker overlay pins (\`$pin\`); run this block headless in one shell, which works from any worker tool, with \`base\` set to the branch or commit you started from and the longest command timeout your tool allows (a review usually takes 1 to 4 minutes, and omp waits at most 10 minutes for Sol; if your tool kills the command first, run the block again):
+\`\`\`sh
+base='<base>'
+d=\$(mktemp -d "\$(git rev-parse --git-path fm-sol-review).XXXXXX") && git diff "\$base...HEAD" > "\$d/branch.diff" && [ -s "\$d/branch.diff" ] && set -- --tools read,grep,glob --no-extensions --approval-mode always-ask --config $q_overlay --config $q_review && printf '{"id":"tools","type":"get_state"}\n' | OMP_SKIP_SETUP=1 omp --mode rpc --no-session "\$@" | jq -e 'select(.id == "tools") | [.data.dumpTools[].name] | sort == ["glob", "grep", "read"]' > /dev/null && OMP_SKIP_SETUP=1 omp -p --advisor "\$@" --session-dir "\$d" --mode json "Review the attached diff for defects, security slips, and missed tests." "@\$d/branch.diff" > "\$d/review.jsonl"
+find "\$d" -name '__advisor*.jsonl' -exec cat {} + | jq -e --arg m $q_pin 'select(.message.role? == "assistant" and "\\(.message.provider)/\\(.message.model)" == \$m and .message.stopReason == "stop")' > /dev/null && echo 'Sol reviewed'
+jq -r 'select(.type == "message_end") | .message | if .customType == "advisor" then .content elif .role == "assistant" then (.content[]? | select(.type == "text") | .text) else empty end' "\$d/review.jsonl"
+\`\`\`
+The \`find\` line is the proof: it prints \`Sol reviewed\` only when this run's advisor transcript holds a completed answer from \`$pin\`; if it prints nothing, report \`blocked:\` instead of skipping the review.
+The review runs read-only: it starts only when omp reports read, grep, and glob as its only tools, so a host whose configuration leaks another tool into it gets no review and prints nothing.
+The last line prints the review reply and every Sol note; fix each actionable finding within this task, commit the fixes, and review the new diff again, at most twice more; list any finding you leave open in the PR description in your own words, never by pasting Sol's raw output, which can quote any file the review read.
+EOF
+}
+
+fm_dod_block() {  # <mode> <task-id> [branch] [<forge>] [<base>] [<consent>] [<fm-root>]
+  local mode=$1 id=$2 forge=${4:-none} base=${5:-} consent=${6:-} root=${7:-} sol=
   local branch=${3:-fm/$id} pr_base='' nm_base='' base_q contract_forge='' contract_consent='' forge_cli=gh-axi draft_check adapter
   fm_forge_valid_for_mode "$forge" "$mode" fm_dod_block || return 1
   fm_base_branch_valid "$base" "$mode" "$forge" fm_dod_block || return 1
+  [ -n "$root" ] || root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+  case "$mode" in
+    direct-PR|no-mistakes) sol=$(fm_sol_review_step "$root") || return 1 ;;
+  esac
   if [ -n "$consent" ]; then
     if [ "$mode" = local-only ]; then
       echo "error: fm_dod_block: upstream consent authorizes a publication that local-only never performs; drop it" >&2
@@ -834,7 +899,9 @@ Delivery contract: mode=direct-PR$contract_forge$contract_consent
 Ship branch: $branch
 This task ships **direct-PR**: you raise the PR yourself, without the no-mistakes pipeline.
 The task is complete only when committed on your branch.
-When it is implemented and committed, push your branch and open a PR with \`$forge_cli\` that is ready for review, not a draft$pr_base.
+When it is implemented and committed, before you push:
+$sol
+Then push your branch and open a PR with \`$forge_cli\` that is ready for review, not a draft$pr_base, and write \`Sol reviewed\` in its description.
 Before you report done, read the PR back from the forge and confirm it is not a draft $draft_check
 A draft cannot be merged, so a done report on one leaves the merge unasked.
 Then append \`done [at=<epoch>]: PR {url}\` to the status file and stop.
@@ -862,7 +929,9 @@ EOF
 Delivery contract: mode=no-mistakes$contract_forge$contract_consent
 Ship branch: $branch
 The task is complete only when committed on your branch.
-When you believe it is complete, append \`done [at=<epoch>]: {summary}\` to the status file and stop.
+When you believe it is complete, and before your first \`done:\`:
+$sol
+Then append \`done [at=<epoch>]: {summary}\` to the status file and stop.
 Firstmate will then instruct you to run /no-mistakes to validate and ship a PR.
 That first \`done:\` is the handoff that starts the pipeline, which owns the push; it is not a request to push from this copy.
 ${nm_base}
@@ -872,6 +941,7 @@ EOF
 
 After /no-mistakes reports CI green (the CI-ready return point - do not wait for it to keep monitoring in the background until merge), read the PR back from the forge and confirm it is not a draft $draft_check
 A draft cannot be merged, so a done report on one leaves the merge unasked.
+Add a \`Sol reviewed\` line (Sol saw the diff you handed to validation) and any Sol finding you left open to the PR description with \`$forge_cli\`; that edit is not a commit.
 Then append \`done [at=<epoch>]: PR {url} checks green\` and stop. You are finished.
 That CI-ready \`done:\` is accepted only when this copy's HEAD - your latest commit - is one the /no-mistakes run pushed, so commit nothing after the run; the check tests that commit, not merely that a branch moved.
 If you deliberately keep the PR a draft, append \`paused [at=<epoch>]: {why the draft is held}\` instead of done.

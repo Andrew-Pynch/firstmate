@@ -67,6 +67,7 @@ make_case() {
   # The base branch the forge reports by default: unprotected, with no ruleset
   # rule, so nothing is required unless a case says otherwise.
   write_github_required "$case_dir"
+  printf 'main\n' > "$case_dir/github-default-base"
   : > "$case_dir/gh.log"
   # The worktree is a git copy whose HEAD is on a remote-tracking ref, as a
   # pushed ship task's is, so fm-pr-check.sh's named-head gate accepts it when
@@ -252,6 +253,10 @@ case "${1:-} ${2:-}" in
     exit 0
     ;;
   api\ *)
+    if [ "${3:-}" = --jq ] && [ "${4:-}" = .default_branch ]; then
+      cat "$FM_TEST_GH_DEFAULT_BASE"
+      exit $?
+    fi
     # The required-check reads: the branch itself, and its rules read without
     # the merge-queue filter the queue reader below applies.
     case " $* " in
@@ -666,6 +671,7 @@ run_pr_merge() {
   FM_TEST_GH_LOG="$case_dir/gh.log" \
   FM_TEST_GH_OUTCOME="$case_dir/github-outcome" \
   FM_TEST_GH_RULES="$case_dir/github-rules" \
+  FM_TEST_GH_DEFAULT_BASE="$case_dir/github-default-base" \
   FM_TEST_GH_VIEW_JSON="$case_dir/github-view.json" \
   FM_TEST_GH_MERGEABLE_SEQUENCE="${FM_TEST_GH_MERGEABLE_SEQUENCE:-}" \
   FM_TEST_GH_MERGEABLE_CALLS="$case_dir/mergeable-calls" \
@@ -710,6 +716,41 @@ write_github_outcome() {
     "queued=$queued" \
     "base=$base" > "$case_dir/github-outcome"
 }
+
+test_github_base_must_match_default_or_explicit_allowance() {
+  local case_dir scenario base expected rc
+  local -a flags
+  for scenario in nondefault explicit mismatch unreadable renamed; do
+    case_dir=$(make_case "base-$scenario")
+    add_gh_mocks "$case_dir" aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    base=fm/other-worker
+    expected=1
+    flags=()
+    case "$scenario" in
+      explicit) flags=(--allow-base fm/other-worker); expected=0 ;;
+      mismatch) flags=(--allow-base release) ;;
+      unreadable) base=main; rm "$case_dir/github-default-base" ;;
+      renamed) base=trunk; printf 'trunk\n' > "$case_dir/github-default-base"; expected=0 ;;
+    esac
+    jq --arg base "$base" '.baseRefName = $base' "$case_dir/github-view.json" \
+      > "$case_dir/changed-view.json"
+    mv "$case_dir/changed-view.json" "$case_dir/github-view.json"
+    write_github_outcome "$case_dir" MERGED true false "$base"
+    rc=0
+    run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/75 \
+      "${flags[@]+"${flags[@]}"}" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+    expect_code "$expected" "$rc" "$scenario base guard"
+    if [ "$expected" -eq 1 ]; then
+      assert_no_grep 'pr merge' "$case_dir/gh.log" "$scenario base refusal still merged"
+      assert_grep 'base' "$case_dir/stderr" "$scenario refusal did not explain the base problem"
+    else
+      assert_logged_gh_merge "$case_dir" 75 example/repo --squash
+    fi
+  done
+  pass "GitHub merges require the default base or the exact explicitly allowed base"
+}
+
+test_github_base_must_match_default_or_explicit_allowance
 
 write_away_record() {
   local case_dir=$1

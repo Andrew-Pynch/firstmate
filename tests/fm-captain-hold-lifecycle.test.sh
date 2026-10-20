@@ -130,7 +130,13 @@ case "${1:-} ${2:-}" in
       *) printf '%s\n' '[]' ;;
     esac
     ;;
-  "api repos/"*) printf '%s\n' '{"name":"main","protected":false}' ;;
+  "api repos/"*)
+    if [ "${3:-} ${4:-}" = '--jq .default_branch' ]; then
+      printf 'main\n'
+    else
+      printf '%s\n' '{"name":"main","protected":false}'
+    fi
+    ;;
 esac
 SH
   cat > "$home/fakebin/gh-axi" <<'SH'

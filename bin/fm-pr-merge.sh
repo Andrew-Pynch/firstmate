@@ -43,6 +43,12 @@
 # source fails, so known missing checks and all read errors are reported together.
 # github_branch_rules_unavailable_on_plan owns the narrow plan-unavailable
 # exception; every other unreadable required source refuses.
+# The base must match the task's recorded base_branch= when its meta carries
+# one (bin/fm-spawn.sh --base-branch), and otherwise the repository's live
+# default branch, read through `gh api repos/<owner>/<repo> --jq
+# .default_branch`, unless --allow-base <name> explicitly selects a different
+# base. An unreadable default refuses the merge; an explicit base must match
+# exactly and never weakens the head or check guards.
 # Every failing condition is reported, not just the first.
 # The verified head is then passed to gh as
 # --match-head-commit, so a push that lands between that read and the merge
@@ -176,7 +182,7 @@
 # explicit captain instruction and never skips the live green check, the
 # away-record read, or a captain hold.
 #
-# Usage: fm-pr-merge.sh <task-id> <pr-url> [--attended-override] [--allow-red <check-name>] [--allow-missing <check-name>] [--allow-no-pipeline] [-- <extra forge merge args>]
+# Usage: fm-pr-merge.sh <task-id> <pr-url> [--attended-override] [--allow-red <check-name>] [--allow-missing <check-name>] [--allow-base <name>] [--allow-no-pipeline] [-- <extra forge merge args>]
 #
 # On GitLab, this script confirms the MR is actually merged before reporting it;
 # an auto-merge-queued or unconfirmed request leaves the poll armed and records
@@ -246,6 +252,7 @@ ATTENDED_OVERRIDE=false
 ALLOW_NO_PIPELINE=false
 ALLOW_RED=()
 ALLOW_MISSING=()
+ALLOW_BASE=
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --attended-override)
@@ -282,6 +289,16 @@ while [ "$#" -gt 0 ]; do
       ;;
     --allow-no-pipeline=*)
       echo "error: --allow-no-pipeline takes no value" >&2
+      exit 2
+      ;;
+    --allow-base)
+      [ -n "${2:-}" ] || { echo "error: --allow-base requires a base name" >&2; exit 2; }
+      [ -z "$ALLOW_BASE" ] || { echo "error: --allow-base may be specified only once" >&2; exit 2; }
+      ALLOW_BASE=$2
+      shift 2
+      ;;
+    --allow-base=*)
+      echo "error: --allow-base requires a separate base name argument" >&2
       exit 2
       ;;
     --) shift; break ;;
@@ -325,6 +342,10 @@ if [ "${#ALLOW_MISSING[@]}" -gt 0 ]; then
       exit 2
       ;;
   esac
+fi
+if [ -n "$ALLOW_BASE" ] && [ "$PROVIDER" = gitlab ]; then
+  echo "error: --allow-base does not apply to GitLab" >&2
+  exit 2
 fi
 
 caller_has_merge_method() {
@@ -1016,7 +1037,7 @@ github_required_checks_missing() {
 # the usual 1, when mergeable=UNKNOWN is the only failing condition, so the
 # caller can retry a still-computing mergeability read instead of refusing.
 github_verify_mergeable() {
-  local json fields line red name covered missing unreported producers runs
+  local json fields line red name covered missing unreported producers runs expected_base
   local total=0 named=0 refusals='' mergeable_refusal=''
   local state='' draft='' mergeable='' merge_state='' live_head='' base=''
 
@@ -1056,6 +1077,23 @@ FIELDS
     echo "error: could not read the GitHub pull request state before merging" >&2
     return 1
   fi
+  expected_base=$ALLOW_BASE
+  # A task started from a named base (bin/fm-spawn.sh --base-branch) records it
+  # as base_branch=; that recorded base is the expected one before the default.
+  if [ -z "$expected_base" ] && [ -f "$META" ]; then
+    expected_base=$(grep '^base_branch=' "$META" 2>/dev/null | tail -1 | cut -d= -f2-)
+  fi
+  if [ -z "$expected_base" ]; then
+    if ! expected_base=$(gh api "repos/$PR_OWNER/$PR_REPO" --jq .default_branch 2>/dev/null) \
+      || [ -z "$expected_base" ] || [ "$expected_base" = null ]; then
+      echo "error: could not read the GitHub repository default base branch before merging" >&2
+      return 1
+    fi
+  fi
+  if ! git check-ref-format "refs/heads/$expected_base" >/dev/null 2>&1; then
+    echo "error: GitHub merge base is not a valid branch name" >&2
+    return 1
+  fi
 
   draft=$(fm_pr_json_draft_state "$json")
   if ! fm_pr_head_valid "$live_head"; then
@@ -1082,6 +1120,9 @@ FIELDS
 "
   [ "$merge_state" != DIRTY ] \
     || refusals="$refusals  - mergeStateStatus is DIRTY (conflicts)
+"
+  [ "$base" = "$expected_base" ] \
+    || refusals="$refusals  - base is \"$base\", not expected \"$expected_base\"; use --allow-base <name> to select a non-default base explicitly
 "
 
   uncovered=''

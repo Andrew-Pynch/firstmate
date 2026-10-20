@@ -149,7 +149,7 @@ def card(issue):
     """The hover card for one Linear issue: title, state, assignee, the body's first lines, milestone completion."""
     state = issue.get("state") or {}
     who = issue.get("assignee") or {}
-    lines = (issue.get("description") or "").strip().splitlines()
+    lines = [line for line in (issue.get("description") or "").splitlines() if line.strip(" *#-")]
     milestone = issue.get("projectMilestone")
     return {"id": issue.get("identifier", ""), "title": issue.get("title", ""), "url": issue.get("url", ""),
             "state": state.get("name", ""), "state_type": state.get("type", ""),

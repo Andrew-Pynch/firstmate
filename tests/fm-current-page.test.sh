@@ -97,6 +97,7 @@ printf '# current-notes\n\nContext line for the captain.\n' > "$HOME_DIR/data/pa
 "$ROOT/bin/fm-captain-hold.sh" hold call-new --title "Pick the banner color" \
   --reason "Red or blue? https://linear.app/x/issue/STA-1 see data/x/report.md" >/dev/null
 "$ROOT/bin/fm-captain-hold.sh" hold call-later --title "Later call" --reason "revisit after launch" --until 2099-01-01 >/dev/null
+"$ROOT/bin/fm-captain-hold.sh" hold call-keyed --title "Keyed call" --reason "a call the keeper names only by key" >/dev/null
 "$ROOT/bin/fm-tasks-axi.sh" add call-old "Old call" --kind captain --body "Captain hold set: 2026-01-01T00:00:00Z" >/dev/null
 "$ROOT/bin/fm-tasks-axi.sh" hold call-old --reason "an old open question" --kind captain >/dev/null
 
@@ -122,7 +123,10 @@ json.dump({"checked": now,
                       "link": "https://linear.app/x/issue/STA-1", "who": "alpha-fix"},
                      {"t": "Ask TJ to upgrade", "why": "His updater is old.", "checked": now - 3 * 3600},
                      {"t": "Answered already", "why": "Its row is gone.", "task": "call-gone"},
-                     {"t": "Deferred one", "why": "Its row waits for a date.", "task": "call-later"}],
+                     {"t": "Deferred one", "why": "Its row waits for a date.", "task": "call-later"},
+                     {"t": "Keyed need", "why": "Its key is a held row.", "key": "call-keyed"},
+                     {"t": "Routed color call", "why": "A keyed decision in a status log.", "key": "pick-color"},
+                     {"t": "Restart window", "why": "Nothing in the backlog backs it.", "key": "restart-window"}],
            "why": {"alpha-fix": "Alpha banner gets a color"},
            "plain": {"alpha-fix": {"text": "Painting the banner.", "at": now - 120},
                      "beta-scan": {"text": "an old keeper line", "at": now - 5 * 3600}},
@@ -141,6 +145,12 @@ assert_not_contains "$needs" 'Ask TJ to upgrade' "a need not re-checked in 2 h l
 assert_contains "$(page_part held-stale)" 'Ask TJ to upgrade' "a need not re-checked in 2 h is held as stale"
 assert_contains "$(page_part held-stale)" 'checked 3h ago' "a stale need says when it was last checked"
 assert_not_contains "$page" 'page keeper last checked' "a fresh keeper check raises no banner"
+assert_contains "$needs" 'task=call-keyed' "a need whose key is a held row is tied to that row"
+assert_contains "$needs" 'UNBACKEDRestart window' "a need with no held row or open keyed decision is marked unbacked"
+assert_not_contains "$needs" 'UNBACKEDKeyed need' "a need whose key is a held row is backed"
+assert_not_contains "$needs" 'UNBACKEDRouted color call' "a need whose key is an open keyed decision is backed"
+assert_not_contains "$needs" 'UNBACKEDPick the banner color' "a need tied to a held task is backed"
+assert_contains "$page" 'marked UNBACKED: Ask TJ to upgrade, restart-window.' "the banner names every unbacked need"
 pass "Needs you now holds only current, linked, aged needs"
 
 running=$(page_part running-now)
@@ -228,6 +238,10 @@ assert_contains "$band" 'href=https://linear.app/x/issue/STA-9' "a factory row w
 assert_not_contains "$(cat "$PAGE")" 'Pick the banner color' "an answered call leaves the page on the next render"
 assert_not_contains "$(page_part factory)" 'task=call-new' "a factory row leaves the band when its hold closes"
 assert_contains "$(page_part factory)" 'Confirm four prod checks' "an untied factory row stays until the keeper removes it"
+printf 'go\n' > "$TMP_ROOT/keyed-answer.txt"
+"$ROOT/bin/fm-captain-hold.sh" answer call-keyed --decision-file "$TMP_ROOT/keyed-answer.txt" >/dev/null
+"$ROOT/bin/fm-current-page.sh" >/dev/null
+assert_not_contains "$(cat "$PAGE")" 'Keyed need' "a need backed by its key leaves the page once that row is answered"
 pass "releasing the backlog row removes its need and its factory row"
 
 python3 - "$KEEP" <<'PY'

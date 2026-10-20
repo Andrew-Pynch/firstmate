@@ -938,6 +938,7 @@ button:hover{border-color:var(--acc)}
 .need-message summary{font:11px var(--mono);letter-spacing:.08em;color:var(--fg2);cursor:pointer;text-transform:uppercase}
 .need-message blockquote{margin:.4em 0;padding:.6em .9em;border-left:3px solid var(--data);background:rgba(0,221,170,.05);white-space:pre-wrap;overflow-wrap:anywhere}
 .tag{font:11px var(--mono);border:1px solid var(--acc);color:var(--acc);padding:0 6px;margin-right:6px;border-radius:var(--r)}
+.tag.ub{border-color:var(--alert);color:var(--alert);flex:none}
 .st{font-size:14.5px;line-height:1.6;overflow-wrap:anywhere}
 #logtail{flex:none;border-top:1px solid var(--acc-dim);padding:6px 12px 8px;font:12px/1.55 var(--mono);color:var(--fg2);max-height:30%;overflow:hidden}
 #logtail .lbl{display:block;margin-bottom:2px}
@@ -1469,36 +1470,49 @@ def render(paths, reason):
         decisions[key] = {"row": task, "title": title, "rev": rev, "options": options}
         return answer_block(key, rev, options, rec, title, compact)
 
-    def need_div(n, stale, asked, checked):
-        who, task = str(n.get("who") or ""), str(n.get("task") or "")
+    def need_div(n, task, stale, asked, checked, unbacked):
+        who = str(n.get("who") or "")
         key = str(n.get("key") or task)
         host = n.get("machine") or (by_task[who]["host"] if who in by_task else mates.get(who, {}).get("host") or here)
         link = str(n.get("link") or "").strip()
         opts = [o for o in n.get("options") or [] if isinstance(o, str) and o.strip()] if isinstance(n.get("options"), list) else []
         reason = calls.get(task, {}).get("hold_reason", "")
         ans = answer_for(task, str(n["t"]), f'{n.get("why", "")} {reason}'.strip(), opts, n.get("rec") if opts else None)
-        row = f'<span class="mk"></span><span class="t">{e(str(n["t"]))}</span><span class="m">{age(asked, now)}</span>'
+        row = (f'<span class="mk"></span>' + ('<span class="tag ub">UNBACKED</span>' if unbacked else "")
+               + f'<span class="t">{e(str(n["t"]))}</span><span class="m">{age(asked, now)}</span>')
         det = (f'<h2>{e(str(n["t"]))}</h2>'
                + chips(age(asked, now, "asked "), e(str(host)), e(who) if who != task else "", f"<code>{e(key)}</code>" if key else "",
                        f'not re-checked · {age(checked, now, "checked ")}' if stale else "")
+               + ('<div class="st"><span class="tag ub">UNBACKED</span>No held backlog row matches this call, '
+                  'so an answer here has nothing to close.</div>' if unbacked else "")
                + f'<div class="why">{fm_md.inline(str(n.get("why", "")))}</div>{need_actions(n, bool(ans))}{ans}'
                + docs(task, who) + slot_ctl(n.get("why"), link, n.get("do")))
         return item_div("need:" + (task or str(n["t"])), row, det, href=link if re.match(r"https?://", link) else "",
                         task=task, cls=heat(asked) + (" dim" if stale else ""))
-    needs_now, needs_stale, curated_tasks, asks = [], [], set(), []
+    # A need is backed when its task (or, with no task, a key naming a backlog row) is an open captain
+    # hold, or its key names an open keyed decision in a status log (a second mate's routed call); any
+    # other need is marked UNBACKED, since an answer to it has no record to close.
+    open_keys = {d["key"] for ds in open_by_task.values() for d in ds if d.get("key")}
+    row_ids = set(calls) | set(titles) | {r["id"] for r in done or [] if r.get("id")}
+    needs_now, needs_stale, curated_tasks, asks, unbacked_keys = [], [], set(), [], []
     for n in cur["needs"]:
-        task = str(n.get("task") or "")
+        task, key = str(n.get("task") or ""), str(n.get("key") or "")
+        if not task and key in row_ids:
+            task = key
         if task:
             curated_tasks.add(task)
             if held is not None and (task not in calls or calls[task]["deferred"]):
                 continue
+        unbacked = held is not None and not task and key not in open_keys
+        if unbacked:
+            unbacked_keys.append(key or str(n["t"]))
         asked = ts_of(n.get("asked")) or calls.get(task, {}).get("asked")
         checked = ts_of(n.get("checked")) or cur["checked"]
         if checked is not None and now - checked < confirm:
-            needs_now.append(need_div(n, False, asked, checked))
+            needs_now.append(need_div(n, task, False, asked, checked, unbacked))
             asks.append(asked)
         else:
-            needs_stale.append(need_div(n, True, asked, checked))
+            needs_stale.append(need_div(n, task, True, asked, checked, unbacked))
     curated_tasks |= {str(f["task"]) for f in cur["factory"] if f.get("task")}  # a call in the factory band is covered there
     fresh_calls, older_calls, deferred_calls = [], [], []
     for c in sorted(calls.values(), key=lambda c: c["asked"] or 0, reverse=True):
@@ -1587,6 +1601,9 @@ def render(paths, reason):
         banners.append("The backlog could not be read, so answered calls may still show.")
     if live is None:
         banners.append("Could not check which workers are running.")
+    if unbacked_keys:
+        banners.append(f"{len(unbacked_keys)} Needs you item(s) have no held backlog row, marked UNBACKED: "
+                       + e(", ".join(unbacked_keys)) + ".")
     if forge_state.startswith("stale"):
         banners.append(f"GitHub read failed; merged work is as of {age(fetched, now)}.")
 

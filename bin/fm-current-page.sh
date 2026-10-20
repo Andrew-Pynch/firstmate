@@ -83,11 +83,14 @@
 #     (default 2), plus captain calls Main held within that window that no need
 #     covers yet. A need tied to a backlog row ("task") leaves the page the moment
 #     that row stops being an open captain hold (answered, released, done, or
-#     deferred). Raw status lines never reach this pane; the one structured
-#     exception is a worker's open human-step decision (fm_human_step_url in
-#     bin/fm-classify-lib.sh), shown as the step's link, its URL as a copy block,
-#     and a Done answer, until Main closes that decision or a curated need about
-#     the same worker replaces it.
+#     deferred). A need with no "task" whose "key" names a backlog row is tied
+#     to that row the same way. Any other need whose "key" names no open
+#     keyed decision in a status log is marked UNBACKED, on its row and in a
+#     banner, because an answer to it has no record to close. Raw status lines
+#     never reach this pane; the one structured exception is a worker's open
+#     human-step decision (fm_human_step_url in bin/fm-classify-lib.sh), shown
+#     as the step's link, its URL as a copy block, and a Done answer, until Main
+#     closes that decision or a curated need about the same worker replaces it.
 #   2 Running: workers whose recorded local endpoint is present now and whose last
 #     status is not paused, done, or failed, each with its PR link and the
 #     curated plain line (used only while re-checked within the window and newer
@@ -129,9 +132,11 @@
 #   needs  [{"t", "why", "task", "key", "link", "link_label", "do", "message", "to",
 #            "options", "rec", "asked", "checked", "who", "machine"}]
 #          "t": one-line title; "why": one line on why it matters.
-#          "task": the backlog id this need answers; omit only for asks that
-#                have no backlog row. "key": the row's stable id, shown in its
-#                detail (default: "task"), so a resolver can name the row.
+#          "task": the held backlog id this need answers. Back a new ask before
+#                adding it: `bin/fm-captain-hold.sh hold <id> --title <t> --reason
+#                <one line>` creates the row and holds it in one step. "key": the
+#                row's stable id, shown in its detail (default: "task"), so a
+#                resolver can name the row.
 #          "link": the direct URL to act on; "link_label" overrides its short
 #                label. "do": optional exact action; wrap each command in single
 #                backticks for monospace text and its Copy button.

@@ -441,6 +441,155 @@ SH
   pass "the queue reads the real canonical snapshot, starts nothing and writes nothing"
 }
 
+# --- answering a row --------------------------------------------------------
+#
+# Slice 8's acceptance line: an answer given while firstmate is stopped is
+# handled when a session starts and is never lost; a decision answered from the
+# queue is recorded through the captain-hold owner and leaves the queue; and the
+# queue starts no worker itself. Each case drives the public `answer` verb and
+# reads its effect from durable records, never from source text.
+
+# A hand-off that outlives a stopped session is two durable artifacts: the record
+# in the home's inbox, and the one wake that presents it. Both come from the real
+# bin/fm-inbox.sh, so this proves the transport and not a stub of it.
+test_answer_is_handed_off_through_the_home_inbox() {
+  local home snap out rc notes wakes listed
+  home=$(make_home handoff)
+  snap=$home/snapshot.json
+  write_snapshot "$home" "$snap"
+  out=$(FM_QUEUE_SNAPSHOT="$snap" FM_HOME="$home" "$QUEUE" \
+    answer wave-root --text "Dispatch this wave now." 2>&1)
+  rc=$?
+  expect_code 0 "$rc" "answering a queued row must succeed"
+  assert_contains "$out" "answered row wave-root (alpha)" \
+    "the answer must name the row it answered"
+  assert_contains "$out" "none started by this command" \
+    "the answer path must say it started no worker"
+
+  notes=$(find "$home/state/inbox" -maxdepth 1 -name '*.note' | wc -l | tr -d ' ')
+  assert_equals "1" "$notes" "the answer must leave exactly one durable inbox record"
+  assert_contains "$(cat "$home/state/inbox"/*.note)" "Dispatch this wave now." \
+    "the durable record must carry the captain's own words"
+  assert_contains "$(cat "$home/state/inbox"/*.note)" "queue-answer row=wave-root" \
+    "the durable record must name the row it answers"
+
+  wakes=$(grep -c "inbox:" "$home/state/.wake-queue")
+  assert_equals "1" "$wakes" "the hand-off must arm exactly one wake"
+  assert_contains "$(cat "$home/state/.wake-queue")" "	check	inbox:" \
+    "the armed wake must be the check wake a session start presents"
+  assert_absent "$home/state/.lock" "the answer path must not take the session lock"
+
+  listed=$(FM_HOME="$home" "$ROOT/bin/fm-inbox.sh" drain)
+  assert_contains "$listed" "Dispatch this wave now." \
+    "a session that starts later must still find the answer waiting in the inbox"
+  pass "an answer while stopped waits durably in the home's inbox behind one wake"
+}
+
+# The keyed half: a row that reads waiting on you is a captain hold, so its answer
+# is recorded through the captain-hold owner, and the row then leaves that bucket.
+test_a_keyed_answer_closes_through_the_captain_hold_owner() {
+  local home out rc body
+  command -v tasks-axi >/dev/null 2>&1 || { echo "skip: tasks-axi not found"; return 0; }
+  home=$(make_home keyed)
+  cp "$ROOT/.tasks.toml" "$home/.tasks.toml"
+  printf '## In flight\n\n## Queued\n\n## Done\n' > "$home/data/backlog.md"
+  ( cd "$home" && tasks-axi add held-row "Held Row" --repo alpha ) >/dev/null 2>&1 \
+    || fail "could not create the held fixture row"
+  FM_HOME="$home" "$ROOT/bin/fm-captain-hold.sh" hold held-row \
+    --reason "Pick the API shape before the worker continues." >/dev/null 2>&1 \
+    || fail "could not hold the fixture row for the captain"
+
+  out=$(FM_HOME="$home" FM_QUEUE_TIMEOUT=60 "$QUEUE" 2>&1)
+  assert_contains "$out" "[waiting on you] held-row" \
+    "the held row must read waiting on you before it is answered"
+
+  out=$(FM_HOME="$home" "$QUEUE" answer held-row --text "Use POST, not PUT." 2>&1)
+  rc=$?
+  expect_code 0 "$rc" "answering a held decision must succeed"
+  assert_contains "$out" "recorded and closed through the captain-hold owner" \
+    "a keyed answer must be recorded through the captain-hold owner"
+
+  body=$( cd "$home" && tasks-axi show held-row | sed -n '/body:/,$p' )
+  assert_contains "$body" "Use POST, not PUT." \
+    "the captain's exact words must reach the decision record"
+  assert_contains "$body" "Resolution mode: answered" \
+    "the decision must be closed by the captain-hold owner, not by this command"
+
+  out=$(FM_HOME="$home" FM_QUEUE_TIMEOUT=60 "$QUEUE" 2>&1)
+  assert_contains "$out" "[done] held-row" \
+    "an answered decision must read done on the next queue read"
+  assert_not_contains "$out" "[waiting on you] held-row" \
+    "an answered decision must leave the waiting-on-you bucket"
+  assert_contains "$(cat "$home/state/inbox"/*.note)" "Use POST, not PUT." \
+    "the keyed answer must also be handed off through the inbox"
+  assert_absent "$home/state/.lock" "the answer path must not take the session lock"
+  pass "a decision answered from the queue closes through the captain-hold owner and leaves it"
+}
+
+# The queue is a hand-off, never a dispatcher, and it refuses the rows it cannot
+# answer rather than guessing. The backend tools are recording shims, so "started
+# no worker" is checked against what would actually have been invoked.
+test_answer_starts_no_worker_and_refuses_what_it_cannot_answer() {
+  local home snap out rc fakebin log
+  home=$(make_home guard)
+  snap=$home/snapshot.json
+  write_snapshot "$home" "$snap"
+  fakebin=$(fm_fakebin "$home")
+  log="$home/backend.log"
+  : > "$log"
+  local tool
+  for tool in tmux treehouse no-mistakes; do
+    cat > "$fakebin/$tool" <<SH
+#!/usr/bin/env bash
+printf '%s\\n' "$tool \$*" >> "$log"
+exit 0
+SH
+    chmod +x "$fakebin/$tool"
+  done
+
+  out=$(FM_QUEUE_SNAPSHOT="$snap" FM_HOME="$home" PATH="$fakebin:$PATH" "$QUEUE" \
+    answer wave-root --text "go" 2>&1)
+  rc=$?
+  expect_code 0 "$rc" "answering a queued row must succeed"
+  assert_equals "" "$(cat "$log")" \
+    "the answer path must start no worker through the backend tooling"
+
+  out=$(FM_QUEUE_SNAPSHOT="$snap" FM_HOME="$home" "$QUEUE" answer orphan-task --text x 2>&1)
+  rc=$?
+  expect_code 1 "$rc" "a fleet-maintenance record must be refused"
+  assert_contains "$out" "fleet-maintenance record" \
+    "the refusal must say the row is not the captain's request"
+
+  out=$(FM_QUEUE_SNAPSHOT="$snap" FM_HOME="$home" "$QUEUE" answer no-such-row --text x 2>&1)
+  rc=$?
+  expect_code 1 "$rc" "an unknown row must be refused"
+  assert_contains "$out" "no queue row with id no-such-row" "the refusal must name the row"
+
+  out=$(FM_QUEUE_SNAPSHOT="$snap" FM_HOME="$home" "$QUEUE" answer landed-row --text x 2>&1)
+  rc=$?
+  expect_code 1 "$rc" "a row that already reads done must be refused"
+  assert_contains "$out" "already reads done" "the refusal must say the row is finished"
+
+  out=$(printf '' | FM_QUEUE_SNAPSHOT="$snap" FM_HOME="$home" "$QUEUE" answer wave-root 2>&1)
+  rc=$?
+  expect_code 1 "$rc" "an empty answer must be refused"
+  assert_contains "$out" "empty answer" "the refusal must say why"
+
+  out=$(FM_QUEUE_SNAPSHOT="$snap" FM_HOME="$home" "$QUEUE" answer wave-root --text reconcile 2>&1)
+  rc=$?
+  expect_code 1 "$rc" "the intake's reserved reconcile value must be refused"
+  assert_contains "$out" "reconcile" "the refusal must name the reserved value"
+
+  out=$(FM_QUEUE_SNAPSHOT="$snap" FM_HOME="$home" "$QUEUE" answer wave-root --close release --text x 2>&1)
+  rc=$?
+  expect_code 1 "$rc" "releasing a row that is not a hold must be refused"
+  assert_contains "$out" "not a captain hold" "the refusal must say why release does not apply"
+
+  notes=$(find "$home/state/inbox" -maxdepth 1 -name '*.note' 2>/dev/null | wc -l | tr -d ' ')
+  assert_equals "1" "$notes" "only the one accepted answer may leave a hand-off record"
+  pass "the answer path starts no worker and refuses every row it cannot answer"
+}
+
 test_dead_worker_reads_unknown_never_done
 test_captain_hold_reads_waiting_on_you
 test_text_is_never_clipped
@@ -454,3 +603,6 @@ test_json_model_parity
 test_withheld_records_are_disclosed_with_a_reveal_path
 test_refuses_a_non_snapshot_input
 test_reads_the_real_snapshot_and_stays_read_only
+test_answer_is_handed_off_through_the_home_inbox
+test_a_keyed_answer_closes_through_the_captain_hold_owner
+test_answer_starts_no_worker_and_refuses_what_it_cannot_answer

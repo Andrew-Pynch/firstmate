@@ -1,10 +1,31 @@
 #!/usr/bin/env bash
 # fm-queue.sh - the queue: what the captain asked for, and what the fleet needs.
 #
-# READ-ONLY. This command acquires no lock, starts no worker, drains no wake,
-# writes no record, and mutates nothing. bin/fm-fleet-snapshot.sh's own
-# observational parent-side ledger cache refresh is the only fleet-state write
-# in the call path, exactly as it is for every other snapshot consumer.
+# The human view and --json are READ-ONLY. They acquire no lock, start no
+# worker, drain no wake, write no record, and mutate nothing.
+# bin/fm-fleet-snapshot.sh's own observational parent-side ledger cache refresh is
+# the only fleet-state write in that call path, exactly as it is for every other
+# snapshot consumer.
+#
+# `answer` is the ONE writing subcommand, and it hands the captain's answer off
+# through exactly two existing owners, never a third:
+#   - a row that reads `waiting on you` is a KEYED captain hold, so the answer is
+#     recorded and the decision closed at answer time through
+#     bin/fm-captain-hold.sh's `answer` path - the same resolution path every
+#     other channel's keyed answer reaches through that owner's `answers` intake,
+#     used here because the captain's words may run to more than one line and
+#     `--decision-file` preserves them exactly where the line-oriented form would
+#     not. The intake's reserved `reconcile` value is refused before either owner
+#     is called, so this channel can never record it as a decision.
+#   - the answer is then handed off through bin/fm-inbox.sh `note`, which writes
+#     the durable record into the home's inbox and arms exactly ONE wake. That is
+#     the whole transport: this command never discovers which session is live
+#     (bin/fm-lock.sh already guarantees one owning session per home), never
+#     takes the session lock itself, and never starts a worker. An answer given
+#     while firstmate is stopped therefore waits durably for the next session to
+#     drain it. Its first body line is a stable marker - `queue-answer row=<id>
+#     project=<project> keyed=<0|1> close=<done|release>` - so the session that
+#     drains the inbox can route the answer without reading prose.
 #
 # One read model. It shells out ONCE to bin/fm-fleet-snapshot.sh --json (the
 # canonical fleet snapshot: task metadata, parsed backlog records with full body
@@ -53,10 +74,20 @@
 # Flags:
 #   (default)  the human view
 #   --json     the same model as JSON (schema fm-queue.v1) for other surfaces
+#   answer <row-id> [--close done|release] [--text <answer>]
+#              record the captain's answer for one row. A row reading
+#              `waiting on you` closes through bin/fm-captain-hold.sh first; the
+#              answer is then handed off through the home's durable inbox
+#              (bin/fm-inbox.sh note) and exactly one wake is armed. The answer
+#              text comes from --text, or from stdin when --text is absent.
+#              `--close release` lifts a held decision so its gated work resumes
+#              instead of closing the task; it is refused on a row that is not a
+#              captain hold.
 #   -h,--help  usage
 #
 # Environment:
-#   FM_HOME           operational home whose state/, data/ and backlog are read.
+#   FM_HOME           operational home whose state/, data/ and backlog are read,
+#                     and the home the answer is handed off in.
 #   FM_QUEUE_TIMEOUT  hard bound in seconds on the snapshot read (default 300).
 #   FM_QUEUE_SNAPSHOT when set to a readable path, read the snapshot JSON from
 #                     that file instead of invoking the canonical snapshot, so a
@@ -75,11 +106,18 @@ case "$FM_QUEUE_TIMEOUT" in ''|*[!0-9]*|0) FM_QUEUE_TIMEOUT=300 ;; esac
 usage() {
   cat <<'EOF'
 usage: fm-queue.sh [--json]
+       fm-queue.sh answer <row-id> [--close done|release] [--text <answer>]
 
 The queue: things the captain asked for, grouped by project, plus fleet
-maintenance grouped apart. Read-only; it starts nothing.
+maintenance grouped apart. The listing is read-only; it starts nothing.
 
   --json     print the same model as JSON (schema fm-queue.v1)
+  answer     record the captain's answer for one row. A row reading
+             "waiting on you" closes through bin/fm-captain-hold.sh first; the
+             answer is then handed off through the home's durable inbox and one
+             wake is armed. The answer text comes from --text, or from stdin
+             when --text is absent. This command starts no worker: whichever
+             session holds the home drains the hand-off and acts.
   -h,--help  this help
 
 Every row carries its state (queued, in flight, blocked, done, waiting on you,
@@ -89,13 +127,45 @@ EOF
 }
 
 MODE=human
+ROW_ID=""
+CLOSE_MODE="done"
+ANSWER_TEXT=""
+ANSWER_TEXT_SET=0
 case "${1:-}" in
   "") ;;
   --json) MODE=json ;;
+  answer)
+    MODE=answer
+    shift
+    ROW_ID=${1:-}
+    [ -n "$ROW_ID" ] || { usage >&2; exit 2; }
+    shift
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        --close)
+          shift
+          CLOSE_MODE=${1:-}
+          [ -n "$CLOSE_MODE" ] || { usage >&2; exit 2; }
+          ;;
+        --text)
+          shift
+          [ "$#" -ge 1 ] || { usage >&2; exit 2; }
+          ANSWER_TEXT=$1
+          ANSWER_TEXT_SET=1
+          ;;
+        *) usage >&2; exit 2 ;;
+      esac
+      shift
+    done
+    case "$CLOSE_MODE" in
+      done|release) ;;
+      *) echo "fm-queue: --close must be done or release" >&2; exit 2 ;;
+    esac
+    ;;
   -h|--help) usage; exit 0 ;;
   *) usage >&2; exit 2 ;;
 esac
-if [ "$#" -gt 1 ]; then usage >&2; exit 2; fi
+if [ "$MODE" != answer ] && [ "$#" -gt 1 ]; then usage >&2; exit 2; fi
 
 command -v jq >/dev/null 2>&1 || { echo "fm-queue: jq not found" >&2; exit 1; }
 
@@ -123,7 +193,12 @@ case "$SNAP_SCHEMA" in
   *) echo "fm-queue: expected a canonical fleet snapshot, got schema '${SNAP_SCHEMA:-none}'" >&2; exit 1 ;;
 esac
 
-printf '%s' "$SNAP" | jq -r --arg mode "$MODE" '
+# The whole model is built once, in jq, and the mode only chooses what is
+# printed from it: the human view, the JSON form, or (for `answer`) the same JSON
+# the model already carries. The answer path reuses this exact model, so it acts
+# on the state the listing would print, never on a second classification.
+render_model() {  # <mode: human|json|answer>
+  printf '%s' "$SNAP" | jq -r --arg mode "$1" '
 # ---------------------------------------------------------------------------
 # shape helpers
 # ---------------------------------------------------------------------------
@@ -567,7 +642,7 @@ def maintenance_lines:
                      then "no list built from this home own backlog is capped, and every record it carries is printed; the secondmate home bounds above name what those homes withheld"
                      else "none - no list below is capped and every row the snapshot carries is printed" end)}] + $mate_bounds} as $m
 
-| if $mode == "json" then $m
+| if $mode == "json" or $mode == "answer" then $m
   else ( $m
     | "fm-queue - what you asked for, and what the fleet is doing",
       "home       \(.home)",
@@ -586,3 +661,96 @@ def maintenance_lines:
       ( .maintenance[] | maintenance_lines[] ) )
   end
 '
+}
+
+die() { printf 'fm-queue: %s\n' "$*" >&2; exit 1; }
+
+# ---------------------------------------------------------------- answer
+
+# Hand the captain's answer off. Keyed decisions close through the captain-hold
+# owner at answer time so the row leaves `waiting on you` immediately, and every
+# accepted answer then rides the home's durable inbox so a session that is stopped
+# still handles it when it starts. This function starts nothing: it names no
+# backend, no spawner and no lock.
+cmd_answer() {  # <model-json>
+  local model=$1 home owner state project keyed=0 dec note_out row
+  home=$(printf '%s' "$model" | jq -r '.home // ""')
+  [ -n "$home" ] || die "the snapshot names no home to hand the answer off in"
+
+  if [ "${ANSWER_TEXT//[[:space:]]/}" = "" ]; then
+    die "refusing to hand off an empty answer; pass the captain's words with --text or on stdin"
+  fi
+  # The reserved value is the intake's, not this command's: `reconcile` means
+  # "go re-check reality", never "the captain answered". Refuse it here so it can
+  # never be recorded as a decision.
+  [ "$ANSWER_TEXT" != "reconcile" ] \
+    || die "'reconcile' is not an answer; it asks firstmate to re-check the row's reality"
+
+  row=$(printf '%s' "$model" | jq -c --arg id "$ROW_ID" '([.projects[].rows[] | select(.id == $id)] | .[0]) // empty')
+  if [ -z "$row" ]; then
+    if printf '%s' "$model" | jq -e --arg id "$ROW_ID" '[.maintenance[].id] | index($id) != null' >/dev/null 2>&1; then
+      die "row $ROW_ID is a fleet-maintenance record, not something the captain asked for; there is no answer to record"
+    fi
+    die "no queue row with id $ROW_ID"
+  fi
+  owner=$(printf '%s' "$row" | jq -r '.owner')
+  state=$(printf '%s' "$row" | jq -r '.state')
+  project=$(printf '%s' "$row" | jq -r '.project')
+
+  [ "$owner" = "(main)" ] \
+    || die "row $ROW_ID belongs to $owner; answer it in that home, not this one"
+  [ "$state" != "done" ] \
+    || die "row $ROW_ID already reads done; there is nothing left to answer"
+  if [ "$state" = "waiting on you" ]; then
+    keyed=1
+  elif [ "$CLOSE_MODE" = release ]; then
+    die "row $ROW_ID is not a captain hold; --close release applies only to a held decision"
+  fi
+
+  if [ "$keyed" = 1 ]; then
+    dec=$(umask 077; mktemp "${TMPDIR:-/tmp}/fm-queue-answer.XXXXXX") \
+      || die "cannot stage the captain's answer for the captain-hold owner"
+    if ! printf '%s\n' "$ANSWER_TEXT" > "$dec"; then
+      rm -f -- "$dec"
+      die "cannot stage the captain's answer for the captain-hold owner"
+    fi
+    if [ "$CLOSE_MODE" = release ]; then
+      FM_HOME="$home" "$SCRIPT_DIR/fm-captain-hold.sh" answer "$ROW_ID" --release --decision-file "$dec" >&2 \
+        || { rm -f -- "$dec"; die "the captain-hold owner refused the answer for $ROW_ID; nothing was handed off"; }
+    else
+      FM_HOME="$home" "$SCRIPT_DIR/fm-captain-hold.sh" answer "$ROW_ID" --decision-file "$dec" >&2 \
+        || { rm -f -- "$dec"; die "the captain-hold owner refused the answer for $ROW_ID; nothing was handed off"; }
+    fi
+    rm -f -- "$dec"
+  fi
+
+  local body
+  body=$(printf 'queue-answer row=%s project=%s keyed=%s close=%s\nstate when answered: %s\nthe captain answered:\n%s\n\n%s\n' \
+    "$ROW_ID" "$project" "$keyed" "$CLOSE_MODE" "$state" "$ANSWER_TEXT" \
+    "$(if [ "$keyed" = 1 ]; then
+         printf 'the captain-hold decision for %s was recorded and closed through bin/fm-captain-hold.sh before this hand-off; act on what that decision unblocks.' "$ROW_ID"
+       else
+         printf 'act on this answer for row %s: dispatch, approve, or retire it as the answer requires.' "$ROW_ID"
+       fi)")
+
+  note_out=$(printf '%s' "$body" | FM_HOME="$home" "$SCRIPT_DIR/fm-inbox.sh" note -) \
+    || die "the hand-off for $ROW_ID failed: bin/fm-inbox.sh did not confirm the durable inbox record and its wake"
+
+  printf 'answered row %s (%s)\n' "$ROW_ID" "$project"
+  printf '  state     %s\n' "$state"
+  if [ "$keyed" = 1 ]; then
+    printf '  decision  recorded and closed through the captain-hold owner\n'
+  fi
+  printf '  handoff   durable inbox note queued in the home, one wake armed\n'
+  printf '%s\n' "$note_out" | sed 's/^/            /'
+  printf '  worker    none started by this command; whichever session holds the home drains the hand-off\n'
+}
+
+if [ "$MODE" = answer ] && [ "$ANSWER_TEXT_SET" = 0 ]; then
+  ANSWER_TEXT=$(cat)
+fi
+
+case "$MODE" in
+  human|json) render_model "$MODE" ;;
+  answer) cmd_answer "$(render_model answer)" ;;
+esac

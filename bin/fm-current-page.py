@@ -9,11 +9,11 @@ Kinds: merged, fixed, live (green), decided (blue), needs (amber), blocked
 (red), info (gray); an unknown kind displays as info.
 Optional ## YYYY-MM-DD headings date the following events; events before a
 date heading use the notes file's local modification date.
-Events sort newest first, grouped by date, with today's first 15 shown.
-More events today and other days sit behind closed details toggles.
-Full HTTP(S) URLs become links, GitHub pull URLs display as PR #<number>,
-and /design/ or /designs/ URLs display their final slug without .html.
-Other lines keep their existing Markdown rendering without timeline styling.
+Events sort newest first, grouped by date: the inspector's foot shows the
+newest six, and the L key opens the whole log with other days folded.
+Inline Markdown renders through bin/fm_md.py, so full URLs show short labels
+(PR #<number>, a Linear key, a design slug).
+Other lines render as Markdown without timeline styling.
 """
 import datetime as dt
 import fcntl
@@ -29,6 +29,8 @@ import sys
 import time
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, SCRIPT_DIR)
+import fm_md  # noqa: E402  (the one Markdown renderer and page theme, beside this file)
 CODE_ROOT = os.path.dirname(SCRIPT_DIR)
 HOME = os.environ.get("FM_HOME") or CODE_ROOT
 STATE = os.path.join(HOME, "state")
@@ -308,7 +310,7 @@ def open_decisions():
 def parse_curated(path):
     """The keeper's curated JSON; bin/fm-current-page.sh's header owns the field list."""
     empty = {"checked": None, "needs": [], "why": {}, "mates": {}, "plain": {}, "hide": set(),
-             "initiatives": [], "completed": [], "error": ""}
+             "initiatives": [], "completed": [], "links": [], "error": ""}
     try:
         with open(path, encoding="utf-8") as fh:
             data = json.load(fh)
@@ -331,6 +333,8 @@ def parse_curated(path):
             "mates": data.get("mates") if isinstance(data.get("mates"), dict) else {},
             "initiatives": [n for n in data.get("initiatives") or [] if isinstance(n, dict) and n.get("id")],
             "completed": [n for n in data.get("completed") or [] if isinstance(n, dict)],
+            "links": [(str(n.get("label") or fm_md.link_label(str(n["url"]))), str(n["url"]))
+                      for n in data.get("links") or [] if isinstance(n, dict) and re.match(r"https://", str(n.get("url", "")))],
             "error": ""}
 
 
@@ -364,114 +368,33 @@ def parse_notes(path):
     return {"free": "\n".join(free).strip(), "events": events, "missing": False}
 
 
-def inline_md(text):
-    out = e(text)
-    out = re.sub(r"`([^`]+)`", r"<code>\1</code>", out)
-    out = re.sub(r"\*\*([^*]+)\*\*", r"<b>\1</b>", out)
-    out = re.sub(r"\[([^\]]+)\]\((https?://[^)\s]+|[\w./#-]+)\)", r'<a href="\2">\1</a>', out)
-    out = re.sub(r'(?<![">])(https?://[^\s<]+)', r'<a href="\1">\1</a>', out)
-    return out
-
-
-def block_md(text):
-    html_out, para, items = [], [], []
-
-    def flush():
-        if para:
-            html_out.append("<p>" + inline_md(" ".join(para)) + "</p>")
-            para.clear()
-        if items:
-            html_out.append("<ul>" + "".join("<li>" + inline_md(i) + "</li>" for i in items) + "</ul>")
-            items.clear()
-    for line in text.splitlines():
-        if not line.strip():
-            flush()
-            continue
-        h = re.match(r"^(#{1,4})\s+(.*)$", line)
-        li = re.match(r"^\s*(?:[-*]|\d+\.)\s+(.*)$", line)
-        if h:
-            flush()
-            html_out.append(f"<h3>{inline_md(h.group(2))}</h3>")
-        elif li:
-            if para:
-                flush()
-            items.append(li.group(1))
-        elif items and line.startswith("  "):
-            items[-1] += " " + line.strip()
-        else:
-            if items:
-                flush()
-            para.append(line.strip())
-    flush()
-    return "".join(html_out)
-
-
-def link_label(url):
-    """A short label for a full URL: PR #n, a Linear key, Slack, a design slug, or host plus last path part."""
-    if PR_RE.fullmatch(url):
-        return f'PR #{url.rsplit("/", 1)[1]}'
-    linear = re.match(r"https://linear\.app/[^/]+/issue/([A-Za-z]+-\d+)", url)
-    if linear:
-        return linear.group(1).upper()
-    if re.match(r"https://[\w.-]*slack\.com/", url):
-        return "Slack"
-    path = url.split("?", 1)[0].split("#", 1)[0].rstrip("/")
-    host = path.split("/")[2] if path.count("/") >= 2 else path
-    tail = path.rsplit("/", 1)[-1] if path.count("/") >= 3 else ""
-    if re.search(r"/designs?/", path) and tail:
-        return tail.removesuffix(".html")
-    short = host.split(".")[0]
-    return f"{short}/{tail.removesuffix('.html')}" if tail else short
-
-
-def note_links(text):
-    """Keep inline Markdown while giving every full URL a short label."""
-    out, end = [], 0
-    for match in re.finditer(r"\[[^\]]+\]\(https?://[^)\s]+\)|https?://[^\s<>]+", text):
-        out.append(inline_md(text[end:match.start()]))
-        token = match.group()
-        if token.startswith("["):
-            label, url = token[1:].split("](", 1)
-            url, trailing = url[:-1], ""
-        else:
-            url = token.rstrip(".,;:!?)")
-            trailing = token[len(url):]
-            label = link_label(url)
-        out.append(f'<a href="{e(url)}">{e(label)}</a>{e(trailing)}')
-        end = match.end()
-    out.append(inline_md(text[end:]))
-    return "".join(out)
+def timeline_rows(rows):
+    return '<ol class="timeline">' + "".join(
+        f'<li class="note-event"><time datetime="{row["day"]}T{row["time"]}">{row["time"]}</time>'
+        f'<span class="note-kind {row["kind"]}">{row["kind"]}</span>'
+        f'<div class="note-text">{fm_md.inline(row["text"])}</div></li>' for row in rows) + "</ol>"
 
 
 def notes_timeline(notes, today):
-    """Render at most 15 events initially, with overflow and history folded."""
+    """The keeper log overlay: today's events, then other days folded, then any free Markdown."""
     groups = {}
     for row in notes["events"]:
         groups.setdefault(row["day"], []).append(row)
-
-    def rows_html(rows):
-        return '<ol class="timeline">' + "".join(
-            f'<li class="note-event"><time datetime="{row["day"]}T{row["time"]}">{row["time"]}</time>'
-            f'<span class="note-kind {row["kind"]}">{row["kind"]}</span>'
-            f'<div class="note-text">{note_links(row["text"])}</div></li>' for row in rows) + "</ol>"
-
     out = []
     if groups:
         day = today.isoformat()
         rows = groups.pop(day, [])
         out.append(f'<h3>Today · <time datetime="{day}">{today.strftime("%a, %d %b %Y")}</time></h3>')
-        out.append(rows_html(rows[:15]) if rows else '<p class="k">No events today.</p>')
-        if len(rows) > 15:
-            out.append(f'<details><summary>{len(rows) - 15} more today</summary>{rows_html(rows[15:])}</details>')
+        out.append(timeline_rows(rows) if rows else '<p class="k">No events today.</p>')
         if groups:
             count = sum(len(rows) for rows in groups.values())
             out.append(f'<details class="notes-history"><summary>Other days · {count} event{"s" if count != 1 else ""}</summary>')
             for day, rows in groups.items():
                 label = dt.date.fromisoformat(day).strftime("%a, %d %b %Y")
-                out.append(f'<h3><time datetime="{day}">{label}</time></h3>{rows_html(rows)}')
+                out.append(f'<h3><time datetime="{day}">{label}</time></h3>{timeline_rows(rows)}')
             out.append("</details>")
     if notes["free"]:
-        out.append(block_md(notes["free"]))
+        out.append(fm_md.block(notes["free"]))
     return "".join(out)
 
 
@@ -501,16 +424,16 @@ def need_actions(need):
     acts = []
     link = str(need.get("link") or "").strip()
     if re.match(r"https?://", link):
-        acts.append(f'<a class="go" href="{e(link)}">Open {e(str(need.get("link_label") or link_label(link)))}</a>')
+        acts.append(f'<a class="go" href="{e(link)}">Open {e(str(need.get("link_label") or fm_md.link_label(link)))}</a>')
     action = str(need.get("do") or "").strip()
     if action:
         parts, end = [], 0
         for match in re.finditer(r"`([^`]+)`", action):
-            parts.append(note_links(action[end:match.start()]))
+            parts.append(fm_md.inline(action[end:match.start()]))
             parts.append(f'<span class="cmd"><code>{e(match.group(1))}</code>'
                          '<button type="button" class="copy-command">Copy</button></span>')
             end = match.end()
-        parts.append(note_links(action[end:]))
+        parts.append(fm_md.inline(action[end:]))
         acts.append(f'<span class="do">{"".join(parts)}</span>')
     button, folded = need_message(need)
     if button:
@@ -638,7 +561,7 @@ def linked_words(text, n=220):
     text = re.sub(r"\S*data/\S+", "", text)
     text = re.sub(r"\[[a-z_]+=[^\]]*\]\s*", "", text)
     text = clip(re.sub(r"\s+", " ", text).strip(), n)
-    return note_links(re.sub(r"https?://\S*…$", "…", text))
+    return fm_md.inline(re.sub(r"https?://\S*…$", "…", text))
 
 
 def archived_done():
@@ -749,34 +672,39 @@ def completions(cur, merged, done, rows, repos, viewer, now):
     return items, others
 
 
-def done_li(item, now, by=False):
-    link = f' <a href="{e(item["url"])}">{e(link_label(item["url"]))}</a>' if item["url"] else ""
-    who = f' <span class="meta">by {e(item.get("author", ""))}</span>' if by else ""
+def item_div(key, row, det, href="", task="", cls=""):
+    """One selectable pane item: a one-line row, plus the inspector body the page script shows while it is selected."""
+    attrs = f' data-key="{e(key)}"' + (f' data-task="{e(task)}"' if task else "") + (f' data-href="{e(href)}"' if href else "")
+    return f'<div class="it{" " + cls if cls else ""}"{attrs}><div class="row">{row}</div><div class="det">{det}</div></div>'
+
+
+def chips(*parts):
+    return '<div class="chips">' + "".join(f'<span class="chip">{p}</span>' for p in parts if p) + "</div>"
+
+
+def done_div(item, now, initiative):
+    url = item["url"]
     when = (f'<span class="age">{"today" if item["today"] else e(item["closed"])}</span>' if item["date_only"]
             else age(item["ts"], now))
-    return f'<li>{e(clip(item["title"], 140))}{link}{who} <span class="meta">{when}</span></li>'
+    label = fm_md.link_label(url) if url else ""
+    row = f'<span class="mk"></span><span class="t">{e(clip(item["title"], 140))}</span><span class="m">{e(label)}</span>'
+    det = (f'<h2>{e(item["title"])}</h2>{chips("done " + when, e(initiative))}'
+           + (f'<div class="acts"><a class="go" href="{e(url)}">Open {e(label)}</a></div>' if url else
+              '<p class="k">No link recorded for this one.</p>'))
+    return item_div("done:" + (url or item["title"]), row, det, href=url)
 
 
-def grouped(items, initiatives, now, cap, key):
-    """Items under their initiative's title, curated order then Other; each group shows `cap` items and folds the rest."""
+def grouped(items, initiatives, now):
+    """Done items under their initiative's title, curated order then Other, newest first inside each."""
     names = {str(i["id"]): str(i.get("title") or i["id"]) for i in initiatives}
     order = [*names, "other"]
     names["other"] = "Other"
     groups = {}
     for item in sorted(items, key=lambda x: x["ts"] or 0, reverse=True):
         groups.setdefault(item["initiative"], []).append(item)
-    out = []
-    for gid in order:
-        rows = groups.get(gid)
-        if not rows:
-            continue
-        lis = [done_li(x, now) for x in rows]
-        body = "<ul>" + "".join(lis[:cap]) + "</ul>"
-        if len(lis) > cap:
-            body += (f'<details id="{e(key)}-{e(gid)}"><summary>{len(lis) - cap} more</summary>'
-                     "<ul>" + "".join(lis[cap:]) + "</ul></details>")
-        out.append(f'<div class="group" data-initiative="{e(gid)}"><h3>{e(names[gid])} <span class="n">{len(rows)}</span></h3>{body}</div>')
-    return "".join(out)
+    return "".join(f'<div class="group" data-initiative="{e(gid)}"><h3>{e(names[gid])} <span class="n">{len(groups[gid])}</span></h3>'
+                   + "".join(done_div(x, now, names[gid]) for x in groups[gid]) + "</div>"
+                   for gid in order if groups.get(gid))
 
 
 def captain_calls(held, today):
@@ -793,47 +721,159 @@ def captain_calls(held, today):
 
 
 PAGE_CSS = """
-body{font:16px/1.45 system-ui;background:#0d1117;color:#e6edf3;max-width:980px;margin:1.2em auto;padding:0 1em}
-a{color:#58a6ff}h1{margin:.1em 0;font-size:26px}h2{margin:1.4em 0 .4em;font-size:21px;border-bottom:1px solid #30363d;padding-bottom:.2em}
-h2 .n,h3 .n,summary .n{color:#8b949e;font-weight:400}h3{margin:.8em 0 .2em;font-size:16px;color:#79c0ff}
-.k,.meta{color:#8b949e;font-size:13px}.age{white-space:nowrap}code{font-size:13px;color:#c9d1d9}
-.warn{background:#2d1517;border:1px solid #da3633;color:#ffa198;border-radius:8px;padding:.4em .8em;margin:.4em 0}
-ol.needs,ul.runs{list-style:none;padding:0;margin:0}
-.need{background:#161b22;border:1px solid #30363d;border-left:5px solid #d29922;border-radius:10px;padding:.6em .9em;margin:.5em 0}
-.need.new{border-left-color:#388bfd}.need.stale{border-left-color:#57606a;opacity:.75}
-.head{display:flex;justify-content:space-between;gap:1em;align-items:baseline}.head b{font-size:17px}.head .meta{text-align:right}
-.why{color:#c9d1d9;font-size:14px;margin:.15em 0;overflow-wrap:anywhere}
-.acts{display:flex;flex-wrap:wrap;gap:.5em;align-items:center;margin:.4em 0 .1em}
-a.go{background:#1f6feb;color:#fff;text-decoration:none;font-weight:600;border-radius:6px;padding:.25em .8em}
-.do{font-size:14px;overflow-wrap:anywhere}.cmd code{font-family:ui-monospace,monospace;background:#0d1117;border:1px solid #30363d;border-radius:5px;padding:.1em .4em;color:#f0f6fc}
-button{font:12px system-ui;color:#c9d1d9;background:#21262d;border:1px solid #57606a;border-radius:5px;padding:.25em .7em;margin-left:.3em;cursor:pointer}
-.opt{background:#21262d;border:1px solid #30363d;border-radius:20px;padding:.1em .7em;font-size:13px}.opt.rec{border-color:#2ea043;color:#7ee787}
-.need-message summary{font-size:13px;color:#8b949e}.need-message blockquote{margin:.4em 0;padding:.5em .8em;border-left:3px solid #388bfd;background:#0d1117;white-space:pre-wrap;overflow-wrap:anywhere}
-.run{border-top:1px solid #21262d;padding:.45em 0}.run .st{color:#adbac7;font-size:14px;overflow-wrap:anywhere}
-.tag{font-size:12px;border:1px solid #9e6a03;color:#e3b341;border-radius:5px;padding:0 .4em;margin-left:.3em}
-.group ul{margin:.1em 0;padding-left:1.2em}.group li{margin:.15em 0;font-size:15px}
-details.more{background:#161b22;border:1px solid #30363d;border-radius:10px;padding:.4em .9em;margin:.5em 0}details.more>summary{font-weight:600}
-summary{cursor:pointer}li{margin:.25em 0}.timeline{list-style:none;padding:0}.timeline li{display:flex;gap:.6em}
-.note-kind{font-size:12px;color:#8b949e;min-width:5em}
+body{height:100vh;overflow:hidden;display:flex;flex-direction:column}
+#hud{display:flex;align-items:center;gap:16px;padding:0 14px;height:42px;flex:none;background:rgba(13,17,23,.96);
+border-bottom:2px solid var(--acc);font:12px var(--mono);letter-spacing:.08em;white-space:nowrap}
+#hud .brand{font-weight:700;letter-spacing:.16em;color:var(--acc);text-shadow:0 0 12px rgba(255,136,0,.5)}
+#hud .live{color:var(--fg2)}#hud .live.off .dot{background:var(--alert);animation:none}
+#hud .stat{color:var(--fg2)}#hud .stat b{color:var(--fg);font-size:15px;margin-left:4px}
+#hud .stat.hot b{color:var(--alert);text-shadow:0 0 10px rgba(255,51,102,.6)}#hud .stat.good b{color:var(--data)}
+#hud .lv{display:flex;align-items:center;gap:6px;color:var(--fg2)}#hud .lv b{color:var(--acc)}
+#hud .bar{display:inline-block;width:70px;height:6px;border:1px solid var(--acc-dim);position:relative}
+#hud .bar i{position:absolute;inset:0 auto 0 0;background:var(--acc);box-shadow:0 0 8px var(--acc);transition:width .6s ease-out}
+#hud .sp{flex:1}#hud a{color:var(--link)}#hud .out a+a{margin-left:12px}#clock{color:var(--data)}
+#warn{flex:none}#warn p{margin:0;padding:4px 14px;background:var(--alert-dim);color:#ffb3c4;font-size:12.5px;border-bottom:1px solid var(--alert)}
+#cols{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(0,1.2fr);gap:10px;padding:10px}
+.stack{display:flex;flex-direction:column;gap:10px;min-height:0}
+.pane,#insp{display:flex;flex-direction:column;min-height:0;background:var(--pane);border:1px solid var(--acc-dim);border-radius:var(--r);
+box-shadow:0 8px 32px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.03)}
+.pane{flex:1 1 0;transition:flex-grow .22s ease-out,border-color .2s,box-shadow .2s;animation:boot .35s ease-out backwards}
+.stack .pane.on{flex-grow:2.4}.pane.on{border-color:var(--acc);box-shadow:var(--glow),0 12px 48px rgba(0,0,0,.6)}
+#p-running{animation-delay:.05s}#p-done{animation-delay:.1s}#p-held{animation-delay:.15s}#insp{animation:boot .35s .2s ease-out backwards}
+.pane>header,#insp>header{display:flex;align-items:center;gap:8px;padding:6px 10px;flex:none;background:var(--raised);
+border-bottom:1px solid rgba(255,255,255,.04);font:12px var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--fg2)}
+.pane.on>header b{color:var(--acc)}.pane>header .n{margin-left:auto;color:var(--data);font-size:13px}
+.list{overflow:auto;flex:1;min-height:0;padding:2px 0 8px;scrollbar-width:thin;scrollbar-color:var(--acc-dim) transparent}
+.it{cursor:pointer}.it .det{display:none}
+.it .row{display:flex;gap:8px;align-items:center;padding:3px 10px;border-left:2px solid transparent;white-space:nowrap;font-size:13.5px;line-height:1.45}
+.it .t{overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0}.it .m{font:11px var(--mono);color:var(--fg2);flex:none}
+.it .mk{width:6px;height:6px;flex:none;background:var(--data);opacity:.8}
+.it.heat2 .mk{background:var(--acc)}.it.heat3 .mk{background:var(--alert);box-shadow:0 0 6px var(--alert)}
+#needs-now .it.heat3 .mk{animation:blink 1.4s steps(2,start) infinite}.it.held .mk{background:var(--dim)}
+.it.dim .t,.it.dim .mk{opacity:.55}.it.new .mk{background:var(--link)}
+.it:hover .row{background:rgba(255,255,255,.03)}
+.it.sel .row{background:rgba(255,255,255,.05);border-left-color:var(--dim)}
+.pane.on .it.sel .row{background:linear-gradient(90deg,rgba(255,136,0,.2),rgba(255,136,0,.04));border-left-color:var(--acc)}
+.pane.on .it.sel .t{color:#fff}.it.flash .row{animation:flash 1.6s ease-out}
+.list h3{margin:0;padding:9px 10px 2px;font:600 10.5px var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--data)}
+.list h3 .n{color:var(--dim)}.list .k{padding:6px 12px}.k{color:var(--fg2);font-size:13px}
+.zero{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:6px;font:700 22px var(--mono);
+letter-spacing:.2em;color:var(--data);text-shadow:0 0 18px rgba(0,221,170,.6);animation:pulse-t 3s ease-in-out infinite}
+.zero small{font:12px var(--mono);letter-spacing:.12em;color:var(--fg2);text-shadow:none}
+@keyframes pulse-t{50%{opacity:.65}}
+#insp{position:relative}#insp .body{overflow:auto;flex:1;padding:16px 20px;animation:boot .18s ease-out}
+#insp h2{font:600 19px/1.3 var(--sans);margin:0 0 8px;color:#fff}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 12px}
+.chip{font:11px var(--mono);letter-spacing:.06em;border:1px solid var(--acc-dim);padding:1px 7px;color:var(--fg2);border-radius:var(--r)}
+.chip.alert{border-color:var(--alert);color:var(--alert)}.chip code{border:0;background:none;padding:0}
+.why{font-size:14.5px;line-height:1.6;margin:0 0 12px;overflow-wrap:anywhere}
+.acts{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:12px 0}
+a.go{background:var(--acc);color:#0a0a0f;font:700 12px var(--mono);letter-spacing:.1em;text-transform:uppercase;padding:6px 12px;border-radius:var(--r);box-shadow:var(--glow)}
+a.go::before{content:"\\23CE  "}a.go:hover{text-decoration:none;filter:brightness(1.15)}
+.do{font-size:14px;overflow-wrap:anywhere;flex-basis:100%}
+.cmd{display:inline-flex;align-items:center;gap:4px;margin:2px 0}.cmd code{font-size:13px;padding:2px 6px;color:#fff}
+button{font:11px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--acc);background:transparent;border:1px solid var(--acc-dim);border-radius:var(--r);padding:2px 8px;cursor:pointer}
+button:hover{border-color:var(--acc)}
+.opt{font:12px var(--mono);border:1px solid var(--dim);padding:2px 8px;border-radius:var(--r);color:var(--fg2)}
+.opt.rec{border-color:var(--data);color:var(--data);box-shadow:0 0 10px rgba(0,221,170,.25)}
+.need-message summary{font:11px var(--mono);letter-spacing:.08em;color:var(--fg2);cursor:pointer;text-transform:uppercase}
+.need-message blockquote{margin:.4em 0;padding:.6em .9em;border-left:3px solid var(--data);background:rgba(0,221,170,.05);white-space:pre-wrap;overflow-wrap:anywhere}
+.tag{font:11px var(--mono);border:1px solid var(--acc);color:var(--acc);padding:0 6px;margin-right:6px;border-radius:var(--r)}
+.st{font-size:14.5px;line-height:1.6;overflow-wrap:anywhere}
+#logtail{flex:none;border-top:1px solid var(--acc-dim);padding:6px 12px 8px;font:12px/1.55 var(--mono);color:var(--fg2);max-height:30%;overflow:hidden}
+#logtail .lbl{display:block;margin-bottom:2px}
+.timeline{list-style:none;padding:0;margin:0}.timeline li{display:flex;gap:8px;white-space:nowrap;overflow:hidden}
+.timeline .note-text{overflow:hidden;text-overflow:ellipsis}.overlay .timeline li{white-space:normal}
+.note-kind{min-width:5.5em;text-transform:uppercase;font-size:10.5px;letter-spacing:.08em;padding-top:1px}
+.note-kind.merged,.note-kind.fixed,.note-kind.live{color:var(--data)}.note-kind.needs{color:var(--acc)}
+.note-kind.blocked{color:var(--alert)}.note-kind.decided{color:var(--link)}
+#keys{flex:none;display:flex;gap:14px;align-items:center;padding:4px 14px;border-top:1px solid var(--acc-dim);background:rgba(13,17,23,.96);
+font:11px var(--mono);color:var(--fg2);white-space:nowrap;overflow:hidden}
+#keys input{font:12px var(--mono);background:transparent;border:0;border-bottom:1px solid var(--acc-dim);color:var(--fg);width:180px;outline:0;padding:1px 2px}
+#keys input:focus{border-bottom-color:var(--acc)}#keys .sp{flex:1}
+#toasts{position:fixed;right:18px;bottom:44px;display:flex;flex-direction:column;align-items:flex-end;gap:8px;z-index:9500;pointer-events:none}
+.toast{background:var(--surface);border:1px solid var(--data);color:var(--data);box-shadow:0 0 22px rgba(0,221,170,.35);padding:8px 14px;
+font:700 13px var(--mono);letter-spacing:.14em;animation:toast 3.2s ease-out forwards}
+.toast.acc{border-color:var(--acc);color:var(--acc);box-shadow:var(--glow)}.toast.big{font-size:22px;padding:14px 24px}
+@keyframes toast{0%{transform:translateX(130%)}8%{transform:none}85%{opacity:1}100%{opacity:0;transform:translateY(-12px)}}
+@media (max-width:1100px){body{height:auto;overflow:auto}#cols{grid-template-columns:1fr}.pane,#insp{min-height:40vh}#hud{flex-wrap:wrap;height:auto}}
 """
 
-PAGE_JS = """
+# Keys, selection, filter, copy, and live refresh. The page re-fetches itself (a cheap 304 while unchanged), swaps
+# every [data-swap] element in place, and keeps the reader's pane, selection, and filter; a need that vanished was
+# answered, so it scores a cleared call.
+PAGE_JS = r"""
+const $=(s,r=document)=>r.querySelector(s),$$=(s,r=document)=>[...r.querySelectorAll(s)];
+const S={pane:0,sel:{},q:"",cleared:+(sessionStorage.getItem("fm-cleared")||0)};let panes=[],pend="";
+const body=$("#insp .body"),q=$("#q");
 function ago(s){s=Math.max(0,Math.floor(s));if(s<60)return"just now";if(s<3600)return Math.floor(s/60)+"m ago";
-  if(s<172800)return Math.floor(s/3600)+"h ago";return Math.floor(s/86400)+"d ago";}
+ if(s<172800)return Math.floor(s/3600)+"h ago";return Math.floor(s/86400)+"d ago";}
 function tick(){const now=Date.now()/1000;
-  document.querySelectorAll("time.age[data-ts]").forEach(t=>{t.textContent=(t.dataset.prefix||"")+ago(now-Number(t.dataset.ts));});
-  const stale=document.getElementById("render-stale");if(stale)stale.hidden=now-RENDERED<600;}
-async function copyText(text){
-  try{await navigator.clipboard.writeText(text);return;}catch{}
-  const area=document.createElement("textarea");area.value=text;area.setAttribute("readonly","");area.style.cssText="position:fixed;opacity:0";
-  document.body.appendChild(area);area.select();const ok=document.execCommand("copy");area.remove();if(!ok)throw new Error("copy refused");}
-function copier(button,text){button.onclick=async()=>{try{await copyText(text());button.textContent="Copied";}catch{button.textContent="Copy failed, select it by hand";}};}
-document.querySelectorAll(".copy-command").forEach(b=>copier(b,()=>b.previousElementSibling.textContent));
-document.querySelectorAll(".copy-message").forEach(b=>copier(b,()=>b.dataset.copy));
-const OPEN="current-page-open";const opened=new Set(JSON.parse(sessionStorage.getItem(OPEN)||"[]"));
-document.querySelectorAll("details[id]").forEach(d=>{if(opened.has(d.id))d.open=true;
-  d.addEventListener("toggle",()=>{d.open?opened.add(d.id):opened.delete(d.id);sessionStorage.setItem(OPEN,JSON.stringify([...opened]));});});
-tick();setInterval(tick,30000);setTimeout(()=>location.reload(),60000);
+ $$("time.age[data-ts]").forEach(t=>{t.textContent=(t.dataset.prefix||"")+ago(now-Number(t.dataset.ts));});
+ const off=now-Number(document.body.dataset.rendered)>600;$("#live").classList.toggle("off",off);
+ $("#live-l").textContent=off?"STALE":"LIVE";}
+function clock(){$("#clock").textContent=new Date().toLocaleTimeString([], {hour12:false});}
+function vis(p){return $$(".it",p).filter(x=>!x.hidden);}
+function cur(i=S.pane){const its=vis(panes[i]||document.createElement("p"));return its.find(x=>x.dataset.key===S.sel[i])||its[0]||null;}
+function show(scroll=true){panes.forEach((p,i)=>{p.classList.toggle("on",i===S.pane);const c=cur(i);
+  $$(".it.sel",p).forEach(x=>x!==c&&x.classList.remove("sel"));if(c){c.classList.add("sel");S.sel[i]=c.dataset.key;}});
+ const it=cur();if(it&&scroll)it.scrollIntoView({block:"nearest"});
+ body.innerHTML=it?it.querySelector(".det").innerHTML:'<p class="k">Nothing here'+(S.q?" for this filter":"")+".</p>";
+ body.style.animation="none";void body.offsetWidth;body.style.animation="";$("#insp-n").textContent=panes[S.pane].dataset.title;tick();}
+function move(d){const its=vis(panes[S.pane]);if(!its.length)return;let i=its.indexOf(cur());
+ i=Math.max(0,Math.min(its.length-1,i+d));S.sel[S.pane]=its[i].dataset.key;show();}
+function to(i){S.pane=(i+panes.length)%panes.length;show();}
+function openSel(){const it=cur();const h=it&&it.dataset.href;if(h)window.open(h,"_blank","noopener");else toast("NO LINK ON THIS ONE","acc");}
+async function copyText(t){try{await navigator.clipboard.writeText(t);return;}catch{}
+ const a=document.createElement("textarea");a.value=t;a.setAttribute("readonly","");a.style.cssText="position:fixed;opacity:0";
+ document.body.appendChild(a);a.select();const ok=document.execCommand("copy");a.remove();if(!ok)throw new Error("copy refused");}
+async function yank(msg){const m=body.querySelector(".copy-message"),c=body.querySelector(".cmd code");
+ const t=msg||!c?(m&&m.dataset.copy):c.textContent;if(!t){toast("NOTHING TO COPY","acc");return;}
+ try{await copyText(t);toast(msg||!c?"MESSAGE COPIED":"COMMAND COPIED");}catch{toast("COPY FAILED","acc");}}
+function filter(v){S.q=v.trim().toLowerCase();
+ $$(".it").forEach(x=>{x.hidden=!!S.q&&!(x.firstChild.textContent+" "+(x.dataset.task||"")).toLowerCase().includes(S.q);});
+ $$(".list .group,.list .sub").forEach(g=>{g.hidden=!!S.q&&!$$(".it",g).some(x=>!x.hidden);});
+ panes.forEach(p=>{const n=$(".n",p);n.textContent=S.q?vis(p).length+" found":n.dataset.n;});show();}
+function toast(t,cls=""){const d=document.createElement("div");d.className="toast "+cls;d.textContent=t;$("#toasts").appendChild(d);
+ setTimeout(()=>d.remove(),3300);}
+function score(){const c=$("#cleared");c.textContent=S.cleared;sessionStorage.setItem("fm-cleared",S.cleared);}
+function bind(){panes=$$(".pane[data-pane]").sort((a,b)=>a.dataset.pane-b.dataset.pane);
+ panes.forEach(p=>{const n=$(".n",p);n.dataset.n=n.textContent;});}
+function apply(text){const doc=new DOMParser().parseFromString(text,"text/html");
+ const keys=()=>new Set($$("#needs-now .it").map(x=>x.dataset.key)),before=keys(),done=$$("#done .it").length;
+ $$("[data-swap]").forEach(el=>{const n=doc.getElementById(el.id);if(n)el.replaceWith(document.importNode(n,true));});
+ document.body.dataset.rendered=doc.body.dataset.rendered;document.title=doc.title;bind();const after=keys();
+ const gone=[...before].filter(k=>!after.has(k)).length,fresh=[...after].filter(k=>!before.has(k));
+ fresh.forEach(k=>{const x=$$("#needs-now .it").find(y=>y.dataset.key===k);if(x)x.classList.add("flash");});
+ if(gone){S.cleared+=gone;score();toast(gone>1?gone+" CALLS CLEARED":"CALL CLEARED");}
+ if(fresh.length)toast(fresh.length>1?fresh.length+" NEW CALLS":"NEW CALL","acc");
+ const shipped=$$("#done .it").length-done;if(shipped>0)toast("+"+shipped+" SHIPPED");
+ if(before.size&&!after.size)toast("INBOX ZERO","big");filter(q.value);}
+async function refresh(){try{const r=await fetch(location.href,{cache:"no-cache"});if(!r.ok)throw 0;const t=await r.text();
+ const m=t.match(/data-rendered="(\d+)"/);if(m&&m[1]!==document.body.dataset.rendered)apply(t);}catch{$("#live").classList.add("off");}}
+addEventListener("keydown",ev=>{if(ev.target===q){if(ev.key==="Escape"){q.value="";filter("");q.blur();}
+  else if(ev.key==="Enter"||ev.key==="ArrowDown"){q.blur();}return;}
+ if(ev.metaKey||ev.altKey||(ev.ctrlKey&&!"du".includes(ev.key)))return;
+ const ov=$(".overlay:not([hidden])");if(ov){if(["Escape","?","L","q"].includes(ev.key)){ov.hidden=true;ev.preventDefault();}return;}
+ const k=(ev.ctrlKey?"^":"")+ev.key,two=pend+k;pend="";
+ const A={j:()=>move(1),ArrowDown:()=>move(1),k:()=>move(-1),ArrowUp:()=>move(-1),l:()=>to(S.pane+1),ArrowRight:()=>to(S.pane+1),
+  h:()=>to(S.pane-1),ArrowLeft:()=>to(S.pane-1),Tab:()=>to(S.pane+(ev.shiftKey?-1:1)),gg:()=>move(-1e9),G:()=>move(1e9),
+  Enter:openSel,o:openSel,y:()=>yank(false),Y:()=>yank(true),"/":()=>{q.focus();q.select();},
+  "?":()=>{$("#help").hidden=false;},L:()=>{$("#log").hidden=false;},r:refresh,
+  O:()=>{const a=$("#hud .out a");if(a)window.open(a.href,"_blank","noopener");},
+  "^d":()=>body.scrollBy(0,body.clientHeight/2),"^u":()=>body.scrollBy(0,-body.clientHeight/2),
+  Escape:()=>{if(S.q){q.value="";filter("");}}};
+ const f=A[two]||A[k];if(f){ev.preventDefault();f();}
+ else if(/^[1-9]$/.test(k)&&+k<=panes.length){ev.preventDefault();to(+k-1);}else if(k==="g")pend="g";});
+document.addEventListener("click",ev=>{const b=ev.target.closest("button.copy-command,button.copy-message");
+ if(b){const t=b.classList.contains("copy-message")?b.dataset.copy:b.previousElementSibling.textContent;
+  copyText(t).then(()=>{b.textContent="Copied";toast("COPIED");},()=>{b.textContent="Copy failed";});return;}
+ const ov=ev.target.closest(".overlay");if(ov&&!ev.target.closest(".box")){ov.hidden=true;return;}
+ const it=ev.target.closest(".pane .it");if(it&&!ev.target.closest("a")){const i=panes.indexOf(it.closest(".pane"));
+  S.pane=i;S.sel[i]=it.dataset.key;show(false);}});
+document.addEventListener("dblclick",ev=>{if(ev.target.closest(".pane .it"))openSel();});
+q.addEventListener("input",()=>filter(q.value));
+bind();score();show();clock();setInterval(clock,1000);setInterval(tick,30000);setInterval(refresh,10000);
 """
 
 
@@ -865,14 +905,21 @@ def render(paths, reason):
 
     # Needs you now: curated needs the keeper re-checked inside the confirm window, minus any whose
     # backlog row is no longer an open captain call, plus captain calls Main opened inside that window.
-    def need_li(n, cls, asked, checked):
-        who = str(n.get("who") or "")
+    def heat(asked):
+        return "heat1" if asked is None or now - asked < 7200 else "heat2" if now - asked < 28800 else "heat3"
+
+    def need_div(n, stale, asked, checked):
+        who, task = str(n.get("who") or ""), str(n.get("task") or "")
         host = n.get("machine") or (by_task[who]["host"] if who in by_task else mates.get(who, {}).get("host") or here)
-        rechecked = f' · {age(checked, now, "checked ")}' if cls == "stale" else ""
-        return (f'<li class="need {cls}" data-task="{e(str(n.get("task") or ""))}"><div class="head"><b>{e(str(n["t"]))}</b>'
-                f'<span class="meta">{age(asked, now, "asked ")} · {e(host)}{rechecked}</span></div>'
-                f'<div class="why">{note_links(str(n.get("why", "")))}</div>{need_actions(n)}</li>')
-    needs_now, needs_stale, curated_tasks = [], [], set()
+        link = str(n.get("link") or "").strip()
+        row = f'<span class="mk"></span><span class="t">{e(str(n["t"]))}</span><span class="m">{age(asked, now)}</span>'
+        det = (f'<h2>{e(str(n["t"]))}</h2>'
+               + chips(age(asked, now, "asked "), e(str(host)), e(who) if who != task else "", f"<code>{e(task)}</code>" if task else "",
+                       f'not re-checked · {age(checked, now, "checked ")}' if stale else "")
+               + f'<div class="why">{fm_md.inline(str(n.get("why", "")))}</div>{need_actions(n)}')
+        return item_div("need:" + (task or str(n["t"])), row, det, href=link if re.match(r"https?://", link) else "",
+                        task=task, cls=heat(asked) + (" dim" if stale else ""))
+    needs_now, needs_stale, curated_tasks, asks = [], [], set(), []
     for n in cur["needs"]:
         task = str(n.get("task") or "")
         if task:
@@ -882,9 +929,10 @@ def render(paths, reason):
         asked = ts_of(n.get("asked")) or calls.get(task, {}).get("asked")
         checked = ts_of(n.get("checked")) or cur["checked"]
         if checked is not None and now - checked < confirm:
-            needs_now.append(need_li(n, "", asked, checked))
+            needs_now.append(need_div(n, False, asked, checked))
+            asks.append(asked)
         else:
-            needs_stale.append(need_li(n, "stale", asked, checked))
+            needs_stale.append(need_div(n, True, asked, checked))
     fresh_calls, older_calls, deferred_calls = [], [], []
     for c in sorted(calls.values(), key=lambda c: c["asked"] or 0, reverse=True):
         if c["id"] in curated_tasks and not c["deferred"]:
@@ -895,34 +943,35 @@ def render(paths, reason):
             fresh_calls.append(c)
         else:
             older_calls.append(c)
-    for c in fresh_calls:
-        needs_now.append(
-            f'<li class="need new" data-task="{e(c["id"])}"><div class="head"><b>{e(plain_words(c.get("title", ""), 120) or c["id"])}</b>'
-            f'<span class="meta">{age(c["asked"], now, "asked ")} · new, not summarized yet</span></div>'
-            f'<div class="why">{linked_words(c.get("hold_reason", ""), 260)}</div></li>')
 
-    def call_li(c):
-        until = f' · until {e(c["until"])}' if c["until"] else ""
-        return (f'<li data-task="{e(c["id"])}"><b>{e(plain_words(c.get("title", ""), 120) or c["id"])}</b> <span class="meta">'
-                f'{age(c["asked"], now, "asked ")}{until} · <code>{e(c["id"])}</code></span>'
-                f'<div class="why">{linked_words(c.get("hold_reason", ""))}</div></li>')
+    def call_div(c, note, cls=""):
+        title = plain_words(c.get("title", ""), 120) or c["id"]
+        reason = c.get("hold_reason", "")
+        until = f'until {e(c["until"])}' if c["until"] else ""
+        row = f'<span class="mk"></span><span class="t">{e(title)}</span><span class="m">{until or age(c["asked"], now)}</span>'
+        det = (f"<h2>{e(title)}</h2>" + chips(age(c["asked"], now, "asked "), note, until, f'<code>{e(c["id"])}</code>')
+               + f'<div class="why">{linked_words(reason, 260)}</div><p class="k">Answer it by telling Main.</p>')
+        return item_div("call:" + c["id"], row, det, href=fm_md.first_url(re.sub(r"\S*data/\S+", "", reason)), task=c["id"],
+                        cls=cls or heat(c["asked"]))
+    for c in fresh_calls:
+        needs_now.append(call_div(c, "new, not summarized yet", "new " + heat(c["asked"])))
+        asks.append(c["asked"])
 
     # Running: workers whose endpoint is present right now; second mates always, by their routed status.
-    def run_li(r):
+    def run_div(r):
         plain = cur["plain"].get(r["task"])
         if plain and plain["at"] is not None and now - plain["at"] < confirm and plain["at"] >= (r["updated"] or 0) - 60:
             text, as_of = plain["text"], plain["at"]
         else:
             text, as_of = plain_words(r["note"], 180) or "No report yet.", r["updated"]
-        pr = f' <a href="{e(r["pr"])}">{e(link_label(r["pr"]))}</a>' if r["pr"] else ""
-        tags = ""
-        if r["task"] in open_by_task:
-            tags += '<span class="tag">waiting on a decision from Main</span>'
-        if r["verb"] == "paused":
-            tags += '<span class="tag">paused</span>'
-        return (f'<li class="run" data-task="{e(r["task"])}"><div class="head"><b>{e(r["title"])}{pr}</b>'
-                f'<span class="meta">{e(r["host"])}</span></div>'
-                f'<div class="st">{e(text)} <span class="meta">{age(as_of, now)}</span>{tags}</div></li>')
+        pr = f'<a href="{e(r["pr"])}">{e(fm_md.link_label(r["pr"]))}</a>' if r["pr"] else ""
+        tags = ('<span class="tag">waiting on a decision from Main</span>' if r["task"] in open_by_task else "") + \
+            ('<span class="tag">paused</span>' if r["verb"] == "paused" else "")
+        row = f'<span class="mk"></span><span class="t">{e(r["title"])}</span><span class="m">{age(as_of, now)}</span>'
+        det = (f'<h2>{e(r["title"])}</h2>' + chips(pr, e(r["host"]), age(as_of, now, "said "), f'<code>{e(r["task"])}</code>')
+               + f'<div class="st">{tags}{e(text)}</div>')
+        cls = "dim" if r["verb"] in PARKED_VERBS else "heat2" if r["task"] in open_by_task else "heat1"
+        return item_div("run:" + r["task"], row, det, href=r["pr"], task=r["task"], cls=cls)
     shown = [r for r in rows if r["task"] not in cur["hide"]]
     shown.sort(key=lambda r: -(r["updated"] or 0))
     second = [r for r in shown if r["kind"] == "secondmate"]
@@ -930,64 +979,83 @@ def render(paths, reason):
     running = [r for r in alive if r["verb"] not in PARKED_VERBS]
     parked = [r for r in alive if r["verb"] in PARKED_VERBS]
 
-    # Done today and earlier this week, by initiative.
-    items, others = completions(cur, merged, done, rows, repos, viewer, now)
+    # Done today, by initiative. Older work and other people's merges live in Linear and GitHub.
+    items, _others = completions(cur, merged, done, rows, repos, viewer, now)
     done_today = [x for x in items if x["today"]]
-    week = [x for x in items if not x["today"]]
-    others_today = sorted((x for x in others if x["today"]), key=lambda x: -x["ts"])
 
     banners = []
     if cur["error"]:
         banners.append(f"The keeper's file has a problem ({e(cur['error'])}); Needs you shows only new backlog calls.")
     if cur["checked"] is None or now - cur["checked"] >= confirm:
-        banners.append(f"The page keeper last checked {age(cur['checked'], now)}; anything not re-checked is folded.")
+        banners.append(f"The page keeper last checked {age(cur['checked'], now)}; anything not re-checked is held.")
     if held is None:
         banners.append("The backlog could not be read, so answered calls may still show.")
     if live is None:
         banners.append("Could not check which workers are running.")
     if forge_state.startswith("stale"):
         banners.append(f"GitHub read failed; merged work is as of {age(fetched, now)}.")
-    warn = "".join(f'<p class="warn">{b}</p>' for b in banners)
 
-    def more(key, title, count, body):
-        return (f'<details class="more" id="{key}"><summary>{e(title)} <span class="n">{count}</span></summary>{body}</details>'
-                if count else "")
-    notes_html = notes_timeline(notes, dt.date.fromtimestamp(now)) if not notes["missing"] else ""
-    rest = "".join([
-        more("more-older-calls", "Older open calls in the backlog", len(older_calls),
-             '<p class="k">Captain-held backlog rows the keeper has not re-checked. Answer one by telling Main.</p>'
-             "<ul>" + "".join(call_li(c) for c in older_calls) + "</ul>"),
-        more("more-deferred-calls", "Calls deferred to a later date", len(deferred_calls),
-             "<ul>" + "".join(call_li(c) for c in deferred_calls) + "</ul>"),
-        more("more-parked", "Workers alive but parked", len(parked),
-             '<ul class="runs">' + "".join(run_li(r) for r in parked) + "</ul>"),
-        more("more-week", "Earlier this week, by initiative", len(week), grouped(week, cur["initiatives"], now, 3, "week")),
-        more("more-others", "Merged by others today", len(others_today),
-             "<ul>" + "".join(done_li(x, now, by=True) for x in others_today) + "</ul>"),
-        more("more-notes", "Keeper notes", len(notes["events"]) + (1 if notes["free"] else 0), notes_html),
-    ])
-    stale_html = (f'<details class="more" id="needs-stale"><summary>Not re-checked in {confirm // 3600} h, may be answered '
-                  f'<span class="n">{len(needs_stale)}</span></summary><ol class="needs">{"".join(needs_stale)}</ol></details>'
-                  if needs_stale else "")
-    second_html = f'<h3>Second mates</h3><ul class="runs" id="second-mates">{"".join(run_li(r) for r in second)}</ul>' if second else ""
+    def sub(sid, title, divs):
+        return (f'<div class="sub" id="{sid}"><h3>{e(title)} <span class="n">{len(divs)}</span></h3>{"".join(divs)}</div>'
+                if divs else "")
+
+    def pane(pid, num, title, count, body):
+        return (f'<section class="pane" id="p-{pid}" data-pane="{num}" data-title="{e(title)}" data-swap>'
+                f'<header><kbd>{num}</kbd><b>{e(title)}</b><span class="n">{count}</span></header>'
+                f'<div class="list">{body}</div></section>')
+    held_count = len(needs_stale) + len(older_calls) + len(deferred_calls)
+    needs_body = ("".join(needs_now) or '<div class="zero">INBOX ZERO<small>nothing is waiting on you</small></div>')
+    running_body = (f'<div id="running-now">{"".join(run_div(r) for r in running) or "<p class=k>No workers running.</p>"}</div>'
+                    + sub("second-mates", "Second mates", [run_div(r) for r in second])
+                    + sub("parked", "Parked, still alive", [run_div(r) for r in parked]))
+    held_body = (sub("held-stale", f"Not re-checked in {confirm // 3600} h, may be answered", needs_stale)
+                 + sub("held-older", "Older open calls", [call_div(c, "", "held") for c in older_calls])
+                 + sub("held-deferred", "Deferred to a later date", [call_div(c, "deferred", "dim") for c in deferred_calls])
+                 or "<p class=k>No other open calls.</p>")
+    oldest = min((a for a in asks if a is not None), default=None)
+    level, xp = 1 + len(done_today) // 5, (len(done_today) % 5) * 20
+    links = "".join(f'<a href="{e(url)}" target="_blank" rel="noopener">{e(label)} &#8599;</a>' for label, url in cur["links"])
+    notes_html = notes_timeline(notes, dt.date.fromtimestamp(now)) if not notes["missing"] else "<p class=k>No keeper notes file.</p>"
+    help_rows = [("j / k", "move down / up"), ("h / l, Tab", "previous / next pane"), ("1 - 4", "jump to a pane"),
+                 ("gg / G", "first / last item"), ("Enter, o, double-click", "open the item's link in a new tab"),
+                 ("y / Y", "copy the command / the message"), ("/", "filter every pane; Esc clears"),
+                 ("^d / ^u", "scroll the inspector"), ("L", "keeper log"), ("O", "open the first link-out (Linear)"),
+                 ("r", "refresh now (it also refreshes itself every 10 s)"), ("?", "this help")]
+    keys_help = "".join(f"<kbd>{e(k)}</kbd><span>{e(v)}</span>" for k, v in help_rows)
     page = (
-        '<!doctype html><meta charset="utf-8"><title>Current</title>'
+        f'<!doctype html><html lang="en"><head><meta charset="utf-8"><title>{f"({len(needs_now)}) " if needs_now else ""}Current</title>'
         '<meta name="viewport" content="width=device-width,initial-scale=1">'
-        f"<style>{PAGE_CSS}</style>"
-        f'<h1>Current</h1><p class="k" title="{e(reason)}">Updated {age(now, now)} · {len(needs_now)} need you · '
-        f'{len(running)} running · {len(done_today)} done today. Reloads every minute.</p>'
-        '<p class="warn" id="render-stale" hidden>This page stopped updating; everything below may be old.</p>'
-        f"{warn}"
-        f'<section id="needs"><h2>Needs you now <span class="n">{len(needs_now)}</span></h2>'
-        f'<ol class="needs" id="needs-now">{"".join(needs_now) or "<li class=k>Nothing waiting on you.</li>"}</ol>{stale_html}</section>'
-        f'<section id="running"><h2>Running <span class="n">{len(running)}</span></h2>'
-        f'<ul class="runs" id="running-now">{"".join(run_li(r) for r in running) or "<li class=k>No workers running.</li>"}</ul>'
-        f'{second_html}</section>'
-        f'<section id="done"><h2>Done today <span class="n">{len(done_today)}</span></h2>'
-        '<p class="k">Merged fleet PRs and finished tasks from the last 24 h.</p>'
-        f'{grouped(done_today, cur["initiatives"], now, 5, "today") or "<p class=k>Nothing finished yet today.</p>"}</section>'
-        f'<section id="more"><h2>Everything else</h2>{rest or "<p class=k>Nothing else.</p>"}</section>'
-        f"<script>const RENDERED={int(now)};{PAGE_JS}</script>")
+        f"<style>{fm_md.THEME_CSS}{PAGE_CSS}</style></head>"
+        f'<body data-rendered="{int(now)}"><div class="grid-bg"></div><div class="scan"></div>'
+        f'<div id="hud" data-swap title="{e(reason)}"><span class="brand">FM//CURRENT</span>'
+        f'<span class="live" id="live"><span class="dot"></span> <span id="live-l">LIVE</span> · {age(now, now)}</span>'
+        f'<span class="stat{" hot" if needs_now else " good"}">NEED<b>{len(needs_now)}</b></span>'
+        f'<span class="stat">RUN<b>{len(running)}</b></span><span class="stat good">DONE<b>{len(done_today)}</b></span>'
+        f'<span class="stat">HELD<b>{held_count}</b></span>'
+        + (f'<span class="stat{" hot" if now - oldest > 28800 else ""}">OLDEST CALL<b>{age(oldest, now)}</b></span>'
+           if oldest is not None else "")
+        + f'<span class="lv" title="one level per 5 shipped today">LV<b>{level}</b><i class="bar"><i style="width:{xp}%"></i></i></span>'
+        f'<span class="sp"></span><span class="stat">KEEPER {age(cur["checked"], now)}</span>'
+        f'<span class="out">{links}</span><span id="clock"></span><span><kbd>?</kbd></span></div>'
+        f'<div id="warn" data-swap>{"".join(f"<p>{b}</p>" for b in banners)}</div>'
+        '<div id="cols">'
+        + pane("needs", 1, "Needs you", len(needs_now), f'<div id="needs-now">{needs_body}</div>')
+        + '<div class="stack">'
+        + pane("running", 2, "Running", len(running), running_body)
+        + pane("done", 3, "Done today", len(done_today),
+               f'<div id="done">{grouped(done_today, cur["initiatives"], now) or "<p class=k>Nothing finished yet today.</p>"}</div>')
+        + pane("held", 4, "Held calls", held_count, held_body)
+        + '</div><aside id="insp"><header><b>Inspect</b><span>&#183;</span><span id="insp-n"></span></header><div class="body"></div>'
+        f'<div id="logtail" data-swap><span class="lbl">Keeper log &#183; L for all</span>{timeline_rows(notes["events"][:6])}</div>'
+        '</aside></div>'
+        '<div id="keys"><span>/ <input id="q" placeholder="filter" autocomplete="off" spellcheck="false"></span>'
+        '<span><kbd>j</kbd><kbd>k</kbd> move</span><span><kbd>h</kbd><kbd>l</kbd> pane</span><span><kbd>1-4</kbd> jump</span>'
+        '<span><kbd>&#9166;</kbd> open</span><span><kbd>y</kbd> copy</span><span><kbd>L</kbd> log</span><span><kbd>?</kbd> help</span>'
+        '<span class="sp"></span><span class="lbl">cleared this session <b id="cleared">0</b></span></div>'
+        f'<div class="overlay" id="help" hidden><div class="box"><h2>Keys</h2><div class="keys">{keys_help}</div></div></div>'
+        f'<div class="overlay" id="log" hidden data-swap><div class="box"><h2>Keeper log</h2>{notes_html}</div></div>'
+        '<div id="toasts"></div>'
+        f"<script>{PAGE_JS}</script></body></html>")
     write_atomic(paths["out"], page)
     return {"needs": len(needs_now), "stale_needs": len(needs_stale), "running": len(running),
             "done_today": len(done_today), "older_calls": len(older_calls), "forge": forge_state}

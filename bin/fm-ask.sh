@@ -54,7 +54,7 @@
 #   - `list` is read-only: it takes no lock and creates nothing.
 #
 # Usage:
-#   fm-ask.sh open <key> --question <text> --agent <task-id|main> [--repo <repo>] [--wait <seconds>]
+#   fm-ask.sh open <key> --question <text> --agent <task-id|main> [--repo <repo>] [--wait <seconds>] [--credential]
 #   fm-ask.sh park [--now <epoch>] [--dry-run]
 #   fm-ask.sh list
 #   fm-ask.sh resolve <key> --reason <text>
@@ -75,7 +75,9 @@
 #                     other than the built-in 900. A value that is not a
 #                     positive whole number is refused, never guessed around.
 #
-# Records live in state/asks/<key>.ask, one `schema=fm-ask.v1` key=value block.
+# `--credential` marks a credential or login need so its parked row keeps the
+# secret tier. Records live in state/asks/<key>.ask, one `schema=fm-ask.v1`
+# key=value block.
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -97,7 +99,7 @@ FM_ASK_SCHEMA=fm-ask.v1
 
 usage() {
   printf '%s\n' \
-    'usage: fm-ask.sh open <key> --question <text> --agent <task-id|main> [--repo <repo>] [--wait <seconds>]' \
+    'usage: fm-ask.sh open <key> --question <text> --agent <task-id|main> [--repo <repo>] [--wait <seconds>] [--credential]' \
     '       fm-ask.sh park [--now <epoch>] [--dry-run]' \
     '       fm-ask.sh list' \
     '       fm-ask.sh resolve <key> --reason <text>' \
@@ -105,6 +107,7 @@ usage() {
     '  park     file every ask past its wait as a queue row and release its agent' \
     '  list     read-only view of the ask ledger' \
     '  resolve  close an ask the captain answered in-line, or withdrew' \
+    '  --credential  mark a credential or login need so a parked row ranks secret' \
     '  --now    epoch the sweep judges deadlines against (default: now)' >&2
 }
 
@@ -196,9 +199,9 @@ require_home_owner() {
   fail "another live session holds this home's lock; ask records are changed only by the owning session"
 }
 
-write_record() {  # <path> <key> <question> <agent> <agent_kind> <repo> <wait> <opened_at> <opened> <state> [<extra-line>...]
-  local path=$1 key=$2 question=$3 agent=$4 agent_kind=$5 repo=$6 wait=$7 opened_at=$8 opened=$9 state=${10}
-  shift 10
+write_record() {  # <path> <key> <question> <agent> <agent_kind> <repo> <wait> <opened_at> <opened> <credential> <state> [<extra-line>...]
+  local path=$1 key=$2 question=$3 agent=$4 agent_kind=$5 repo=$6 wait=$7 opened_at=$8 opened=$9 credential=${10} state=${11}
+  shift 11
   local tmp
   [ -d "$ASKS" ] || mkdir -p "$ASKS"
   tmp=$(mktemp "$ASKS/.staging.XXXXXX") || fail "cannot stage the ask record for $key"
@@ -213,6 +216,7 @@ write_record() {  # <path> <key> <question> <agent> <agent_kind> <repo> <wait> <
     printf 'opened=%s\n' "$opened"
     printf 'wait=%s\n' "$wait"
     printf 'deadline=%s\n' "$(( opened_at + wait ))"
+    printf 'credential=%s\n' "$credential"
     printf 'state=%s\n' "$state"
     [ "$#" -eq 0 ] || printf '%s\n' "$@"
   } > "$tmp" || { rm -f "$tmp"; fail "cannot write the ask record for $key"; }
@@ -220,7 +224,7 @@ write_record() {  # <path> <key> <question> <agent> <agent_kind> <repo> <wait> <
 }
 
 command_open() {
-  local key=${1:-} question='' agent='' repo='' wait_arg=''
+  local key=${1:-} question='' agent='' repo='' wait_arg='' credential=no
   [ -n "$key" ] || { usage; exit 2; }
   shift
   while [ "$#" -gt 0 ]; do
@@ -229,6 +233,7 @@ command_open() {
       --agent) shift; agent=${1:-} ;;
       --repo) shift; repo=${1:-} ;;
       --wait) shift; wait_arg=${1:-} ;;
+      --credential) credential=yes ;;
       *) usage; exit 2 ;;
     esac
     shift
@@ -267,7 +272,7 @@ command_open() {
       *) fail "ask $key is already recorded and $state; resolve it before opening a new one" ;;
     esac
   fi
-  write_record "$path" "$key" "$question" "$agent" "$agent_kind" "$repo" "$wait" "$opened_at" "$opened" open
+  write_record "$path" "$key" "$question" "$agent" "$agent_kind" "$repo" "$wait" "$opened_at" "$opened" "$credential" open
   printf '%s\n' "$key"
 }
 
@@ -304,7 +309,7 @@ command_park() {
       || fail 'another sweep holds the ask park lock; nothing was changed'
     trap 'fm_lock_release "$PARK_LOCK"' EXIT
   fi
-  local rec key state question agent agent_kind repo wait opened_at opened deadline row release show row_state
+  local rec key state question agent agent_kind repo wait opened_at opened credential deadline row release show row_state
   for rec in "$ASKS"/*.ask; do
     [ -e "$rec" ] || continue
     key=$(field_of "$rec" key)
@@ -317,6 +322,12 @@ command_park() {
     wait=$(field_of "$rec" wait)
     opened_at=$(field_of "$rec" opened_at)
     opened=$(field_of "$rec" opened)
+    credential=$(field_of "$rec" credential)
+    case "$credential" in
+      '') credential=no ;;
+      yes|no) ;;
+      *) fail "ask $key records an invalid credential marker; its record is corrupt" ;;
+    esac
     case "$state" in
       open) ;;
       parked)
@@ -335,7 +346,7 @@ command_park() {
               printf 'would resolve: %s row %s is %s\n' "$key" "$row" "$row_state"
               continue
             fi
-            write_record "$rec" "$key" "$question" "$agent" "$agent_kind" "$repo" "$wait" "$opened_at" "$opened" resolved \
+            write_record "$rec" "$key" "$question" "$agent" "$agent_kind" "$repo" "$wait" "$opened_at" "$opened" "$credential" resolved \
               "row=$row" \
               "parked_at=$(field_of "$rec" parked_at)" \
               "release=$(field_of "$rec" release)" \
@@ -355,9 +366,11 @@ command_park() {
       printf 'would park: %s -> row %s, releasing %s\n' "$key" "$key" "$agent"
       continue
     fi
+    local hold_args=()
+    [ "$credential" = yes ] && hold_args+=(--credential)
     "$SCRIPT_DIR/fm-captain-hold.sh" hold "$key" --title "$question" \
       --reason "the ask $key is parked: $agent waits for this answer and is released from holding" \
-      --repo "$repo" >/dev/null \
+      --repo "$repo" ${hold_args[@]+"${hold_args[@]}"} >/dev/null \
       || fail "could not file the queue row for ask $key; nothing was parked"
     release=none
     if [ "$agent_kind" = session ]; then
@@ -368,7 +381,7 @@ command_park() {
         || fail "the queue row $key was filed but the release for $agent could not be recorded"
       release="inbox ${rec_path#"$STATE/$agent.inbox/"}"
     fi
-    write_record "$rec" "$key" "$question" "$agent" "$agent_kind" "$repo" "$wait" "$opened_at" "$opened" parked \
+    write_record "$rec" "$key" "$question" "$agent" "$agent_kind" "$repo" "$wait" "$opened_at" "$opened" "$credential" parked \
       "row=$key" \
       "parked_at=$now" \
       "release=$release"
@@ -440,7 +453,7 @@ command_resolve() {
   done
   require_slug key "$key"
   require_one_line reason "$reason"
-  local path state question agent agent_kind repo wait opened_at opened now extra=()
+  local path state question agent agent_kind repo wait opened_at opened credential now extra=()
   path=$(ask_path "$key")
   [ -f "$path" ] || fail "no ask $key is recorded in $FM_HOME"
   state=$(field_of "$path" state)
@@ -453,11 +466,17 @@ command_resolve() {
   wait=$(field_of "$path" wait)
   opened_at=$(field_of "$path" opened_at)
   opened=$(field_of "$path" opened)
+  credential=$(field_of "$path" credential)
+  case "$credential" in
+    '') credential=no ;;
+    yes|no) ;;
+    *) fail "ask $key records an invalid credential marker; its record is corrupt" ;;
+  esac
   now=$(now_epoch)
   if [ "$state" = parked ]; then
     extra+=("row=$(field_of "$path" row)" "parked_at=$(field_of "$path" parked_at)" "release=$(field_of "$path" release)")
   fi
-  write_record "$path" "$key" "$question" "$agent" "$agent_kind" "$repo" "$wait" "$opened_at" "$opened" resolved \
+  write_record "$path" "$key" "$question" "$agent" "$agent_kind" "$repo" "$wait" "$opened_at" "$opened" "$credential" resolved \
     ${extra[@]+"${extra[@]}"} \
     "resolved_at=$now" \
     "resolved_by=$reason"

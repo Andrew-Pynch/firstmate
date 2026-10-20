@@ -19,7 +19,9 @@
 #     Canonical tasks-axi rows are structured; free-form non-empty lines in
 #     those sections are preserved as unstructured records.
 #     Structured rows preserve captain-hold metadata such as hold_kind,
-#     hold_reason, and hold_until when tasks-axi emits it. They also carry
+#     hold_reason, hold_until, and the explicit hold_credential and
+#     hold_discard markers.
+#     They also carry
 #     normalized current_role, requires_child_metadata, blocked_by_ids,
 #     unresolved_blocker_ids, captain_actionable, hold_set, hold_age_days,
 #     and hold_bucket fields.
@@ -522,6 +524,8 @@ backlog_json() (  # [<backlog-path>] - defaults to this home's $BACKLOG
              hold_kind:metadata($rest; "hold-kind"),
              hold_until:metadata($rest; "hold-until"),
              hold_set:null,
+             hold_credential:false,
+             hold_discard:false,
              blocked_by:cap($rest; ".*blocked-by:[[:space:]]*(?<v>[^[:space:])]+).*"),
              blocked_by_ids:blocked_by_ids($rest),
              blocked_reason:blocked_reason($rest),
@@ -557,7 +561,9 @@ backlog_json() (  # [<backlog-path>] - defaults to this home's $BACKLOG
        end)
     | .records |= map(
         if (.body_lines | length) > 0 then
-          .hold_set = cap(.body_lines[0]; "^Captain hold set:[[:space:]]*(?<v>[0-9]{4}-[0-9]{2}-[0-9]{2}(?:T[0-9]{2}:[0-9]{2}:[0-9]{2}Z)?)$")
+          .hold_set = cap(.body_lines[0]; "^Captain hold set:[[:space:]]*(?<v>[0-9]{4}-[0-9]{2}-[0-9]{2}(?:T[0-9]{2}:[0-9]{2}:[0-9]{2}Z)?)(?:; credential=yes)?(?:; discard=yes)?$")
+          | .hold_credential = (.hold_set != null and (.body_lines[0] | test("; credential=yes(; discard=yes)?$")))
+          | .hold_discard = (.hold_set != null and (.body_lines[0] | test("; discard=yes$")))
           | .local_note = (.local_note
               // (if any(.body_lines[];
                     test("^Resolution recorded by fm-(captain|decision)-hold\\.$"))
@@ -1040,6 +1046,8 @@ secondmate_home_summary_json() {  # <backlog-json-file> <tasks-json-file>
          | {id,key:.id,verb:"captain-hold",summary:(.title | trunc(160)),
             reason:(.hold_reason | trunc(160)),
             hold_until:(.hold_until // null),
+            hold_credential:(.hold_credential // false),
+            hold_discard:(.hold_discard // false),
             hold_bucket:(.hold_bucket // null),
             hold_age_days:(.hold_age_days // null),source:"backlog"} ]) as $captain_holds_all
     | ([ $backlog.records[]? | select(landed_record)
@@ -1153,6 +1161,8 @@ secondmate_home_summary_json() {  # <backlog-json-file> <tasks-json-file>
           hold_reason:((.hold_reason // null) | if . == null then null else trunc(160) end),
           hold_kind:((.hold_kind // null) | if . == null then null else trunc(40) end),
           hold_until:((.hold_until // null) | if . == null then null else trunc(40) end),
+          hold_credential:(.hold_credential // false),
+          hold_discard:(.hold_discard // false),
           hold_bucket:(.hold_bucket // null),
           hold_age_days:(.hold_age_days // null),
           captain_actionable:(.captain_actionable // false),

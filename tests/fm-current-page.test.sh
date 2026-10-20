@@ -100,6 +100,8 @@ printf '# current-notes\n\nContext line for the captain.\n' > "$HOME_DIR/data/pa
 "$ROOT/bin/fm-captain-hold.sh" hold call-keyed --title "Keyed call" --reason "a call the keeper names only by key" >/dev/null
 "$ROOT/bin/fm-tasks-axi.sh" add call-old "Old call" --kind captain --body "Captain hold set: 2026-01-01T00:00:00Z" >/dev/null
 "$ROOT/bin/fm-tasks-axi.sh" hold call-old --reason "an old open question" --kind captain >/dev/null
+"$ROOT/bin/fm-tasks-axi.sh" add call-old-marked "Old credential call" --kind captain --body "Captain hold set: 2026-01-01T00:00:00Z; credential=yes" >/dev/null
+"$ROOT/bin/fm-tasks-axi.sh" hold call-old-marked --reason "an old login question" --kind captain >/dev/null
 
 "$ROOT/bin/fm-current-page.sh" >/dev/null
 page=$(cat "$PAGE")
@@ -112,6 +114,7 @@ assert_not_contains "$page" 'data/x' "home data paths stay off the page"
 assert_not_contains "$needs" 'choose red or blue' "raw status lines never fill Needs you"
 assert_not_contains "$needs" 'call-old' "a call older than the window stays out of Needs you"
 assert_contains "$(page_part held-older)" 'task=call-old' "an older call is held in its own pane group"
+assert_contains "$(page_part held-older)" 'task=call-old-marked' "a marked hold-set stamp still dates the call by its hold time"
 assert_contains "$(page_part held-deferred)" 'task=call-later' "a deferred call is held separately"
 pass "without a curated file, Needs you holds only calls Main just opened"
 

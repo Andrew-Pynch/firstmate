@@ -55,7 +55,7 @@ cp "$ROOT/.pi/extensions/lib/fm-async-exec.ts" "$LAB/.pi/extensions/lib/"
 cat > "$LAB/bin/fm-queue-line.sh" <<'SH'
 #!/usr/bin/env bash
 case "${FM_LINE_MODE:?}" in
-  waiting) printf '⧗ waiting on you (3): top-row - Top Row (+2 more)\n' ;;
+  waiting) printf '⧗ 3 decisions, top: [merge] top-row - Top Row\n' ;;
   empty) exit 0 ;;
   *) exit 1 ;;
 esac
@@ -78,7 +78,7 @@ widget_frame() {  # <mode>
     head -1
 }
 
-expected='⧗ waiting on you (3): top-row - Top Row (+2 more)'
+expected='⧗ 3 decisions, top: [merge] top-row - Top Row'
 pinned=$(widget_frame waiting)
 [ -n "$pinned" ] || fail "omp $OMP_VERSION emitted no setWidget frame for firstmate-queue-line; the pinned line would never appear (stderr: $(tail -3 "$TMP_ROOT/err.waiting" 2>/dev/null | tr '\n' ' '))"
 [ "$(printf '%s' "$pinned" | jq -r '.widgetLines[0]')" = "$expected" ] ||

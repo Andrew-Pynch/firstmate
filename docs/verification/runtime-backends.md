@@ -3512,5 +3512,27 @@ Facts that run established:
 - the extension runs its line command at session start with no model turn, which is what keeps this guard token-free.
 
 The pinned text in the guard is a stub constant, because the line's own content, ordering and counting are proved against fixtures by `tests/fm-queue-line.test.sh`.
-A live read on the same date printed `⧗ waiting on you (39): if97-hands-on-teaching - Hands-on IF97 and DeepStar water wrapper… (+38 more)` while `bin/fm-queue.sh --json` reported `counts.by_state["waiting on you"] = 39`.
-That read cost 14.5s wall and about 1.5 cores against a 154-row queue, which is why the extension refreshes asynchronously behind a 60s floor and a 120s idle poll.
+A live read on 2026-10-13 against this home's real fleet printed `⧗ 190 decisions, top: [secret] agent-hosted-e2e-password - Secure hosted password sign-in for the e…` while `bin/fm-queue.sh --json` reported `counts.decisions = 190` from 201 rows waiting on the captain.
+That read cost 96s wall, against 14.5s and about 1.5 cores on 2026-09-15 for a 154-row queue, which is why the extension refreshes asynchronously behind a 60s floor and a 120s idle poll.
+The guard passed unchanged on omp 18.9.1 on 2026-10-13 and on omp 18.11.0 on 2026-10-19.
+
+### 2026-10-13 `/bearings` command seam
+
+Verified with omp 18.9.1 on Linux (Arch, kernel 7.2.3, x86_64) through rpc stdio mode, with the isolated `PI_CODING_AGENT_DIR` the line guard uses.
+`bin/fm-test-run.sh tests/fm-brief-daily-live-e2e.test.sh` refreshes this evidence; that guard also runs by default wherever omp is installed.
+The guard passed unchanged on omp 18.11.0 on 2026-10-19.
+
+Observed output:
+
+```text
+ok - omp omp/18.9.1: /bearings renders the daily brief in the transcript
+ok - omp omp/18.9.1: /bearings settles without a model turn
+```
+
+Facts that run established:
+
+- a home's `.omp/extensions/fm-primary-bearings.ts` is auto-discovered from the launch directory and its `registerCommand("bearings")` claims the bare `/bearings` slash command, because omp names skills `/skill:<name>`;
+- `sendMessage({customType, content, display: true}, {triggerTurn: false})` from the command handler reaches the surface as a `message_start`/`message_end` pair with `role: "custom"` and the brief verbatim in `content`;
+- the prompt settles with `prompt_result.agentInvoked = false`, so printing the brief makes no model call.
+
+The brief in the guard is a stub constant, because its content, ranking and counting are proved against fixtures by `tests/fm-brief-daily.test.sh`.

@@ -21,7 +21,10 @@ Board answers are acted on later under the normal authority rules; this skill's 
 
 ## Invocation modes
 
-- Plain `/bearings` gathers a fresh bounded snapshot and renders the four-section chat digest without creating, deleting, reading, or replacing `data/status-report-<YYYY-MM-DD>.md`.
+- On an omp primary, a bare `/bearings` never reaches this skill: `.omp/extensions/fm-primary-bearings.ts` prints the deterministic daily brief from `bin/fm-brief-daily.sh` (whose header owns its content) with no model turn, and `/bearings` with any option is handed to this skill as the request text.
+  When you are asked for that brief on any harness, run `bin/fm-brief-daily.sh` and relay its screen verbatim.
+- The deterministic no-model daily brief is scoped to omp primaries; non-omp primaries keep the bearings skill.
+- On every other harness, plain `/bearings` gathers a fresh bounded snapshot and renders the four-section chat digest without creating, deleting, reading, or replacing `data/status-report-<YYYY-MM-DD>.md`.
 - `/bearings file` gathers a fresh bounded snapshot, replaces today's `data/status-report-<YYYY-MM-DD>.md` from scratch, and renders the four-section chat digest with a link or path to that report.
 - `/bearings lavish` gathers a fresh bounded snapshot, rebuilds and arms the interactive fleet board (the "Lavish board mode" section below), and renders the four-section chat digest with the board's URL inside it.
 - Treat `file` and `lavish` only as explicit invocation options in the slash command.

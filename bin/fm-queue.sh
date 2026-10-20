@@ -43,14 +43,31 @@
 # maintenance is a separate group labelled as not the captain request.
 #
 # States, and nothing else: `queued`, `in flight`, `blocked`, `done`,
-# `waiting on you`, `deferred`, `tracking`, `unknown`.
+# `waiting on you`, `answered, close pending`, `expired`, `deferred`, `aged`,
+# `agent chore`, `tracking`, `unknown`.
 #   done            the queue row is recorded Done, or the worker reads done.
 #   waiting on you  a live captain hold (hold_kind=captain) the captain has not
-#                   answered that is undated (no hold-until after today) and
-#                   carries a question, except one bucketed `blocked`, whose
-#                   concrete wait is the unresolved blocker.
+#                   answered that is undated (or dated today) and carries a
+#                   question, except one bucketed `blocked`, whose concrete wait
+#                   is the unresolved blocker.
+#   answered, close pending
+#                   a live captain hold carrying the durable resolution block
+#                   from an interrupted close. It is cleanup, not a decision.
+#   expired         the same captain hold, deferred by the captain to a date that
+#                   has passed without an answer. It is shown once, on the daily
+#                   brief's one "expired, still open?" line, and otherwise stays
+#                   out of the decisions: re-hold it with a new date or answer it.
 #   deferred        the same captain hold, deferred by the captain to a date
 #                   after today; it rejoins `waiting on you` on that date.
+#   aged            an undated captain hold whose structured snapshot bucket is
+#                   aged. It remains visible but outside the open decisions.
+#   agent chore     the same captain hold whose own words say it is routine fleet
+#                   housekeeping (cleanup after a merged PR, a stale state/data
+#                   or task record, an empty fleet copy). It is firstmate's to
+#                   do, never a captain call.
+#                   bin/fm-classify-lib.sh's captain-call text classes own that
+#                   vocabulary; a cleanup that refused over unlanded work is NOT
+#                   a chore, because only the captain may approve discarding it.
 #   tracking        the same captain hold with no question behind it: an empty
 #                   hold reason, or a reason that marks the row as tracking or
 #                   routing only (contains "tracking", or starts "routed to").
@@ -62,6 +79,33 @@
 #                   that declared itself blocked, or a non-captain hold.
 #   in flight       a live worker (working, parked at a pipeline gate, or paused).
 #   queued          recorded and not yet dispatched.
+#
+# Decisions. The model also carries `decisions`: the open-decisions set, the one
+# list every captain-facing count reads (bin/fm-queue-line.sh, bin/fm-brief-daily.sh).
+# It is built from the rows reading `waiting on you` and nothing else, so an
+# answered, expired, deferred, aged, tracking or chore row can never be counted in it.
+#   - One decision per explicit call identity, not per row or matching prose.
+#     A key is a row id qualified by the home that holds it (`main:<id>`,
+#     `<mate>:<id>`), so two homes reusing one id never share a decision; a parent
+#     mirror `captain-hold-<id>-<n>` takes the key of the secondmate call it mirrors
+#     only when exactly one mate row published that parent key; otherwise the
+#     mirror keeps its own main-home identity. Every cleanup that refused over
+#     unlanded work and was held with `bin/fm-captain-hold.sh hold --discard`
+#     (class `discard`, from that marker alone, never from the wording) groups
+#     under ONE decision, key `discard-approval`, so the captain rules once on
+#     all of those copies.
+#     A decision carries its key, member rows and their count.
+#   - An answered call leaves: before grouping, a waiting row drops out when a
+#     row of the same key reads done and carries a recorded answer
+#     (bin/fm-captain-hold.sh's resolution block), so a mirror left open after
+#     the call was answered and its work finished is not asked again, and its
+#     answer never hides another call that shares its words.
+#   - Every decision carries the exact command that answers it, with FM_HOME set:
+#     `answer <key> --group --members <list>` for a decision of several rows (the
+#     list is the home-qualified members it showed), `answer <row-id>` for one row
+#     this home holds, or bin/fm-send.sh (with the parent decision key when the
+#     secondmate published one, and the row id in the text) for one secondmate call.
+# `counts.hygiene` states how many rows each of those rules took out.
 #
 # No silent caps. Every list is printed whole: no row is dropped, no bucket is
 # bounded, and no row text is clipped. Where a producer upstream cut text - a
@@ -80,15 +124,26 @@
 # Flags:
 #   (default)  the human view
 #   --json     the same model as JSON (schema fm-queue.v1) for other surfaces
-#   answer <row-id> [--close done|release] [--text <answer>]
-#              record the captain's answer for one row. A row reading
-#              `waiting on you` closes through bin/fm-captain-hold.sh first; the
-#              answer is then handed off through the home's durable inbox
-#              (bin/fm-inbox.sh note) and exactly one wake is armed. The answer
-#              text comes from --text, or from stdin when --text is absent.
+#   answer <row-id> [--group --members <list>] [--close done|release] [--text <answer>]
+#              record the captain's answer for one row. A captain hold
+#              (`waiting on you`, `expired`, `deferred`, `aged`, `agent chore`, `tracking`)
+#              closes through bin/fm-captain-hold.sh first; the answer is then
+#              handed off through the home's durable inbox (bin/fm-inbox.sh note)
+#              and exactly one wake is armed. The answer text comes from --text,
+#              or from stdin when --text is absent.
+#              `--group` takes a decision key (or the id of a row this home holds
+#              in that decision) and applies the one answer to every row of the
+#              decision: each row this home holds closes through the captain-hold
+#              owner, and the single hand-off names every row, including the
+#              secondmate rows for firstmate to route to their homes.
+#              `--members` is required with it: the comma-separated,
+#              home-qualified member list (`main:<id>`, `<mate>:<id>`) the
+#              decision showed. When the decision now holds any other set, the
+#              answer is refused and nothing closes, so a row that joined later
+#              never inherits the answer.
 #              `--close release` lifts a held decision so its gated work resumes
 #              instead of closing the task; it is refused on a row that is not a
-#              captain hold (`waiting on you`, `deferred`, or `tracking`).
+#              captain hold.
 #   -h,--help  usage
 #
 # Environment:
@@ -96,7 +151,7 @@
 #                     and the home the answer is handed off in.
 #   FM_QUEUE_TIMEOUT  hard bound in seconds on the snapshot read (default 300).
 #   FM_QUEUE_TODAY    today as YYYY-MM-DD (default: this host's date); a hold
-#                     dated after it reads `deferred`.
+#                     dated after it reads `deferred`, one dated before it `expired`.
 #   FM_QUEUE_SNAPSHOT when set to a readable path, read the snapshot JSON from
 #                     that file instead of invoking the canonical snapshot, so a
 #                     fixture can drive the renderer.
@@ -107,6 +162,9 @@ SNAPSHOT="$SCRIPT_DIR/fm-fleet-snapshot.sh"
 # shellcheck source=bin/fm-timeout-lib.sh
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/fm-timeout-lib.sh"
+# shellcheck source=bin/fm-classify-lib.sh
+# shellcheck disable=SC1091
+. "$SCRIPT_DIR/fm-classify-lib.sh"
 
 FM_QUEUE_TIMEOUT=${FM_QUEUE_TIMEOUT:-300}
 case "$FM_QUEUE_TIMEOUT" in ''|*[!0-9]*|0) FM_QUEUE_TIMEOUT=300 ;; esac
@@ -115,30 +173,38 @@ FM_QUEUE_TODAY=${FM_QUEUE_TODAY:-$(date +%F)}
 usage() {
   cat <<'EOF'
 usage: fm-queue.sh [--json]
-       fm-queue.sh answer <row-id> [--close done|release] [--text <answer>]
+       fm-queue.sh answer <row-id> [--group --members <list>] [--close done|release] [--text <answer>]
 
 The queue: things the captain asked for, grouped by project, plus fleet
 maintenance grouped apart. The listing is read-only; it starts nothing.
 
   --json     print the same model as JSON (schema fm-queue.v1)
-  answer     record the captain's answer for one row. A row reading
-             "waiting on you" closes through bin/fm-captain-hold.sh first; the
-             answer is then handed off through the home's durable inbox and one
-             wake is armed. The answer text comes from --text, or from stdin
-             when --text is absent. This command starts no worker: whichever
-             session holds the home drains the hand-off and acts.
+  answer     record the captain's answer for one row. A captain hold closes
+             through bin/fm-captain-hold.sh first; the answer is then handed
+             off through the home's durable inbox and one wake is armed. The
+             answer text comes from --text, or from stdin when --text is absent.
+             --group takes a decision key (or a row of it this home holds)
+             and applies the one answer to every row of that decision; it
+             needs --members, the member list the decision showed, and is
+             refused when the decision has changed since. This
+             command starts no worker: whichever session holds
+             the home drains the hand-off and acts.
   -h,--help  this help
 
 Every row carries its state (queued, in flight, blocked, done, waiting on you,
-deferred, tracking,
+answered, close pending, expired, deferred, aged, agent chore, tracking,
 unknown), its wave, its tickets, its authoritative source, freshness, owner and
 next action, plus its full text. Nothing is clipped and no bucket is capped.
+The decisions list groups the rows waiting on you into one entry per call, each
+with the command that answers it.
 EOF
 }
 
 MODE=human
 ROW_ID=""
 CLOSE_MODE="done"
+GROUP=0
+MEMBERS=""
 ANSWER_TEXT=""
 ANSWER_TEXT_SET=0
 case "${1:-}" in
@@ -152,6 +218,12 @@ case "${1:-}" in
     shift
     while [ "$#" -gt 0 ]; do
       case "$1" in
+        --group) GROUP=1 ;;
+        --members)
+          shift
+          MEMBERS=${1:-}
+          [ -n "$MEMBERS" ] || { usage >&2; exit 2; }
+          ;;
         --close)
           shift
           CLOSE_MODE=${1:-}
@@ -171,6 +243,13 @@ case "${1:-}" in
       done|release) ;;
       *) echo "fm-queue: --close must be done or release" >&2; exit 2 ;;
     esac
+    # A group answer is bound to the members the captain was shown, so a row
+    # that joined the decision later can never inherit his answer.
+    if [ "$GROUP" = 1 ] && [ -z "$MEMBERS" ]; then
+      echo "fm-queue: --group needs --members, the member list the decision showed (bin/fm-queue.sh prints it in the answer command)" >&2
+      exit 2
+    fi
+    [ "$GROUP" = 1 ] || [ -z "$MEMBERS" ] || { echo "fm-queue: --members applies only with --group" >&2; exit 2; }
     ;;
   -h|--help) usage; exit 0 ;;
   *) usage >&2; exit 2 ;;
@@ -207,29 +286,122 @@ esac
 # printed from it: the human view, the JSON form, or (for `answer`) the same JSON
 # the model already carries. The answer path reuses this exact model, so it acts
 # on the state the listing would print, never on a second classification.
+# The captain-call text patterns come from their one owner, bin/fm-classify-lib.sh,
+# so this model classifies a call exactly as that library's functions do.
+call_pattern() {  # <name>
+  captain_call_patterns | while IFS=$'\t' read -r name pattern; do
+    [ "$name" = "$1" ] && printf '%s' "$pattern"
+  done
+}
+RE_CHORE=$(call_pattern chore)
+RE_DATA_GUARD=$(call_pattern data_guard)
+RE_MERGE=$(call_pattern merge)
+RE_MONEY=$(call_pattern money)
+RE_TRIVIA=$(call_pattern trivia)
+
 render_model() {  # <mode: human|json|answer>
-  printf '%s' "$SNAP" | jq -r --arg mode "$1" --arg today "$FM_QUEUE_TODAY" '
+  printf '%s' "$SNAP" | jq -r --arg mode "$1" --arg today "$FM_QUEUE_TODAY" \
+    --arg re_chore "$RE_CHORE" --arg re_data_guard "$RE_DATA_GUARD" \
+    --arg re_merge "$RE_MERGE" \
+    --arg re_money "$RE_MONEY" --arg re_trivia "$RE_TRIVIA" '
 # ---------------------------------------------------------------------------
 # shape helpers
 # ---------------------------------------------------------------------------
 def dash: if . == null or . == "" then "-" else tostring end;
-def state_rank: {"waiting on you":0,"unknown":1,"blocked":2,"in flight":3,"queued":4,"deferred":5,"tracking":6,"done":7}[.] // 9;
-# A captain hold asks the captain now only when it is undated (or its date has
-# arrived) and carries a question; the other two stay visible under their own label.
+def state_rank: {"waiting on you":0,"answered, close pending":1,"unknown":2,"blocked":3,"in flight":4,"queued":5,"expired":6,"deferred":7,"aged":8,"agent chore":9,"tracking":10,"done":11}[.] // 12;
+# A held call read the way bin/fm-classify-lib.sh captain_call_class reads it:
+# title plus hold reason, lowercased, whitespace folded, first match wins. The
+# discard class comes only from the explicit marker bin/fm-captain-hold.sh hold
+# --discard records, never from the words.
+def call_text($r): ((($r.title // $r.name // "") + " " + ($r.hold_reason // "")) | ascii_downcase | gsub("\\s+"; " "));
+def call_class($r):
+  call_text($r) as $x
+  | if ($r.hold_discard // false) == true then "discard"
+    elif ($r.hold_credential // false) == true then "captain"
+    elif ($x | test($re_data_guard)) then "captain"
+    elif ($x | test($re_chore)) then "chore"
+    else "captain" end;
+# A captain hold asks the captain now only when it is undated (or dated today)
+# and carries a question; every other kind stays visible under its own label.
 def captain_state($r):
   ($r.hold_reason // "") as $why
-  | if ($why | test("^\\s*$")) or ($why | test("tracking"; "i")) or ($why | test("^\\s*routed to"; "i")) then "tracking"
+  | if ($r.hold_bucket // null) == "aged" and ($r.captain_actionable // false) == false then "aged"
+    elif ($why | test("^\\s*$")) or ($why | test("tracking"; "i")) or ($why | test("^\\s*routed to"; "i")) then "tracking"
     elif (($r.hold_until // "") != "" and $r.hold_until > $today) then "deferred"
+    elif call_class($r) == "chore" then "agent chore"
+    elif (($r.hold_until // "") != "" and $r.hold_until < $today) then "expired"
     else "waiting on you" end;
 def captain_why($r; $state):
   if $state == "deferred" then "deferred by you until \($r.hold_until)"
+  elif $state == "expired" then "deferred by you until \($r.hold_until); that date passed with no answer"
+  elif $state == "aged" then "held for you (aged hold\(if ($r.hold_age_days // null) != null then ", \($r.hold_age_days)d old" else "" end))"
+  elif $state == "agent chore" then "routine fleet housekeeping, not a call for you"
   elif $state == "tracking" then "tracking row; no question for you"
   else "held for you (\($r.hold_bucket // "live") hold\(if ($r.hold_age_days // null) != null then ", \($r.hold_age_days)d old" else "" end))" end;
 def captain_next($state):
   if $state == "deferred" then "none until the date; then answer the hold"
+  elif $state == "expired" then "you: answer it, or firstmate re-holds it with a new date"
+  elif $state == "aged" then "firstmate: reconcile or re-hold it before returning it to the captain"
+  elif $state == "agent chore" then "firstmate: do the cleanup and close the hold"
   elif $state == "tracking" then "firstmate: keep or retire the tracking row"
   else "you: answer the hold" end;
-def is_captain_state: . == "waiting on you" or . == "deferred" or . == "tracking";
+def is_captain_state: . == "waiting on you" or . == "expired" or . == "deferred" or . == "aged" or . == "agent chore" or . == "tracking";
+# A recorded answer is bin/fm-captain-hold.sh resolution block in the row body.
+def answer_recorded($r):
+  ((($r.body_lines // []) | join("\n")) + "\n" + ($r.raw // "")) as $b
+  | ($b | test("Resolution recorded by fm-(captain|decision)-hold\\.")) and ($b | test("(Captain decision|Reconciliation evidence):"));
+def newest_resolution_mode($r):
+  ((($r.body_lines // []) | join("\n")) + "\n" + ($r.raw // ""))
+  | split("Resolution mode: ")
+  | if length > 1 then (.[1] | split("\n") | .[0]) else null end;
+def close_pending($r):
+  answer_recorded($r) and (newest_resolution_mode($r) != "released");
+# The call a row names, qualified by the home that holds it, so two homes that
+# reuse one row id never share a decision. A parent mirror (a main-home row
+# `captain-hold-<id>-<n>`) names the call of a secondmate only when exactly one
+# mate row published that parent key; otherwise the mirror keeps its own key.
+def call_ident($r; $mate_index):
+  if $r.home != null then "\($r.home):\($r.id)"
+  elif ($r.id | startswith("captain-hold-")) then
+    ([ $mate_index[] | select(.pk == $r.id) ]) as $by_key
+    | if ($by_key | length) == 1 then "\($by_key[0].home):\($by_key[0].id)"
+      else "main:\($r.id)" end
+  else "main:\($r.id)" end;
+def completed_on($r):
+  ((($r.completion // null) | if type == "object" then .date else null end) // $r.merged // null);
+# Consequence text tier, below the explicit credential marker.
+def call_tier($x):
+  if ($x | test($re_merge)) then "merge"
+  elif ($x | test($re_money)) then "money"
+  elif ($x | test($re_trivia)) then "trivia"
+  else "product" end;
+def tier_rank: {"secret":0,"merge":1,"money":2,"product":3,"trivia":4}[.] // 5;
+# The parent-channel key a secondmate published for one of its held rows.
+def parent_key($tasks; $home; $id):
+  ([ $tasks[] | select(.id == $home) | (.hints.open_decisions // [])[]?.key // empty
+     | select(startswith("captain-hold-" + $id + "-") and (ltrimstr("captain-hold-" + $id + "-") | test("^[0-9]+$"))) ]
+   | last) // null;
+# Shell words for a printed command: a plain word as is, anything else quoted.
+def shword:
+  if test("^[A-Za-z0-9_./:@%+=,-]+$") then . else "\u0027" + gsub("\u0027"; "\u0027\\\u0027\u0027") + "\u0027" end;
+# The members of a decision as the captain saw them, home-qualified and sorted:
+# a group answer carries this list and is refused when the decision has changed.
+def member_list($d): [ $d.members[] | "\(.home // "main"):\(.id)" ] | sort | join(",");
+# The exact command that answers a decision, runnable from the code root of the
+# home that holds it: a group through this queue, bound to the members shown
+# (it closes the rows this home holds and routes secondmate rows in its one
+# hand-off), a single row this home holds through this queue, and a single
+# secondmate call through bin/fm-send.sh, which refuses to guess the home. The
+# text sent to a secondmate always names its row, because only that text crosses.
+def answer_command($d; $fm_home):
+  "FM_HOME=\($fm_home | shword) " as $env
+  | "\u0027<answer>\u0027" as $placeholder
+  | if $d.count > 1 then "\($env)bin/fm-queue.sh answer \($d.key | shword) --group --members \(member_list($d) | shword) --text \($placeholder)"
+    elif $d.home == null then "\($env)bin/fm-queue.sh answer \($d.id | shword) --text \($placeholder)"
+    elif $d.parent_key != null then "\($env)bin/fm-send.sh \($d.home | shword) --resolve-key \($d.parent_key | shword) \("\($d.id): <answer>" | shword)"
+    else "\($env)bin/fm-send.sh \($d.home | shword) \("\($d.id): <answer>" | shword)" end;
+def cleanup_command($r; $fm_home):
+  "FM_HOME=\($fm_home | shword) bin/fm-captain-hold.sh finish \($r.id | shword)";
 def is_cut: type == "string" and test("…$");
 
 # The canonical snapshot does not truncate this home own backlog rows, so a cut
@@ -333,6 +505,7 @@ def worker_state($t):
 def row_state($r; $t):
   ($t.current_state.state // null) as $cs
   | if $r.state == "done" or $cs == "done" then "done"
+    elif ($r.hold_kind // null) == "captain" and close_pending($r) then "answered, close pending"
     elif ($r.hold_kind // null) == "captain" and ($r.hold_bucket // "live") != "blocked" then captain_state($r)
     elif (($r.unresolved_blocker_ids // []) | length) > 0 then "blocked"
     elif ($r.hold_kind // null) != null then "blocked"
@@ -346,6 +519,7 @@ def why_of($r; $t; $state):
   ($t.current_state.state // null) as $cs
   | if $state == "done" and $r.state == "done" then "the queue row is recorded Done"
     elif $state == "done" then "the worker reads done (\($t.current_state.source))"
+    elif $state == "answered, close pending" then "the captain answer is durable, but its close did not finish"
     elif ($state | is_captain_state) then captain_why($r; $state)
     elif $state == "unknown" and $t == null
       then "the row is in flight with no worker record (unknown/no-worker-record)"
@@ -364,7 +538,8 @@ def why_of($r; $t; $state):
     else "-" end;
 
 def next_of($r; $state):
-  if ($state | is_captain_state) then captain_next($state)
+  if $state == "answered, close pending" then "firstmate: finish the recorded close"
+  elif ($state | is_captain_state) then captain_next($state)
   elif $state == "unknown" then "firstmate: reconcile the row against its own record before anything else"
   elif $state == "blocked" and (($r.unresolved_blocker_ids // []) | length) > 0
     then "firstmate: clear \((($r.unresolved_blocker_ids // []) | join(", ")))"
@@ -497,9 +672,15 @@ def maintenance_lines:
        worker:worker_state($t),
        links:($r.links // []),
        artifact:($r.pr_url // $r.report_path // null),
+       report_path:($r.report_path // null),
+       hold_credential:($r.hold_credential // false),
        project_token:row_project_token($r),
        text_complete:true,
        cut_fields:[],
+       home:null,
+       call_class:(if ($r.hold_kind // null) == "captain" then call_class($r) else null end),
+       answer_recorded:answer_recorded($r),
+       completed:completed_on($r),
        text:record_text($r)} ] as $main_rows
 
 # request rows owned by a registered secondmate home. That home ledger bounds its
@@ -555,8 +736,14 @@ def maintenance_lines:
        worker:null,
        links:[],
        artifact:($r.pr_url // $r.report_path // null),
+       report_path:($r.report_path // null),
+       hold_credential:($r.hold_credential // false),
        text_complete:(($cuts | length) == 0),
        cut_fields:$cuts,
+       home:$m.id,
+       call_class:(if ($r.hold_kind // null) == "captain" then call_class($r) else null end),
+       answer_recorded:false,
+       completed:completed_on($r),
        text:(if ($r.title // null) != null then $r.title else ($r.name // $r.id) end)} ] as $mate_rows
 
 # fleet maintenance: fleet-health facts, never the captain own request
@@ -612,6 +799,46 @@ def maintenance_lines:
           text:"\(.id): \(.invalidity // .reason // "structured home state unavailable")"} ]) as $maintenance
 
 | ($main_rows + $mate_rows) as $rows
+
+# The open-decisions set: one entry per call among the rows waiting on you.
+| ([ $mate_rows[] | {id, home, pk:parent_key($tasks; .home; .id)} ]) as $mate_index
+| ([ $rows[] | select(.state == "done" and .answer_recorded) | call_ident(.; $mate_index) ] | unique) as $answered_keys
+| ([ $rows[] | select(.state == "waiting on you")
+     | . + {ck:(if .call_class == "discard" then "discard-approval" else call_ident(.; $mate_index) end)} ]) as $waiting
+# An answered call leaves before grouping.
+| ([ $waiting[] | select(.ck != "discard-approval" and (.ck as $k | any($answered_keys[]; . == $k))) ] | length) as $answered_rows
+| ([ $waiting[] | select(.ck == "discard-approval" or (.ck as $k | any($answered_keys[]; . == $k) | not)) ]
+  ) as $open
+| ([ $rows[] | select(.state == "answered, close pending")
+     | {id, home, owner, project, command:cleanup_command(.; $snap.fm_home)} ]) as $cleanup
+| ([ $open | group_by(.ck)[]
+     | . as $members
+     | ($members | sort_by([(.home != null), .id]) | .[0]) as $rep
+     | ([ $members[].hold.age_days | select(. != null) ]) as $ages
+     | (if $rep.call_class == "discard" then "discard" else "captain" end) as $class
+     | (if $class == "discard"
+        then "Keep or discard the unlanded work in \($members | length) cop\(if ($members | length) == 1 then "y" else "ies" end) a cleanup refused (one answer covers every copy)"
+        else ($rep.text | split("\n") | .[0]) end) as $text
+     | (if any($members[]; .hold_credential == true) then "secret"
+        elif $class == "discard" then "merge"
+        else call_tier(([ $members[] | ((.text | split("\n") | .[0]) + " " + (.hold.reason // "")) ] | join(" ")) | ascii_downcase | gsub("\\s+"; " ")) end) as $tier
+     | {key:$members[0].ck,
+        id:$rep.id, home:$rep.home, owner:$rep.owner, project:$rep.project,
+        class:$class, tier:$tier,
+        count:($members | length),
+        members:[ $members[] | {id, home, owner, project} ],
+        age_days:($ages | max),
+        newest_age_days:($ages | min),
+        due_today:any($members[]; (.hold.until // "") == $today),
+        aged:all($members[]; .hold.bucket == "aged"),
+        text:$text,
+        reason:($rep.hold.reason // null),
+        parent_key:(if $rep.home == null then null else parent_key($tasks; $rep.home; $rep.id) end)}
+     | . + {answer:answer_command(.; $snap.fm_home)} ]
+   | sort_by([(.tier | tier_rank), (if .due_today then 0 else 1 end), (if .aged then 1 else 0 end),
+              (.newest_age_days // 1e9), (- .count), .key])
+   | to_entries | map(.value + {rank:(.key + 1)})) as $decisions
+| (([ $decisions[].count ] | add) // 0) as $kept_rows
 | ([ $rows[] | select((.cut_fields | length) > 0) ] | length) as $cut_rows
 | ([ $rows[] | select(.state == "done") ] | length) as $done_rows
 | ([ $rows[] | select(.project_status == "raw") ] | length) as $raw_project_rows_total
@@ -636,7 +863,17 @@ def maintenance_lines:
            maintenance_by_class:([$maintenance[].class] | group_by(.) | map({key:.[0], value:length}) | from_entries),
            task_records:($tasks | length),
            endpoints_gone:([ $tasks[] | select(.endpoint.exists == false) ] | length),
-           endpoints_present:([ $tasks[] | select(.endpoint.exists == true) ] | length)},
+           endpoints_present:([ $tasks[] | select(.endpoint.exists == true) ] | length),
+           decisions:($decisions | length),
+           hygiene:{waiting_rows:($waiting | length),
+                    grouped_rows:($kept_rows - ($decisions | length)),
+                    answered_rows:$answered_rows,
+                    answered_close_pending:($cleanup | length),
+                    expired_rows:([ $rows[] | select(.state == "expired") ] | length),
+                    aged_rows:([ $rows[] | select(.state == "aged") ] | length),
+                    chore_rows:([ $rows[] | select(.state == "agent chore") ] | length)}},
+   decisions:$decisions,
+   cleanup:$cleanup,
    projects:[ $ordered_projects[] as $p
               | {name:$p,
                  project_status:([ $rows[] | select(.project == $p) | .project_status ] | .[0]),
@@ -677,10 +914,18 @@ def maintenance_lines:
       "workers    \(.counts.endpoints_present) endpoint(s) present, \(.counts.endpoints_gone) gone, of \(.counts.task_records) task record(s); a dead worker with a queue row reads unknown on that row",
       ( .bounds[] | "bounds     \(.surface): \(.detail)" ),
       "",
+      "== decisions - \(.counts.decisions) open from \(.counts.hygiene.waiting_rows) row(s) waiting on you (\(.counts.hygiene.grouped_rows) grouped under the call of another row, \(.counts.hygiene.answered_rows) already answered); \(.counts.hygiene.expired_rows) expired, \(.counts.hygiene.aged_rows) aged, and \(.counts.hygiene.chore_rows) agent chore(s) kept apart",
+      ( .decisions[] | "  \(.rank). [\(.tier)] \(.id)\(if .count > 1 then " (x\(.count): \([.members[].id] | join(", ")))" else "" end) - \(.text)", "     answer: \(.answer)" ),
+      "",
+      (if (.cleanup | length) == 0 then empty
+       else "== needs cleanup - \(.cleanup | length) answered close(s) pending ==",
+            (.cleanup[] | "  \(.id) - \(.command)"), "" end),
       ( .projects[] as $p
-        | "== \($p.name)\(if $p.project_status == "raw" then "  (raw repo label - registry resolution unavailable in this build)" else "" end) - \($p.rows | length) row(s), \(([$p.rows[].wave.layer] | map(select(. != null)) | unique | length)) wave(s)",
+        | ($p.rows | map(select(.state != "answered, close pending"))) as $shown
+        | select(($shown | length) > 0)
+        | "== \($p.name)\(if $p.project_status == "raw" then "  (raw repo label - registry resolution unavailable in this build)" else "" end) - \($shown | length) row(s), \(([$shown[].wave.layer] | map(select(. != null)) | unique | length)) wave(s)",
           "",
-          ( $p.rows[] | row_lines[] ) ),
+          ( $shown[] | row_lines[] ) ),
       "== fleet maintenance - not your request (\(.maintenance | length)) ==",
       "",
       ( .maintenance[] | maintenance_lines[] ) )
@@ -692,13 +937,61 @@ die() { printf 'fm-queue: %s\n' "$*" >&2; exit 1; }
 
 # ---------------------------------------------------------------- answer
 
+# Validate one row this home holds and, when it is a captain hold, record and
+# close the captain's answer through the captain-hold owner. Prints
+# `<state>\t<project>\t<keyed>` for the hand-off.
+close_row() {  # <model-json> <home> <row-id>
+  local model=$1 home=$2 id=$3 row owner state project keyed=0 dec
+  # This home's own row first: a secondmate may reuse the same id, and only a row
+  # this home holds can be answered here.
+  row=$(printf '%s' "$model" | jq -c --arg id "$id" '([.projects[].rows[] | select(.id == $id)] | (map(select(.home == null)) + .) | .[0]) // empty')
+  if [ -z "$row" ]; then
+    if printf '%s' "$model" | jq -e --arg id "$id" '[.maintenance[].id] | index($id) != null' >/dev/null 2>&1; then
+      die "row $id is a fleet-maintenance record, not something the captain asked for; there is no answer to record"
+    fi
+    die "no queue row with id $id"
+  fi
+  owner=$(printf '%s' "$row" | jq -r '.owner')
+  state=$(printf '%s' "$row" | jq -r '.state')
+  project=$(printf '%s' "$row" | jq -r '.project')
+
+  [ "$owner" = "(main)" ] \
+    || die "row $id belongs to $owner; answer it in that home, not this one"
+  [ "$state" != "done" ] \
+    || die "row $id already reads done; there is nothing left to answer"
+  case "$state" in
+    "waiting on you"|expired|deferred|aged|"agent chore"|tracking) keyed=1 ;;
+    *) [ "$CLOSE_MODE" != release ] \
+         || die "row $id is not a captain hold; --close release applies only to a held decision" ;;
+  esac
+
+  if [ "$keyed" = 1 ]; then
+    dec=$(umask 077; mktemp "${TMPDIR:-/tmp}/fm-queue-answer.XXXXXX") \
+      || die "cannot stage the captain's answer for the captain-hold owner"
+    if ! printf '%s\n' "$ANSWER_TEXT" > "$dec"; then
+      rm -f -- "$dec"
+      die "cannot stage the captain's answer for the captain-hold owner"
+    fi
+    if [ "$CLOSE_MODE" = release ]; then
+      FM_HOME="$home" "$SCRIPT_DIR/fm-captain-hold.sh" answer "$id" --release --decision-file "$dec" >&2 \
+        || { rm -f -- "$dec"; die "the captain-hold owner refused the answer for $id; nothing was handed off"; }
+    else
+      FM_HOME="$home" "$SCRIPT_DIR/fm-captain-hold.sh" answer "$id" --decision-file "$dec" >&2 \
+        || { rm -f -- "$dec"; die "the captain-hold owner refused the answer for $id; nothing was handed off"; }
+    fi
+    rm -f -- "$dec"
+  fi
+  printf '%s\t%s\t%s\n' "$state" "$project" "$keyed"
+}
+
 # Hand the captain's answer off. Keyed decisions close through the captain-hold
 # owner at answer time so the row leaves `waiting on you` immediately, and every
 # accepted answer then rides the home's durable inbox so a session that is stopped
 # still handles it when it starts. This function starts nothing: it names no
-# backend, no spawner and no lock.
+# backend, no spawner and no lock. With --group, every row of the decision this
+# home holds closes the same way, and the one hand-off names the rest.
 cmd_answer() {  # <model-json>
-  local model=$1 home owner state project keyed=0 dec note_out row
+  local model=$1 home state project keyed note_out closed id mate closed_ids='' routed='' body tail failed=''
   home=$(printf '%s' "$model" | jq -r '.home // ""')
   [ -n "$home" ] || die "the snapshot names no home to hand the answer off in"
 
@@ -711,64 +1004,80 @@ cmd_answer() {  # <model-json>
   [ "$ANSWER_TEXT" != "reconcile" ] \
     || die "'reconcile' is not an answer; it asks firstmate to re-check the row's reality"
 
-  row=$(printf '%s' "$model" | jq -c --arg id "$ROW_ID" '([.projects[].rows[] | select(.id == $id)] | .[0]) // empty')
-  if [ -z "$row" ]; then
-    if printf '%s' "$model" | jq -e --arg id "$ROW_ID" '[.maintenance[].id] | index($id) != null' >/dev/null 2>&1; then
-      die "row $ROW_ID is a fleet-maintenance record, not something the captain asked for; there is no answer to record"
-    fi
-    die "no queue row with id $ROW_ID"
-  fi
-  owner=$(printf '%s' "$row" | jq -r '.owner')
-  state=$(printf '%s' "$row" | jq -r '.state')
-  project=$(printf '%s' "$row" | jq -r '.project')
-
-  [ "$owner" = "(main)" ] \
-    || die "row $ROW_ID belongs to $owner; answer it in that home, not this one"
-  [ "$state" != "done" ] \
-    || die "row $ROW_ID already reads done; there is nothing left to answer"
-  if [ "$state" = "waiting on you" ] || [ "$state" = deferred ] || [ "$state" = tracking ]; then
-    keyed=1
-  elif [ "$CLOSE_MODE" = release ]; then
-    die "row $ROW_ID is not a captain hold; --close release applies only to a held decision"
-  fi
-
-  if [ "$keyed" = 1 ]; then
-    dec=$(umask 077; mktemp "${TMPDIR:-/tmp}/fm-queue-answer.XXXXXX") \
-      || die "cannot stage the captain's answer for the captain-hold owner"
-    if ! printf '%s\n' "$ANSWER_TEXT" > "$dec"; then
-      rm -f -- "$dec"
-      die "cannot stage the captain's answer for the captain-hold owner"
-    fi
-    if [ "$CLOSE_MODE" = release ]; then
-      FM_HOME="$home" "$SCRIPT_DIR/fm-captain-hold.sh" answer "$ROW_ID" --release --decision-file "$dec" >&2 \
-        || { rm -f -- "$dec"; die "the captain-hold owner refused the answer for $ROW_ID; nothing was handed off"; }
+  if [ "$GROUP" = 0 ]; then
+    closed=$(close_row "$model" "$home" "$ROW_ID") || exit 1
+    IFS=$'\t' read -r state project keyed <<EOF
+$closed
+EOF
+    if [ "$keyed" = 1 ]; then
+      tail=$(printf 'the captain-hold decision for %s was recorded and closed through bin/fm-captain-hold.sh before this hand-off; act on what that decision unblocks.' "$ROW_ID")
     else
-      FM_HOME="$home" "$SCRIPT_DIR/fm-captain-hold.sh" answer "$ROW_ID" --decision-file "$dec" >&2 \
-        || { rm -f -- "$dec"; die "the captain-hold owner refused the answer for $ROW_ID; nothing was handed off"; }
+      tail=$(printf 'act on this answer for row %s: dispatch, approve, or retire it as the answer requires.' "$ROW_ID")
     fi
-    rm -f -- "$dec"
+    body=$(printf 'queue-answer row=%s project=%s keyed=%s close=%s\nstate when answered: %s\nthe captain answered:\n%s\n\n%s\n' \
+      "$ROW_ID" "$project" "$keyed" "$CLOSE_MODE" "$state" "$ANSWER_TEXT" "$tail")
+  else
+    local decision members closed_line routed_line
+    # A decision key names the decision; a bare row id names the one decision
+    # holding that row in this home, never a secondmate row that reuses the id.
+    decision=$(printf '%s' "$model" | jq -c --arg id "$ROW_ID" '
+      ([.decisions[] | select(.key == $id)] + [.decisions[] | select(any(.members[]; .id == $id and .home == null))]
+       | .[0]) // empty')
+    [ -n "$decision" ] || die "$ROW_ID is no open decision key and no row this home holds in one; answer it without --group"
+    local shown now
+    shown=$(printf '%s' "$MEMBERS" | tr ',' '\n' | LC_ALL=C sort | paste -sd, -)
+    now=$(printf '%s' "$decision" | jq -r '[.members[] | "\(.home // "main"):\(.id)"] | .[]' | LC_ALL=C sort | paste -sd, -)
+    [ "$shown" = "$now" ] \
+      || die "the decision now holds $now, not the $shown it showed; nothing was answered. Re-read the queue and answer the decision as it stands"
+    members=$(printf '%s' "$decision" | jq -r '.members[] | "\(.id)\t\(.home // "")"')
+    project=$(printf '%s' "$decision" | jq -r '.project')
+    while IFS=$'\t' read -r id mate; do
+      [ -n "$id" ] || continue
+      if [ -n "$mate" ]; then
+        routed="$routed$mate: $id"$'\n'
+        continue
+      fi
+      if ! closed=$(close_row "$model" "$home" "$id"); then
+        failed=$id
+        break
+      fi
+      closed_ids="$closed_ids${closed_ids:+,}$id"
+    done <<EOF
+$members
+EOF
+    if [ -z "$closed_ids" ] && { [ -n "$failed" ] || [ -z "$routed" ]; }; then
+      die "no row of that decision was answered${failed:+ ($failed was refused)}; nothing was handed off"
+    fi
+    state="waiting on you"
+    keyed=0
+    if [ -n "$closed_ids" ]; then
+      keyed=1
+      closed_line=$(printf 'the captain-hold decisions for %s were recorded and closed through bin/fm-captain-hold.sh before this hand-off; act on what that decision unblocks.' "$closed_ids")
+    else
+      closed_line='no row of this decision is held in this home; nothing was closed here.'
+    fi
+    routed_line=''
+    [ -z "$routed" ] || routed_line=$(printf 'route the same answer to these secondmate rows of the decision, each in its own home:\n%s' "$routed")
+    body=$(printf 'queue-answer row=%s project=%s keyed=%s close=%s rows=%s\nstate when answered: %s\nthe captain answered, once for every row of this decision:\n%s\n\n%s\n%s%s' \
+      "$ROW_ID" "$project" "$keyed" "$CLOSE_MODE" "${closed_ids:--}" "$state" "$ANSWER_TEXT" "$closed_line" "$routed_line" \
+      "$(if [ -n "$failed" ]; then printf '\nthe captain-hold owner refused %s, so it and the rows after it were NOT answered; reconcile them before acting.' "$failed"; fi)")
   fi
-
-  local body
-  body=$(printf 'queue-answer row=%s project=%s keyed=%s close=%s\nstate when answered: %s\nthe captain answered:\n%s\n\n%s\n' \
-    "$ROW_ID" "$project" "$keyed" "$CLOSE_MODE" "$state" "$ANSWER_TEXT" \
-    "$(if [ "$keyed" = 1 ]; then
-         printf 'the captain-hold decision for %s was recorded and closed through bin/fm-captain-hold.sh before this hand-off; act on what that decision unblocks.' "$ROW_ID"
-       else
-         printf 'act on this answer for row %s: dispatch, approve, or retire it as the answer requires.' "$ROW_ID"
-       fi)")
 
   note_out=$(printf '%s' "$body" | FM_HOME="$home" "$SCRIPT_DIR/fm-inbox.sh" note -) \
     || die "the hand-off for $ROW_ID failed: bin/fm-inbox.sh did not confirm the durable inbox record and its wake"
 
   printf 'answered row %s (%s)\n' "$ROW_ID" "$project"
   printf '  state     %s\n' "$state"
-  if [ "$keyed" = 1 ]; then
+  if [ "$GROUP" = 1 ]; then
+    printf '  decision  recorded and closed through the captain-hold owner for %s\n' "${closed_ids:-no row in this home}"
+    [ -z "$routed" ] || printf '  routed    named in the hand-off for firstmate: %s\n' "$(printf '%s' "$routed" | tr '\n' ' ')"
+  elif [ "$keyed" = 1 ]; then
     printf '  decision  recorded and closed through the captain-hold owner\n'
   fi
   printf '  handoff   durable inbox note queued in the home, one wake armed\n'
   printf '%s\n' "$note_out" | sed 's/^/            /'
   printf '  worker    none started by this command; whichever session holds the home drains the hand-off\n'
+  [ -z "$failed" ] || die "the captain-hold owner refused $failed; it and the rows after it were not answered (the hand-off says so)"
 }
 
 if [ "$MODE" = answer ] && [ "$ANSWER_TEXT_SET" = 0 ]; then

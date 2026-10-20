@@ -966,6 +966,8 @@ test_local_only_truly_unpushed_refuses() {
 
   expect_code 1 "$rc" "truly-unpushed: teardown should refuse"
   grep -q REFUSED "$case_dir/stderr" || fail "truly-unpushed: no REFUSED line in stderr"
+  grep -F "bin/fm-captain-hold.sh hold task-x1 --reason 'Teardown refused: task-x1 holds uncommitted or unlanded work; keep or discard?' --discard" "$case_dir/stderr" >/dev/null \
+    || fail "truly-unpushed: refusal did not print the source-owned discard hold command"
   pass "local-only worktree with truly unpushed work is refused (safety preserved)"
 }
 
@@ -1822,6 +1824,8 @@ test_dirty_worktree_refuses() {
   expect_code 1 "$rc" "dirty-wt: teardown should refuse a dirty worktree even when the committed work has landed"
   grep -q REFUSED "$case_dir/stderr" || fail "dirty-wt: no REFUSED line in stderr"
   grep -q "uncommitted changes" "$case_dir/stderr" || fail "dirty-wt: refusal did not cite uncommitted changes"
+  grep -F "bin/fm-captain-hold.sh hold task-x1 --reason 'Teardown refused: task-x1 holds uncommitted or unlanded work; keep or discard?' --discard" "$case_dir/stderr" >/dev/null \
+    || fail "dirty-wt: refusal did not print the source-owned discard hold command"
   pass "dirty worktree is refused even when its committed work has landed (dirty always wins)"
 }
 

@@ -1,7 +1,6 @@
 // Firstmate's always-visible line for omp (Oh My Pi): one conditional line
-// pinned above the editor naming the single most urgent thing waiting on the
-// captain, plus how many more are waiting. It disappears entirely when nothing
-// is waiting.
+// pinned above the editor naming the top-ranked decision waiting on the captain
+// and how many decisions are open. It disappears entirely when none is.
 //
 // This file is presentation only, deliberately. The text comes from
 // bin/fm-queue-line.sh, which renders it from bin/fm-queue.sh's own model, so

@@ -299,6 +299,26 @@ test_a_parked_ask_is_a_visible_queue_row() {
   pass "a parked ask is a visible queue row"
 }
 
+test_a_parked_credential_ask_keeps_secret_priority() {
+  local home snapshot model
+  home=$(make_home credential-priority)
+  FM_ASK_NOW=$OPENED_AT run_ask "$home" open login-rotation \
+    --question 'Authorize the production login rotation?' --agent worker-1 \
+    --wait "$WAIT" --credential >/dev/null || fail "credential ask open failed"
+  park_at "$home" "$(( OPENED_AT + WAIT ))" >/dev/null || fail "credential ask park failed"
+  snapshot="$TMP_ROOT/credential-priority-snap.json"
+  FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" \
+    FM_DATA_OVERRIDE="$home/data" FM_CONFIG_OVERRIDE="$home/config" \
+    "$ROOT/bin/fm-fleet-snapshot.sh" --json > "$snapshot" \
+    || fail "the canonical credential snapshot must build"
+  model=$(FM_HOME="$home" FM_QUEUE_SNAPSHOT="$snapshot" "$ROOT/bin/fm-queue.sh" --json) \
+    || fail "the queue model must render the credential ask"
+  assert_equals "secret" \
+    "$(printf '%s' "$model" | jq -r '.decisions[] | select(.id == "login-rotation") | .tier')" \
+    "a parked credential ask retains secret priority"
+  pass "a parked credential ask keeps secret priority"
+}
+
 test_open_records_the_question_the_agent_and_the_wait
 test_open_refuses_a_second_live_ask_on_the_same_key
 test_open_refuses_an_agent_this_home_does_not_record
@@ -311,3 +331,4 @@ test_resolve_keeps_what_a_parked_ask_became
 test_a_key_can_be_asked_again_once_it_resolves
 test_park_refuses_while_another_live_session_owns_the_home
 test_a_parked_ask_is_a_visible_queue_row
+test_a_parked_credential_ask_keeps_secret_priority

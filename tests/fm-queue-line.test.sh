@@ -10,7 +10,7 @@
 #
 # What the acceptance line requires, and where each requirement is proved:
 #   nothing waiting  -> no line at all                       test_line_absent_when_nothing_waits
-#   something waits  -> names the top item and the rest      test_names_top_and_remaining_count
+#   something waits  -> names the top decision and the count  test_names_top_decision_and_count
 #   changed answer   -> the line changes without a restart   test_extension_repins_on_a_turn_boundary
 #   counts agree     -> with the queue program               test_count_agrees_with_the_queue_program
 # shellcheck disable=SC2016 # The node programs below are single-quoted so the shell leaves ${...} to node.
@@ -73,14 +73,15 @@ write_fixture() {  # <home> <path> <records> [tasks]
      secondmate_guidance: {note: "none"}}' > "$path"
 }
 
-# The four waiting rows every case that needs "something is waiting" reuses:
-# one deferred to a date that has long passed, one waiting the longest, one
-# fresh, one with no recorded age at all.
+# The rows every case that needs "something is waiting" reuses: three ordinary
+# calls of different ages, one held with the explicit credential marker, one whose
+# deferral date has long passed, and rows that are not decisions at all.
 WAITING_RECORDS=$(
-  printf '%s\n' "$(row due-row "Due Row" captain live 2020-01-01 1 in_flight)" \
-    "$(row old-row "Old Row" captain live - 9 in_flight)" \
+  printf '%s\n' "$(row old-row "Old Row" captain live - 9 in_flight)" \
     "$(row fresh-row "Fresh Row" captain live - 0 in_flight)" \
     "$(row noage-row "No Age Row" captain live - - queued)" \
+    "$(row cred-row "Cred Row" captain live - 5 queued "Rotate the deploy credential." | jq -c '.hold_credential = true')" \
+    "$(row expired-row "Expired Row" captain live 2020-01-01 1 in_flight)" \
     "$(row working-row "Working Row" - - - - in_flight)" \
     "$(row blocked-hold-row "Blocked Hold Row" captain blocked - 30 in_flight)" \
     "$(row landed-row "Landed Row" - - - - "done")" | jq -s -c '.')
@@ -108,7 +109,7 @@ test_line_absent_when_nothing_waits() {
   pass "nothing waiting on the captain prints no line"
 }
 
-test_names_top_and_remaining_count() {
+test_names_top_decision_and_count() {
   local home snap out lines
   home=$TMP_ROOT/waits
   mkdir -p "$home"
@@ -117,31 +118,25 @@ test_names_top_and_remaining_count() {
   out=$(run_line "$snap")
   lines=$(printf '%s\n' "$out" | wc -l | tr -d ' ')
   assert_equals "1" "$lines" "the line is one line"
-  assert_contains "$out" "waiting on you (4)" "the count is the number of rows waiting on the captain"
-  assert_contains "$out" "due-row - Due Row" \
-    "a hold deferred to a date that has passed outranks every newer hold"
-  assert_contains "$out" "(+3 more)" "the rest of the queue is named as a count"
-  assert_not_contains "$out" "old-row" "only the top item is named, not the runners-up"
-  assert_not_contains "$out" "blocked-hold-row" \
-    "a captain hold the model buckets blocked is not waiting on him"
-  assert_not_contains "$out" "landed-row" "a done row is not counted"
-  pass "the line names the most urgent waiting item and the count of the rest"
+  assert_equals "⧗ 4 decisions, top: [secret] cred-row - Cred Row" "$out" \
+    "the line names the top-ranked decision and counts the open decisions"
+  assert_not_contains "$out" "expired-row" "a hold whose date has passed is not an open decision"
+  assert_not_contains "$out" "old-row" "only the top decision is named"
+  pass "the line names the top-ranked decision and the count of open decisions"
 }
 
-test_longest_wait_outranks_when_nothing_is_due() {
+test_distinct_calls_with_same_reason_count_separately() {
   local home snap out
-  home=$TMP_ROOT/age
+  home=$TMP_ROOT/twice
   mkdir -p "$home"
   snap=$home/snapshot.json
   write_fixture "$home" "$snap" "$(
-    printf '%s\n' "$(row fresh-row "Fresh Row" captain live - 0 in_flight)" \
-      "$(row old-row "Old Row" captain live - 9 in_flight)" \
-      "$(row noage-row "No Age Row" captain live - - queued)" | jq -s -c '.')"
+    printf '%s\n' "$(row pick-one "Pick One" captain live - 2 queued "Pick the API shape for the agent bridge now.")" \
+      "$(row pick-two "Pick Two" captain live - 2 queued "pick the API shape, for the agent bridge now")" \
+      "$(row other-row "Other Row" captain live - 1 queued)" | jq -s -c '.')"
   out=$(run_line "$snap")
-  assert_contains "$out" "old-row - Old Row" "with no due hold, the longest wait leads"
-  assert_contains "$out" "waiting on you (3)" "every waiting row is counted"
-  assert_contains "$out" "(+2 more)" "the remaining count follows the named item"
-  pass "with nothing due, the longest-waiting hold leads the line"
+  assert_contains "$out" "⧗ 3 decisions" "matching reason prose does not combine distinct rows"
+  pass "distinct calls with the same reason count separately"
 }
 
 test_dated_deferrals_and_tracking_rows_are_not_waiting() {
@@ -157,9 +152,8 @@ test_dated_deferrals_and_tracking_rows_are_not_waiting() {
       "$(row routed-row "Routed Row" captain live - 50 queued "routed to Timmy; waits on its lanes")" \
       "$(row empty-row "Empty Row" captain live - 50 queued "")" | jq -s -c '.')"
   out=$(run_line "$snap")
-  assert_contains "$out" "waiting on you (2)" \
-    "only the undated question and the hold whose date has arrived are waiting"
-  assert_contains "$out" "due-row" "a deferral whose date is today is due again"
+  assert_contains "$out" "⧗ 2 decisions" \
+    "only the undated question and the hold whose date is today are open decisions"
   assert_not_contains "$out" "later-row" "a hold deferred to a later date is not waiting"
   assert_not_contains "$out" "track-row" "a tracking row is not waiting"
   queue=$(FM_QUEUE_SNAPSHOT="$snap" FM_QUEUE_TODAY=2026-06-01 "$QUEUE" --json)
@@ -167,7 +161,7 @@ test_dated_deferrals_and_tracking_rows_are_not_waiting() {
     "the future-dated hold stays visible as deferred"
   assert_equals "empty-row,routed-row,track-row" "$(printf '%s' "$queue" | jq -r '[.projects[].rows[] | select(.state == "tracking") | .id] | sort | join(",")')" \
     "question-less holds stay visible as tracking"
-  pass "dated deferrals and tracking rows are labeled, not counted as waiting on you"
+  pass "dated deferrals and tracking rows are labeled, not counted as decisions"
 }
 
 test_count_agrees_with_the_queue_program() {
@@ -177,11 +171,11 @@ test_count_agrees_with_the_queue_program() {
   snap=$home/snapshot.json
   write_fixture "$home" "$snap" "$WAITING_RECORDS" "[$(dead_task dead-row)]"
   line=$(run_line "$snap")
-  printed=$(printf '%s' "$line" | sed -n 's/.*waiting on you (\([0-9]*\)).*/\1/p')
-  model_count=$(FM_QUEUE_SNAPSHOT="$snap" "$QUEUE" --json | jq -r '.counts.by_state["waiting on you"]')
-  [ -n "$printed" ] || fail "the line did not carry a waiting count: $line"
+  printed=$(printf '%s' "$line" | sed -n 's/^⧗ \([0-9]*\) decision.*/\1/p')
+  model_count=$(FM_QUEUE_SNAPSHOT="$snap" FM_QUEUE_TODAY=2026-06-01 "$QUEUE" --json | jq -r '.counts.decisions')
+  [ -n "$printed" ] || fail "the line did not carry a decision count: $line"
   assert_equals "$model_count" "$printed" \
-    "the line count must be the queue program's own waiting count"
+    "the line count must be the queue program's own decision count"
   assert_not_contains "$line" "dead-row" "a dead worker is maintenance, never the captain's request"
   pass "the pinned count and the queue program cannot disagree"
 }
@@ -193,13 +187,13 @@ test_line_is_bounded_and_keeps_its_counts() {
   snap=$home/snapshot.json
   long_title="Reconcile every accepted request against the artifact that proves it, then print the surviving rows in full, because the queue exists to be read all the way through"
   write_fixture "$home" "$snap" "$(
-    printf '%s\n' "$(row long-row "$long_title" captain live - 5 in_flight)" \
-      "$(row other-row "Other Row" captain live - 1 in_flight)" | jq -s -c '.')"
+    printf '%s\n' "$(row long-row "$long_title" captain live - 1 in_flight)" \
+      "$(row other-row "Other Row" captain live - 5 in_flight)" | jq -s -c '.')"
   width=60
   out=$(run_line "$snap" FM_QUEUE_LINE_WIDTH=$width)
   length=$(printf '%s' "$out" | jq -R 'length')
   [ "$length" -le "$width" ] || fail "the line is $length characters, over the $width bound: $out"
-  assert_contains "$out" "(+1 more)" "cutting the item text must never cut the count"
+  assert_contains "$out" "⧗ 2 decisions" "cutting the item text must never cut the count"
   assert_contains "$out" "long-row" "the item is named even when its text must be cut"
   assert_contains "$out" "…" "a cut item text is marked as cut"
   assert_not_contains "$out" "Other Row" "only the top item is named"
@@ -235,10 +229,10 @@ install_extension_fixture() {  # <repo>
 #!/usr/bin/env bash
 printf 'run\n' >> "${FM_LINE_LOG:?}"
 case "${FM_LINE_MODE:?}" in
-  waiting) printf '⧗ waiting on you (3): top-row - Top Row (+2 more)\n' ;;
+  waiting) printf '⧗ 3 decisions, top: [merge] top-row - Top Row\n' ;;
   empty) exit 0 ;;
   fail) exit 1 ;;
-  slow) sleep 0.4; printf '⧗ waiting on you (1): slow-row - Slow Row\n' ;;
+  slow) sleep 0.4; printf '⧗ 1 decision, top: [product] slow-row - Slow Row\n' ;;
 esac
 SH
   chmod +x "$repo/bin/fm-queue-line.sh"
@@ -289,7 +283,7 @@ const settled = async (done, ms = 5000) => {
   }
   const [key, content, options] = calls[0];
   if (key !== "firstmate-queue-line") fail(`unexpected widget key ${key}`);
-  if (content.length !== 1 || content[0] !== "⧗ waiting on you (3): top-row - Top Row (+2 more)") {
+  if (content.length !== 1 || content[0] !== "⧗ 3 decisions, top: [merge] top-row - Top Row") {
     fail(`unexpected widget content ${JSON.stringify(content)}`);
   }
   if (options?.placement !== "aboveEditor") fail(`unexpected placement ${JSON.stringify(options)}`);
@@ -395,7 +389,7 @@ test_extension_reads_once_per_interval_and_coalesces() {
   local repo out status
   repo=$(install_extension_fixture "$TMP_ROOT/ext-rate")
   out=$(FM_LINE_LOG="$TMP_ROOT/ext-rate/run.log" run_extension "$repo" '
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 const handlers = new Map();
 const pi = { on(e, h) { handlers.set(e, h); } };
@@ -413,6 +407,7 @@ process.env.FM_QUEUE_LINE_MIN_INTERVAL_MS = "1";
 const mod = (await import(pathToFileURL(process.env.EXT).href + "?rate=1")).default;
 mod(pi);
 const runs = () => {
+  if (!existsSync(process.env.FM_LINE_LOG)) return 0;
   const log = readFileSync(process.env.FM_LINE_LOG, "utf8").trim();
   return log === "" ? 0 : log.split("\n").length;
 };
@@ -454,8 +449,8 @@ if (handlers.size !== 0) throw new Error("a worker pane must register no handler
 }
 
 test_line_absent_when_nothing_waits
-test_names_top_and_remaining_count
-test_longest_wait_outranks_when_nothing_is_due
+test_names_top_decision_and_count
+test_distinct_calls_with_same_reason_count_separately
 test_dated_deferrals_and_tracking_rows_are_not_waiting
 test_count_agrees_with_the_queue_program
 test_line_is_bounded_and_keeps_its_counts

@@ -417,6 +417,94 @@ _fm_status_declared_wait_scan() {  # <resolve-verb> <legacy-captain-re>
   return 1
 }
 
+# --- captain-call text classes -----------------------------------------------
+#
+# ONE OWNER for what a held captain call's own words say it is. The structured
+# hold fields (kind, bucket, until, blockers) say WHETHER a call is waiting; these
+# patterns say WHAT it is, so the captain's queue, its pinned line and the daily
+# brief (bin/fm-queue.sh, bin/fm-queue-line.sh, bin/fm-brief-daily.sh) read one
+# vocabulary instead of three copies that drift. A consumer outside bash (the
+# queue's jq model) receives these exact patterns as arguments and applies them
+# the same way captain_call_class and captain_call_tier do below: the text is the
+# row title plus its hold reason, lowercased with every whitespace run folded to
+# one space, and the first pattern in the documented order that matches wins.
+# Every pattern is plain POSIX ERE that Oniguruma reads identically.
+#
+# Class, in this order:
+#   discard  never assigned from text. A cleanup that refused because a copy
+#            holds unlanded work is marked explicitly with
+#            `bin/fm-captain-hold.sh hold --discard`, and only that marker puts a
+#            row in the one keep-or-discard approval bin/fm-queue.sh groups (only
+#            the captain may approve discarding it, AGENTS.md hard rule 3).
+#   chore    routine fleet housekeeping with nothing to lose: cleanup after a
+#            merged PR, retiring a stale state/data or task record, an empty
+#            fleet copy. Firstmate does these itself; they are never a captain
+#            call.
+#   captain  everything else, and any text that names production, a database or
+#            customer data (the data guard), so a call about real data is never
+#            hidden as housekeeping.
+# Text tier, the consequence rank of an unmarked captain call, in this order
+# (first match wins); bin/fm-captain-hold.sh's explicit credential marker is the
+# only input that assigns the higher secret tier in bin/fm-queue.sh.
+#   merge    a merge, a PR, a release, a publish, a delete or discard: anything
+#            that lands or cannot be taken back.
+#   money    a purchase, a bill, a cost or a budget.
+#   trivia   an optional, cosmetic or few-minute item.
+#   product  everything else (the default, ranked between money and trivia).
+# Each FM_CLASSIFY_*_RE variable overrides its default for a home that needs
+# another vocabulary.
+FM_CLASSIFY_CHORE_RE_DEFAULT='merged[- ]pr cleanup|merged[^.]{0,40}(clean ?up|tear ?down)|(clean ?up|tear ?down)[^.]{0,40}merged|(retire|remove|clear|prune|drop|clean ?up) (the |a |an |every |all )?stale ((fleet|task) (record|records|row|rows|metadata|status line|status lines)|(state|data)/[^ ]+)|empty (fleet (copy|copies)|worktree|worktrees)|(fleet (copy|copies)|worktree|worktrees) (is|are) empty'
+FM_CLASSIFY_DATA_GUARD_RE_DEFAULT='production|(^|[^a-z])prod([^a-z]|$)|database|customer|user data'
+FM_CLASSIFY_TIER_MERGE_RE_DEFAULT='merge|pull request|(^|[^a-z])prs?([^a-z]|$)|release tag|irreversible|publish|destructive|discard|delete'
+FM_CLASSIFY_TIER_MONEY_RE_DEFAULT='\$[0-9]|[0-9] ?usd|usd ?[0-9]|cost|budget|buy|purchase|credits|invoice|pricing|spend'
+FM_CLASSIFY_TIER_TRIVIA_RE_DEFAULT='^optional|optional:|fyi|rename|display name|about [0-9]+ min|nice to have|no action needed'
+
+# The folded text every class and tier pattern is matched against.
+_fm_captain_call_text() {  # <text> <out-var>
+  local __fm_cc_text
+  __fm_cc_text=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -s '[:space:]' ' ')
+  printf -v "$2" '%s' "$__fm_cc_text"
+}
+
+# Print chore or captain for a held call's title plus hold reason. The discard
+# class comes only from the explicit hold marker, never from this text.
+captain_call_class() {  # <text>
+  local text
+  _fm_captain_call_text "$1" text
+  if [[ "$text" =~ ${FM_CLASSIFY_DATA_GUARD_RE:-$FM_CLASSIFY_DATA_GUARD_RE_DEFAULT} ]]; then
+    printf 'captain\n'
+  elif [[ "$text" =~ ${FM_CLASSIFY_CHORE_RE:-$FM_CLASSIFY_CHORE_RE_DEFAULT} ]]; then
+    printf 'chore\n'
+  else
+    printf 'captain\n'
+  fi
+}
+
+# Print merge, money, product or trivia for a held call's title plus hold reason.
+captain_call_tier() {  # <text>
+  local text
+  _fm_captain_call_text "$1" text
+  if [[ "$text" =~ ${FM_CLASSIFY_TIER_MERGE_RE:-$FM_CLASSIFY_TIER_MERGE_RE_DEFAULT} ]]; then
+    printf 'merge\n'
+  elif [[ "$text" =~ ${FM_CLASSIFY_TIER_MONEY_RE:-$FM_CLASSIFY_TIER_MONEY_RE_DEFAULT} ]]; then
+    printf 'money\n'
+  elif [[ "$text" =~ ${FM_CLASSIFY_TIER_TRIVIA_RE:-$FM_CLASSIFY_TIER_TRIVIA_RE_DEFAULT} ]]; then
+    printf 'trivia\n'
+  else
+    printf 'product\n'
+  fi
+}
+
+# Print every effective pattern as one `name<TAB>pattern` line, so a consumer
+# outside bash applies exactly what the two functions above apply.
+captain_call_patterns() {
+  printf 'chore\t%s\n' "${FM_CLASSIFY_CHORE_RE:-$FM_CLASSIFY_CHORE_RE_DEFAULT}"
+  printf 'data_guard\t%s\n' "${FM_CLASSIFY_DATA_GUARD_RE:-$FM_CLASSIFY_DATA_GUARD_RE_DEFAULT}"
+  printf 'merge\t%s\n' "${FM_CLASSIFY_TIER_MERGE_RE:-$FM_CLASSIFY_TIER_MERGE_RE_DEFAULT}"
+  printf 'money\t%s\n' "${FM_CLASSIFY_TIER_MONEY_RE:-$FM_CLASSIFY_TIER_MONEY_RE_DEFAULT}"
+  printf 'trivia\t%s\n' "${FM_CLASSIFY_TIER_TRIVIA_RE:-$FM_CLASSIFY_TIER_TRIVIA_RE_DEFAULT}"
+}
+
 # A condition-aware declared wait: a `paused:` line may say WHEN it expects to
 # clear with `until <YYYY-MM-DDTHH:MM[:SS]Z>` anywhere in its text (UTC only, so
 # no local-zone guess is ever recorded). Prints that time as epoch seconds so a

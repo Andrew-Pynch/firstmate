@@ -382,7 +382,7 @@ family_for_basename() {
     fm-omp-secondmate-live-e2e.test.sh|\
     fm-omp-worker-overlay-live-e2e.test.sh|\
     fm-pr-state-live-e2e.test.sh|\
-    fm-queue-line-live-e2e.test.sh|\
+    fm-queue-line-live-e2e.test.sh|fm-brief-daily-live-e2e.test.sh|\
     fm-sessionstart-hook-live-e2e.test.sh|fm-sessionstart-instruction-refresh-live-e2e.test.sh|\
     fm-supervision-host-live-e2e.test.sh|fm-supervision-host-attended-live-e2e.test.sh|\
     fm-host-mirror-live-e2e.test.sh|\

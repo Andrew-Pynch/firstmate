@@ -21,8 +21,9 @@
 #
 # Usage:
 #   fm-captain-hold.sh hold <task-id> --reason <reason> \
-#     [--title <title>] [--repo <repo>] [--origin <origin-id>] [--until YYYY-MM-DD]
+#     [--title <title>] [--repo <repo>] [--origin <origin-id>] [--until YYYY-MM-DD] [--credential] [--discard]
 #   fm-captain-hold.sh answer <task-id> --decision-file <path> [--release]
+#   fm-captain-hold.sh finish <task-id>
 #   fm-captain-hold.sh answers [<legacy-origin> | --any-origin] --source <provenance>   (keyed answers on stdin)
 #   fm-captain-hold.sh reconcile-requests --source-id <source-id> --source <provenance>   (task ids on stdin)
 #   fm-captain-hold.sh bind <source-id> [<legacy-origin> | --any-origin]
@@ -57,6 +58,12 @@
 # `--until` records the captain's own deferral date through `tasks-axi hold
 # --until`, so a "revisit later" answer is stored as a date instead of a live
 # card.
+# `--credential` records `credential=yes` on that machine-owned timestamp line
+# and prefixes the hold reason once with `Credential or login needed: `; the
+# queue assigns the secret tier only from the marker, never from prose.
+# `--discard` records `discard=yes` on the same line for a cleanup that refused
+# because a copy holds unlanded work: the queue groups every such row into the
+# one keep-or-discard approval from this marker alone, never from the wording.
 #
 # `answer` records the captain's exact words and resolves the call in the same
 # act. It requires a non-empty captain decision file of at most 8192 bytes and
@@ -75,6 +82,9 @@
 # answered captain call. A hold that expired by date (`--until` in the past) is
 # still answerable: the surviving hold annotations, not tasks-axi's live
 # `held:` bit, prove the captain owned it.
+# `finish` completes an interrupted task close from the newest durable answer
+# or reconciliation without asking for or recording the captain's words again;
+# a release requires an exact `answer --release` retry.
 #
 # ONE KEYED-ANSWER INTAKE, FED BY EVERY CHANNEL.
 # "A keyed answer resolves its matching captain-held task" is a single
@@ -781,30 +791,73 @@ resolve_entry() {  # <origin-or-empty> <entry>; prints "<id> <how>" or fails
   fail "no captain-held task $entry and no migrated hold for it in this home's configured backlog (data directory $DATA)"
 }
 
+# The hold-set stamp is one machine-owned first line:
+#   Captain hold set: <timestamp>[; credential=yes][; discard=yes]
+# The markers appear in that fixed order, so each has exactly one spelling.
 body_hold_set_timestamp() {  # <decoded-task-body>
   printf '%s\n' "$1" \
     | sed -n \
-      -e '1s/^Captain hold set: \([0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z\)$/\1/p' \
-      -e '1s/^Captain hold set: \([0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]\)$/\1/p' \
+      -e '1s/^Captain hold set: \([0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z\)\(; credential=yes\)\{0,1\}\(; discard=yes\)\{0,1\}$/\1/p' \
+      -e '1s/^Captain hold set: \([0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]\)\(; credential=yes\)\{0,1\}\(; discard=yes\)\{0,1\}$/\1/p' \
     | head -1
 }
 
-write_hold_set_stamp() {  # <task-id> <shown-body> <timestamp> <preserve-existing-0-or-1>
-  local id=$1 body=$2 hold_set=$3 preserve=$4 existing new_body tmp
+# Print the marker suffix of a valid stamp (empty when it carries none).
+body_hold_markers() {  # <decoded-task-body>
+  local body=$1 hold_set first_line
+  hold_set=$(body_hold_set_timestamp "$body")
+  [ -n "$hold_set" ] || return 0
+  first_line=${body%%$'\n'*}
+  printf '%s' "${first_line#"Captain hold set: $hold_set"}"
+}
+
+body_hold_is_credential() {  # <decoded-task-body>
+  case "$(body_hold_markers "$1")" in *'; credential=yes'*) return 0 ;; *) return 1 ;; esac
+}
+
+body_hold_is_discard() {  # <decoded-task-body>
+  case "$(body_hold_markers "$1")" in *'; discard=yes'*) return 0 ;; *) return 1 ;; esac
+}
+
+# The marker suffix for the given flags, in the stamp's fixed order.
+hold_marker_suffix() {  # <credential-0-or-1> <discard-0-or-1>
+  local suffix=''
+  [ "$1" != 1 ] || suffix="$suffix; credential=yes"
+  [ "$2" != 1 ] || suffix="$suffix; discard=yes"
+  printf '%s' "$suffix"
+}
+
+body_without_hold_prefix() {  # <decoded-task-body>
+  local body=$1 hold_set first_line
+  hold_set=$(body_hold_set_timestamp "$body")
+  if [ -n "$hold_set" ]; then
+    first_line=${body%%$'\n'*}
+    body=${body#"$first_line"}
+    body=${body#$'\n'}
+    body=${body#$'\n'}
+  fi
+  printf '%s' "$body"
+}
+
+write_hold_set_stamp() {  # <task-id> <shown-body> <timestamp> <preserve-existing-0-or-1> <credential-0-or-1> <discard-0-or-1>
+  local id=$1 body=$2 hold_set=$3 preserve=$4 credential=$5 discard=$6 existing existing_credential=0 existing_discard=0 new_body tmp
   body=$(decode_shown_value "$body") \
     || fail "could not decode the existing body for $id"
   existing=$(body_hold_set_timestamp "$body")
-  if [ "$preserve" = 1 ] && [ -n "$existing" ]; then
+  body_hold_is_credential "$body" && existing_credential=1
+  body_hold_is_discard "$body" && existing_discard=1
+  if [ "$preserve" = 1 ] && [ -n "$existing" ] \
+    && { [ "$credential" = 0 ] || [ "$existing_credential" = 1 ]; } \
+    && { [ "$discard" = 0 ] || [ "$existing_discard" = 1 ]; }; then
     return 0
   fi
-  if [ -n "$existing" ]; then
-    body=${body#"Captain hold set: $existing"}
-    case "$body" in
-      $'\n\n'*) body=${body#$'\n\n'} ;;
-      $'\n'*) body=${body#$'\n'} ;;
-    esac
+  if [ "$preserve" = 1 ]; then
+    credential=$((credential || existing_credential))
+    discard=$((discard || existing_discard))
   fi
-  new_body=$(printf 'Captain hold set: %s' "$hold_set")
+  body=$(body_without_hold_prefix "$body")
+  [ "$preserve" != 1 ] || hold_set=${existing:-$hold_set}
+  new_body=$(printf 'Captain hold set: %s%s' "$hold_set" "$(hold_marker_suffix "$credential" "$discard")")
   if [ -n "$body" ]; then
     new_body=$(printf '%s\n\n%s' "$new_body" "$body")
   fi
@@ -1052,7 +1105,7 @@ verify_entry_durable() {  # <origin-or-empty> <entry>; prints "<id> <how> <origi
 }
 
 command_hold() {
-  local id=${1:-} title='' reason='' repo='' origin='' until='' show state existing_title body='' hold_kind hold_set occurrence
+  local id=${1:-} title='' reason='' repo='' origin='' until='' credential=0 discard=0 show state existing_title body='' hold_kind hold_set occurrence
   local existing_hold_kind='' existing_held='' preserve_hold_set=0 stored_reason previous_origin='' hold_status=0
   [ "$#" -ge 1 ] || { usage >&2; exit 2; }
   shift
@@ -1063,14 +1116,14 @@ command_hold() {
       --repo) shift; repo=${1:-} ;;
       --origin) shift; origin=${1:-} ;;
       --until) shift; until=${1:-} ;;
+      --credential) credential=1 ;;
+      --discard) discard=1 ;;
       *) usage >&2; exit 2 ;;
     esac
     shift
   done
   validate_slug task-id "$id"
   [ -n "$reason" ] || fail "reason must not be empty"
-  # bin/fm-hold-reason-lib.sh owns the storage constraint and reversible encoding.
-  stored_reason=$(fm_hold_reason_encode "$reason") || fail "could not encode the hold reason"
   if [ -n "$origin" ]; then
     validate_slug origin-id "$origin"
   fi
@@ -1127,7 +1180,15 @@ command_hold() {
   # snapshot may see the harmless stamp by itself, but can never see a newly
   # held task without the timestamp that defines this hold lifecycle's age.
   task_show_or_fail "$id" "task $id disappeared before recording its hold-set stamp"
-  write_hold_set_stamp "$id" "$(show_field "$show" body)" "$hold_set" "$preserve_hold_set"
+  if [ "$credential" = 1 ] || body_hold_is_credential "$(show_field_value "$show" body)"; then
+    case "$reason" in
+      'Credential or login needed: '*) : ;;
+      *) reason="Credential or login needed: $reason" ;;
+    esac
+  fi
+  # bin/fm-hold-reason-lib.sh owns the storage constraint and reversible encoding.
+  stored_reason=$(fm_hold_reason_encode "$reason") || fail "could not encode the hold reason"
+  write_hold_set_stamp "$id" "$(show_field "$show" body)" "$hold_set" "$preserve_hold_set" "$credential" "$discard"
   task_show_or_fail "$id" "task $id disappeared while recording its hold-set stamp"
   [ -n "$(body_hold_set_timestamp "$(show_field_value "$show" body)")" ] \
     || fail "task $id did not retain its hold-set stamp"
@@ -1166,18 +1227,15 @@ command_hold() {
 # preserving the previous body below it and archiving the pristine original.
 # Successful closure removes the stamp to restore resolution-first ordering.
 write_resolution_record() {  # <task-id> <mode> <shown-body>
-  local id=$1 mode=$2 body=$3 new_body tmp hold_set
+  local id=$1 mode=$2 body=$3 new_body tmp hold_set markers
   new_body=$(resolution_block "$mode")
   body=$(decode_shown_value "$body") \
     || fail "could not decode the existing body for $id"
   hold_set=$(body_hold_set_timestamp "$body")
+  markers=$(body_hold_markers "$body")
   if [ -n "$hold_set" ]; then
-    body=${body#"Captain hold set: $hold_set"}
-    case "$body" in
-      $'\n\n'*) body=${body#$'\n\n'} ;;
-      $'\n'*) body=${body#$'\n'} ;;
-    esac
-    new_body=$(printf 'Captain hold set: %s\n\n%s' "$hold_set" "$new_body")
+    body=$(body_without_hold_prefix "$body")
+    new_body=$(printf 'Captain hold set: %s%s\n\n%s' "$hold_set" "$markers" "$new_body")
   fi
   if [ -n "$body" ]; then
     new_body=$(printf '%s\n\n%s' "$new_body" "$body")
@@ -1239,11 +1297,7 @@ remove_interrupted_answer_stamp() {  # <task-id>
     || fail "could not decode the closed body for $id"
   existing=$(body_hold_set_timestamp "$body")
   [ -n "$existing" ] || return 0
-  body=${body#"Captain hold set: $existing"}
-  case "$body" in
-    $'\n\n'*) body=${body#$'\n\n'} ;;
-    $'\n'*) body=${body#$'\n'} ;;
-  esac
+  body=$(body_without_hold_prefix "$body")
   tmp=$(umask 077; mktemp "${TMPDIR:-/tmp}/fm-captain-hold-normalize.XXXXXX") \
     || fail "cannot stage the closed body for $id"
   if ! printf '%s\n' "$body" > "$tmp" \
@@ -1367,6 +1421,44 @@ command_answer() {
     return 0
   fi
   fail "task $id is not held for the captain; hold it first or name the right task"
+}
+
+command_finish() {
+  local id=${1:-} show state hold_kind body recorded_mode occurrence outcome
+  [ "$#" -eq 1 ] || { usage >&2; exit 2; }
+  validate_slug task-id "$id"
+  acquire_task_control_lock "$id"
+  require_tasks_axi
+  task_show_or_fail "$id" "captain-held task $id is absent from this home's configured backlog (data directory $DATA)"
+  state=$(show_field "$show" state)
+  hold_kind=$(show_field_value "$show" hold_kind)
+  body=$(show_field "$show" body)
+  [ "$hold_kind" = captain ] || fail "task $id is not held for the captain"
+  body_has_resolution_record "$body" || fail "task $id carries no durable resolution to finish"
+  recorded_mode=$(recorded_resolution_mode "$body" || true)
+  occurrence=$(resolution_record_count "$body")
+  case "$recorded_mode" in
+    answered|routed) outcome=answered ;;
+    released) fail "task $id records a release from an earlier hold lifecycle; finish requires a current close" ;;
+    reconciled) outcome=reconciled ;;
+    *) fail "task $id records resolution mode ${recorded_mode:-unknown}; its close cannot be finished" ;;
+  esac
+  if [ "$state" = "done" ]; then
+    [ "$recorded_mode" != released ] \
+      || fail "task $id records a release but is already closed"
+  else
+    close_answered "$id" 0 || fail "could not finish closing captain-held task $id"
+  fi
+  remove_interrupted_answer_stamp "$id"
+  if [ "$recorded_mode" = reconciled ]; then
+    publish_parent_hold "$id" "$occurrence" resolved reconciled
+    [ "$PARENT_HOLD_PUBLISHED" = 1 ] \
+      || fail "could not publish the reconciled captain-held task $id to its parent"
+    reconcile_request_retire "$id"
+  else
+    publish_parent_resolution_then_retire "$id" "$occurrence" "$outcome"
+  fi
+  printf 'finished: %s\n' "$id"
 }
 
 # --- the one keyed-answer intake, and the source bindings that feed it --------
@@ -2228,6 +2320,7 @@ command_open() {  # <task-id> [--identity] [--distinguish-absent]
 case "${1:-}" in
   hold) shift; command_hold "$@" ;;
   answer) shift; command_answer "$@" ;;
+  finish) shift; command_finish "$@" ;;
   answers) shift; command_answers "$@" ;;
   reconcile-requests) shift; command_reconcile_requests "$@" ;;
   bind) shift; command_bind "$@" ;;

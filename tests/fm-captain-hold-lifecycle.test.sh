@@ -891,7 +891,7 @@ test_answer_records_and_closes() {
 # --release lifts the hold instead of closing, preserving the work item's own
 # body under the record; a re-held task later accepts a new answer.
 test_release_frees_held_work() {
-  local home show out snap
+  local home show out snap model snapshot_file
   home=$(make_home release-work)
   cat > "$home/widget-body.txt" <<'EOF'
 The widget plan body. Literal escape: \n. Unicode: café.
@@ -956,6 +956,21 @@ EOF
       and .hold_age_days == 0
       and .hold_bucket == "live"
   ' >/dev/null || fail "a new hold lifecycle reused historical timestamp or answer text: $snap"
+  snapshot_file="$home/reheld-snapshot.json"
+  printf '%s\n' "$snap" > "$snapshot_file"
+  model=$(FM_HOME="$home" FM_QUEUE_SNAPSHOT="$snapshot_file" \
+    FM_QUEUE_TODAY=2026-07-14 "$ROOT/bin/fm-queue.sh" --json) \
+    || fail "queue model failed after re-hold"
+  assert_equals "waiting on you" \
+    "$(printf '%s' "$model" | jq -r '.projects[].rows[] | select(.id == "sample-widget") | .state')" \
+    "the prior release leaves the new hold waiting on the captain"
+  if run_captain "$home" finish sample-widget > "$home/stale-finish.out" 2> "$home/stale-finish.err"; then
+    fail "finish accepted a release from the prior hold lifecycle"
+  fi
+  assert_contains "$(cat "$home/stale-finish.err")" "earlier hold lifecycle" \
+    "finish did not explain why the prior release is unsafe"
+  show=$(tasks_in "$home" show sample-widget --full)
+  assert_contains "$show" "held: yes" "a stale finish released the new captain call"
   printf 'Price it at nine dollars.\n' > "$home/price.txt"
   run_captain "$home" answer sample-widget --decision-file "$home/price.txt" --release >/dev/null \
     || fail "a re-held task refused a new answer"
@@ -1025,6 +1040,87 @@ EOF
   pass "captain holds become visible only after their hold-set timestamp is durable"
 }
 
+test_credential_marker_is_explicit_and_lifecycle_scoped() {
+  local home snap show
+  home=$(make_home credential-marker)
+  cat > "$home/data/backlog.md" <<'EOF'
+## In flight
+
+## Queued
+- [ ] sample-credential-call - Rotate the deploy login (repo: sample) (kind: ship) (since 2026-01-01)
+- [ ] sample-password-feature - Choose the password manager layout (repo: sample) (kind: ship) (since 2026-01-01)
+
+## Done
+EOF
+  FM_CAPTAIN_HOLD_NOW=2026-07-14T12:00:00Z run_captain "$home" hold sample-credential-call \
+    --reason "the captain must authorize the login change" --credential >/dev/null \
+    || fail "could not mark the credential hold"
+  FM_CAPTAIN_HOLD_NOW=2026-07-14T12:00:00Z run_captain "$home" hold sample-password-feature \
+    --reason "the captain must choose the feature layout" >/dev/null \
+    || fail "could not create the ordinary product hold"
+  run_captain "$home" hold sample-credential-call \
+    --reason "the replacement login reason" >/dev/null \
+    || fail "could not repeat the active credential hold"
+  snap=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
+    FM_CONFIG_OVERRIDE="$home/config" FM_PROJECTS_OVERRIDE="$home/projects" \
+    FM_SNAPSHOT_NOW=2026-07-14T12:00:00Z "$ROOT/bin/fm-fleet-snapshot.sh" --json) \
+    || fail "fleet snapshot failed for credential holds"
+  printf '%s' "$snap" | jq -e '
+    ([.backlog.records[] | select(.id == "sample-credential-call")][0].hold_credential == true)
+    and ([.backlog.records[] | select(.id == "sample-credential-call")][0].hold_reason == "Credential or login needed: the replacement login reason")
+    and ([.backlog.records[] | select(.id == "sample-password-feature")][0].hold_credential == false)
+  ' >/dev/null || fail "the snapshot did not preserve the credential marker and fixed reason prefix"
+  printf 'Rotate it now.\n' > "$home/credential-answer.txt"
+  run_captain "$home" answer sample-credential-call --decision-file "$home/credential-answer.txt" >/dev/null \
+    || fail "could not answer the credential hold"
+  show=$(tasks_in "$home" show sample-credential-call --full)
+  assert_not_contains "$show" "; credential=yes" \
+    "a closed credential hold retained its active marker"
+  pass "credential ranking is explicit and scoped to one hold lifecycle"
+}
+
+# The discard marker is explicit, survives a repeated hold, combines with the
+# credential marker in one fixed spelling, and leaves with the lifecycle.
+test_discard_marker_is_explicit_and_lifecycle_scoped() {
+  local home snap show
+  home=$(make_home discard-marker)
+  cat > "$home/data/backlog.md" <<'EOF'
+## In flight
+
+## Queued
+- [ ] sample-refused-copy - Cleanup refused for copy7 (repo: sample) (kind: ship) (since 2026-01-01)
+- [ ] sample-doc-copy - Keep or discard the document copy (repo: sample) (kind: ship) (since 2026-01-01)
+
+## Done
+EOF
+  FM_CAPTAIN_HOLD_NOW=2026-07-14T12:00:00Z run_captain "$home" hold sample-refused-copy \
+    --reason "copy7 holds 3 uncommitted files; keep or discard" --discard >/dev/null \
+    || fail "could not mark the discard hold"
+  FM_CAPTAIN_HOLD_NOW=2026-07-14T12:00:00Z run_captain "$home" hold sample-doc-copy \
+    --reason "keep or discard the document copy" >/dev/null \
+    || fail "could not create the unmarked look-alike hold"
+  run_captain "$home" hold sample-refused-copy \
+    --reason "copy7 holds 3 uncommitted files; keep or discard" --credential >/dev/null \
+    || fail "could not add the credential marker to the active discard hold"
+  show=$(tasks_in "$home" show sample-refused-copy --full)
+  assert_contains "$show" "Captain hold set: 2026-07-14T12:00:00Z; credential=yes; discard=yes" \
+    "a repeated hold keeps the stamp and the earlier marker, in the one fixed order"
+  snap=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
+    FM_CONFIG_OVERRIDE="$home/config" FM_PROJECTS_OVERRIDE="$home/projects" \
+    FM_SNAPSHOT_NOW=2026-07-14T12:00:00Z "$ROOT/bin/fm-fleet-snapshot.sh" --json) \
+    || fail "fleet snapshot failed for discard holds"
+  printf '%s' "$snap" | jq -e '
+    ([.backlog.records[] | select(.id == "sample-refused-copy")][0] | .hold_discard == true and .hold_credential == true)
+    and ([.backlog.records[] | select(.id == "sample-doc-copy")][0].hold_discard == false)
+  ' >/dev/null || fail "the snapshot did not preserve the explicit discard distinction"
+  printf 'Discard it.\n' > "$home/discard-answer.txt"
+  run_captain "$home" answer sample-refused-copy --decision-file "$home/discard-answer.txt" >/dev/null \
+    || fail "could not answer the discard hold"
+  show=$(tasks_in "$home" show sample-refused-copy --full)
+  assert_not_contains "$show" "; discard=yes" "a closed discard hold retained its active marker"
+  pass "the discard marker is explicit and scoped to one hold lifecycle"
+}
+
 test_interrupted_answer_preserves_hold_age() {
   local home snap show
   home=$(make_home interrupted-answer-age)
@@ -1077,15 +1173,14 @@ EOF
       and .hold_bucket == "live"
   ' >/dev/null || fail "an interrupted answer lost the fresh hold age basis: $snap"
 
-  if run_captain "$home" answer sample-interrupted-call \
-    --decision-file "$home/interrupted-answer.txt" > "$home/normalize.out" 2> "$home/normalize.err"; then
+  if run_captain "$home" finish sample-interrupted-call \
+    > "$home/normalize.out" 2> "$home/normalize.err"; then
     fail "the forced post-close normalization failure reported success"
   fi
   show=$(tasks_in "$home" show sample-interrupted-call --full)
   assert_contains "$show" "state: done" "the normalization failure undid the successful close"
-  run_captain "$home" answer sample-interrupted-call \
-    --decision-file "$home/interrupted-answer.txt" >/dev/null \
-    || fail "the closed answer could not normalize on retry"
+  run_captain "$home" finish sample-interrupted-call >/dev/null \
+    || fail "the closed answer could not finish normalization on retry"
   show=$(tasks_in "$home" show sample-interrupted-call --full)
   assert_contains "$show" 'body: "Resolution recorded by fm-captain-hold.' \
     "the matching done retry did not restore resolution-first body ordering"
@@ -4816,6 +4911,8 @@ test_completion_gate_attests_and_transfers
 test_answer_records_and_closes
 test_release_frees_held_work
 test_hold_stamp_precedes_hold_visibility
+test_credential_marker_is_explicit_and_lifecycle_scoped
+test_discard_marker_is_explicit_and_lifecycle_scoped
 test_interrupted_answer_preserves_hold_age
 test_deferral_leaves_captains_call_until_due
 test_out_of_band_close_is_recordable

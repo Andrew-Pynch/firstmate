@@ -88,6 +88,10 @@
 # destructive step and keeps every durable record.
 # Uncommitted changes are never landed; dirty refusals distinguish untracked-only
 # leftovers from tracked edits and list at most ten non-exempt untracked paths.
+# A refusal for concrete uncommitted or unlanded work prints one source-owned
+# ready-to-run hold command: `bin/fm-captain-hold.sh hold <id> --reason
+# 'Teardown refused: <id> holds uncommitted or unlanded work; keep or discard?'
+# --discard`. Teardown does not create that hold itself.
 # local-only projects additionally accept work merged into the local default
 # branch (firstmate performs that merge after configured approval) as a fallback
 # for the common case where there is no remote at all, or work a patch recorded
@@ -2249,6 +2253,10 @@ teardown_note_dirty_return() {
   printf '%s\n' "$residue" | sed 's/^/  /' >&2
 }
 
+print_discard_hold_command() {
+  printf "bin/fm-captain-hold.sh hold %s --reason 'Teardown refused: %s holds uncommitted or unlanded work; keep or discard?' --discard\n" "$ID" "$ID" >&2
+}
+
 validate_worktree_teardown_safety() {
   local dirty_raw dirty unpushed_raw unpushed DEFAULT unmerged_raw unmerged branch
   [ -d "$WT" ] || return 0
@@ -2304,18 +2312,21 @@ validate_worktree_teardown_safety() {
       echo "REFUSED: local-only worktree $WT has uncommitted changes." >&2
       report_worktree_dirt "$dirty"
       echo "Commit them (or get the captain's explicit OK to discard, then --force)." >&2
+      print_discard_hold_command
       return 1
     fi
     if [ -n "$unmerged" ] && ! farm_patch_captures_work "$WT"; then
       echo "REFUSED: local-only worktree $WT has work not yet merged into $DEFAULT, not on any remote, and not reproduced by any patch recorded in $(fm_farm_patch_store)." >&2
       printf 'commits not yet on %s:\n%s\n' "$DEFAULT" "$unmerged" >&2
       echo "Merge the branch into local $DEFAULT first (bin/fm-merge-local.sh after the captain approves), record its patch with bin/fm-farm-patch.sh record, or get the captain's explicit OK to discard, then --force." >&2
+      print_discard_hold_command
       return 1
     fi
   elif [ -n "$dirty" ]; then
     echo "REFUSED: worktree $WT has uncommitted changes." >&2
     report_worktree_dirt "$dirty"
     echo "Commit them (or get the captain's explicit OK to discard, then --force)." >&2
+    print_discard_hold_command
     return 1
   elif [ -n "$unpushed" ]; then
     branch=${TEARDOWN_WORKTREE_BRANCH_FOR_SAFETY:-}
@@ -2332,6 +2343,7 @@ validate_worktree_teardown_safety() {
       fi
       printf 'unpushed commits:\n%s\n' "$unpushed" >&2
       echo "Push the branch, land its PR, or get the captain's explicit OK to discard, then --force." >&2
+      print_discard_hold_command
       return 1
     fi
   fi

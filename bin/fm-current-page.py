@@ -872,7 +872,7 @@ def captain_calls(held, today):
         if h.get("hold_kind") != "captain" or not h.get("id"):
             continue
         until = "" if h.get("hold_until") in (None, "", "-") else h["hold_until"]
-        stamp = re.search(r"Captain hold set:\s*(\S+)", h.get("body", ""))
+        stamp = re.search(r"Captain hold set:\s*([^;\s]+)", h.get("body", ""))
         asked = (ts_of(stamp.group(1)) if stamp else None) or ts_of(h.get("created"))
         calls[h["id"]] = {**h, "until": until, "asked": asked, "deferred": bool(until and until > today)}
     return calls

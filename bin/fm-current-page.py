@@ -942,7 +942,7 @@ font:14px/1.55 var(--sans);white-space:pre-wrap;overflow-wrap:anywhere}
 html{-webkit-text-size-adjust:100%}
 body{height:auto;overflow-x:hidden;overflow-y:auto;font-size:16px;
 padding:0 env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
-.scan,#insp,#keys,#hud .lv,#hud .hint,#hud .sp,#clock,.pane>header kbd{display:none}
+#insp,#keys,#hud .lv,#hud .hint,#hud .sp,#clock,.pane>header kbd{display:none}
 #hud{flex-wrap:wrap;height:auto;gap:2px 12px;padding:calc(env(safe-area-inset-top) + 6px) 12px 4px;
 white-space:normal;font-size:12px}
 #hud .stat b{font-size:16px}
@@ -1302,7 +1302,7 @@ def render(paths, reason):
         f'<link rel="manifest" href="{PWA_MANIFEST}"><link rel="apple-touch-icon" href="{PWA_ICONS[180]}">'
         f'<link rel="icon" type="image/png" href="{PWA_ICONS[192]}">'
         f"<style>{fm_md.THEME_CSS}{PAGE_CSS}</style></head>"
-        f'<body data-rendered="{int(now)}"><div class="grid-bg"></div><div class="scan"></div>'
+        f'<body data-rendered="{int(now)}"><div class="grid-bg"></div>'
         f'<div id="hud" data-swap title="{e(reason)}"'
         + (f' data-token="{answers.mint_token(now)}"' if answers_on else "")
         + '><span class="brand">FM//CURRENT</span>'

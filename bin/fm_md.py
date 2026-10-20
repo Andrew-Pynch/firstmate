@@ -14,7 +14,9 @@ only http, https, mailto, anchor, and relative link targets become links.
 
 THEME_CSS is the single owner of the shared look (andrewpynch.com's NERV
 palette: near-black panes, 2px geometry, orange accent, teal data, red alert,
-monospace labels, scanlines). bin/fm-current-page.py imports it.
+monospace labels). No overlay ever sits on top of content: report pages carry no
+background grid at all, and the captain page's faint grid stays behind its panes.
+bin/fm-current-page.py imports it.
 """
 import html
 import os
@@ -34,8 +36,6 @@ html,body{margin:0;background:var(--bg);color:var(--fg)}
 body{font:14px/1.5 var(--sans)}
 a{color:var(--link);text-decoration:none}a:hover{text-decoration:underline}
 code{font:12.5px var(--mono);background:var(--raised);border:1px solid var(--acc-dim);border-radius:var(--r);padding:0 .3em;color:#ffd7a8}
-.scan{position:fixed;inset:0;pointer-events:none;z-index:9998;
-background:repeating-linear-gradient(0deg,transparent 0 2px,rgba(0,0,0,.06) 2px 4px)}
 .grid-bg{position:fixed;inset:0;pointer-events:none;z-index:-1;opacity:.6;
 background-image:linear-gradient(rgba(255,136,0,.05) 1px,transparent 1px),linear-gradient(90deg,rgba(255,136,0,.05) 1px,transparent 1px);background-size:28px 28px}
 .hazard{height:3px;opacity:.5;background:repeating-linear-gradient(90deg,var(--acc) 0 8px,transparent 8px 16px)}
@@ -387,7 +387,6 @@ def page(md_text, title=None):
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8">'
             '<meta name="viewport" content="width=device-width,initial-scale=1">'
             f"<title>{e(title)}</title><style>{THEME_CSS}{MD_CSS}{PAGE_CSS}</style></head><body>"
-            '<div class="grid-bg"></div><div class="scan"></div>'
             f'<header><span class="brand">FM//REPORT</span><span class="title">{e(title)}</span>'
             f'<span class="lbl">{max(1, round(words / 230))} min · <span id="cnt"></span></span>'
             '<span class="lbl"><kbd>?</kbd> keys</span></header><div id="xp"></div>'

@@ -57,14 +57,18 @@
 #   (y) persistent lock (never clears, not provably stale)    -> REFUSE loudly
 #
 # Nested repositories survive Treehouse's own `git clean -fd`:
-#   (z1) scout + nested clone + scratch file                 -> no untracked entries
+#   (z1) scout + nested clone + scratch file, no --force     -> REFUSE, bytes unchanged
+#   (z1b) forced scout + nested clone + scratch file         -> no untracked entries
+#   (z1c) scout + untracked .agents/skills tree + .claude/skills symlink -> REFUSE, bytes unchanged
+#   (z1d) scout + tracked edit + scratch commit only         -> ALLOW (declared scratch)
+#   (z1e) ship + untracked .claude/skills symlink only       -> REFUSE
 #   (z2) ship + nested clone, no --force                     -> REFUSE, bytes unchanged
 #   (z3) return leaves residue                               -> lost-slot warning, cleanup, exit 4
 #   (z3b) residue, then a later step refuses                 -> lost-slot warning still printed
 #   (z3c) forced secondmate + child scout nested clone       -> child copy returns clean
 #   (z3d) forced secondmate + child return leaves residue    -> warning, retirement completes, exit 4
 #   (z3e) return removes the copy                            -> cannot-verify warning, exit 4
-#   (z4) scout + ignored file                                -> ignored file survives
+#   (z4) forced scout + ignored file                         -> ignored file survives
 set -u
 
 # shellcheck source=tests/lib.sh disable=SC1091
@@ -1842,7 +1846,40 @@ move_case_to_pool_slot() {
   printf '%s\n' "$dest"
 }
 
-test_scout_nested_clone_returns_with_no_untracked_entries() {
+test_scout_nested_clone_is_refused_and_bytes_stay() {
+  local case_dir wt rc head before
+  case_dir=$(make_case scout-nested-refuse)
+  wt="$case_dir/wt"
+  write_meta "$case_dir" no-mistakes scout
+  prepare_scout_teardown "$case_dir"
+  seed_nested_clone_and_scratch "$case_dir" "$wt"
+  before=$(cksum "$wt/scratch-clone/payload.txt")
+  head=$(git -C "$wt" rev-parse HEAD)
+  : > "$case_dir/treehouse.log"
+  cat > "$case_dir/fakebin/treehouse" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$case_dir/treehouse.log"
+exit 0
+EOF
+  chmod +x "$case_dir/fakebin/treehouse"
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "scout-nested-refuse: teardown should refuse untracked entries"
+  assert_grep "REFUSED: scout worktree" "$case_dir/stderr" "scout-nested-refuse: no scout refusal line"
+  assert_grep "untracked-only leftovers" "$case_dir/stderr" "scout-nested-refuse: refusal did not classify the leftovers"
+  [ "$before" = "$(cksum "$wt/scratch-clone/payload.txt")" ] || fail "scout-nested-refuse: nested clone bytes changed"
+  assert_present "$wt/scratch.txt" "scout-nested-refuse: scratch file was removed"
+  [ ! -s "$case_dir/treehouse.log" ] \
+    || fail "scout-nested-refuse: refusal returned the copy: $(cat "$case_dir/treehouse.log")"
+  assert_refusal_retained_task_state "$case_dir" "scout-nested-refuse" "$head"
+  pass "scout copy with a nested clone and a scratch file is refused and its bytes stay"
+}
+
+test_forced_scout_nested_clone_returns_with_no_untracked_entries() {
   local case_dir wt rc
   case_dir=$(make_case scout-nested-clean)
   wt="$case_dir/wt"
@@ -1852,16 +1889,94 @@ test_scout_nested_clone_returns_with_no_untracked_entries() {
   add_treehouse_clean_fd "$case_dir"
 
   set +e
-  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  run_teardown "$case_dir" --force > "$case_dir/stdout" 2> "$case_dir/stderr"
   rc=$?
   set -e
 
-  expect_code 0 "$rc" "scout-nested-clean: teardown should return the scratch copy"
+  expect_code 0 "$rc" "scout-nested-clean: a forced teardown should return the scratch copy"
   [ -z "$(git -C "$wt" status --porcelain --untracked-files=all)" ] \
     || fail "scout-nested-clean: untracked entries remain: $(git -C "$wt" status --porcelain --untracked-files=all)"
   assert_absent "$wt/scratch-clone" "scout-nested-clean: nested clone survived return"
   assert_absent "$wt/scratch.txt" "scout-nested-clean: scratch file survived return"
-  pass "scout copy with a nested clone and a scratch file returns with no untracked entries"
+  pass "a forced scout teardown returns a copy with a nested clone and a scratch file with no untracked entries"
+}
+
+# The shape a scout lost a skill to: an untracked skill tree under .agents/skills
+# plus the .claude/skills symlink that makes Claude load it.
+seed_untracked_skill_tree() {
+  local wt=$1
+  mkdir -p "$wt/.agents/skills/typesafe-ai" "$wt/.claude"
+  printf '%s\n' '---' 'name: typesafe-ai' '---' 'body' > "$wt/.agents/skills/typesafe-ai/SKILL.md"
+  ln -s ../.agents/skills "$wt/.claude/skills"
+}
+
+test_scout_untracked_skill_tree_is_refused_and_bytes_stay() {
+  local case_dir wt rc head before
+  case_dir=$(make_case scout-skill-refuse)
+  wt="$case_dir/wt"
+  write_meta "$case_dir" no-mistakes scout
+  prepare_scout_teardown "$case_dir"
+  seed_untracked_skill_tree "$wt"
+  # firstmate's own Claude hook file stays out of git's view, as fm-spawn leaves it.
+  printf '{}\n' > "$wt/.claude/settings.local.json"
+  printf '%s\n' '.claude/settings.local.json' >> "$(git -C "$wt" rev-parse --git-path info/exclude)"
+  before=$(cksum "$wt/.agents/skills/typesafe-ai/SKILL.md")
+  head=$(git -C "$wt" rev-parse HEAD)
+  add_treehouse_clean_fd "$case_dir"
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "scout-skill-refuse: teardown should refuse an untracked skill tree"
+  assert_grep "REFUSED: scout worktree" "$case_dir/stderr" "scout-skill-refuse: no scout refusal line"
+  assert_grep ".agents/" "$case_dir/stderr" "scout-skill-refuse: refusal did not name the skill tree"
+  assert_grep ".claude/" "$case_dir/stderr" "scout-skill-refuse: refusal did not name the .claude symlink"
+  [ "$before" = "$(cksum "$wt/.agents/skills/typesafe-ai/SKILL.md")" ] \
+    || fail "scout-skill-refuse: skill bytes changed"
+  [ -L "$wt/.claude/skills" ] || fail "scout-skill-refuse: .claude/skills symlink was removed"
+  assert_refusal_retained_task_state "$case_dir" "scout-skill-refuse" "$head"
+  pass "scout copy with an untracked .agents/skills tree and .claude/skills symlink is refused and its bytes stay"
+}
+
+test_scout_tracked_edit_and_scratch_commit_are_declared_scratch() {
+  local case_dir wt rc
+  case_dir=$(make_case scout-declared-scratch)
+  wt="$case_dir/wt"
+  write_meta "$case_dir" no-mistakes scout
+  prepare_scout_teardown "$case_dir"
+  wt_commit_file "$case_dir" scratch-commit.txt "scratch commit"
+  printf 'edited\n' >> "$wt/scratch-commit.txt"
+  add_treehouse_clean_fd "$case_dir"
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "scout-declared-scratch: tracked edits and commits must not refuse: $(cat "$case_dir/stderr")"
+  pass "a scout's tracked edit and scratch commit are declared scratch and do not refuse"
+}
+
+test_ship_untracked_claude_skills_symlink_refuses() {
+  local case_dir wt rc
+  case_dir=$(make_case ship-claude-skills-refuse)
+  wt="$case_dir/wt"
+  write_meta "$case_dir" no-mistakes ship
+  mkdir -p "$wt/.claude"
+  ln -s ../.agents/skills "$wt/.claude/skills"
+  add_treehouse_clean_fd "$case_dir"
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "ship-claude-skills: an untracked .claude entry must refuse"
+  assert_grep "uncommitted changes" "$case_dir/stderr" "ship-claude-skills: refusal did not cite uncommitted changes"
+  [ -L "$wt/.claude/skills" ] || fail "ship-claude-skills: .claude/skills symlink was removed"
+  pass "ship copy with only an untracked .claude/skills symlink is refused"
 }
 
 test_ship_nested_clone_is_refused_and_bytes_stay() {
@@ -2062,7 +2177,7 @@ test_return_that_removes_copy_warns_cannot_verify() {
   pass "a return that leaves no readable copy reports the slot as unverified, not clean"
 }
 
-test_scout_ignored_files_survive_scratch_clean() {
+test_forced_scout_ignored_files_survive_scratch_clean() {
   local case_dir wt rc
   case_dir=$(make_case scout-ignored-survives)
   wt="$case_dir/wt"
@@ -2077,7 +2192,7 @@ test_scout_ignored_files_survive_scratch_clean() {
   add_treehouse_clean_fd "$case_dir"
 
   set +e
-  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  run_teardown "$case_dir" --force > "$case_dir/stdout" 2> "$case_dir/stderr"
   rc=$?
   set -e
 
@@ -6153,14 +6268,18 @@ test_dirty_worktree_refuses
 test_untracked_only_refusal_diagnostic
 test_tracked_edit_refusal_diagnostic
 test_mixed_refusal_diagnostic
-test_scout_nested_clone_returns_with_no_untracked_entries
+test_scout_nested_clone_is_refused_and_bytes_stay
+test_forced_scout_nested_clone_returns_with_no_untracked_entries
+test_scout_untracked_skill_tree_is_refused_and_bytes_stay
+test_scout_tracked_edit_and_scratch_commit_are_declared_scratch
+test_ship_untracked_claude_skills_symlink_refuses
 test_ship_nested_clone_is_refused_and_bytes_stay
 test_dirty_return_warns_which_slot_was_lost
 test_dirty_return_warns_even_when_a_later_step_refuses
 test_forced_secondmate_child_scout_nested_clone_returns_clean
 test_forced_secondmate_dirty_child_return_warns_and_completes
 test_return_that_removes_copy_warns_cannot_verify
-test_scout_ignored_files_survive_scratch_clean
+test_forced_scout_ignored_files_survive_scratch_clean
 test_gh_error_and_content_absent_refuses
 test_legacy_record_without_the_flag_refuses
 test_windowless_legacy_record_with_gone_worktree_tears_down

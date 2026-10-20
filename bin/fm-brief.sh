@@ -715,7 +715,8 @@ $HERDR_SECTION
 # Setup
 $SETUP_BASE
 This is a SCOUT task: the deliverable is a written report, not a PR.
-The worktree is your laboratory - install, run, edit, and make scratch commits freely; all of it is discarded at teardown.
+The worktree is your laboratory - install, run, edit, and make scratch commits freely; tracked edits, commits, and ignored files are discarded at teardown.
+Untracked files that are not ignored stop the cleanup, so before you report done, commit or delete any you leave behind.
 The report is the only thing that survives, so anything worth keeping must be in it.
 
 # Rules

@@ -84,19 +84,22 @@
 # FM_FARM_PATCH_STORE, defaulting to <code root>/farm-patches, and
 # bin/fm-farm-patch.sh's header owns its path default and its record formats;
 # farm_patch_captures_work below owns the proof teardown draws from it.
-# Scout tasks (kind=scout in meta) carve out of that check: their worktree is
-# declared scratch and the report at data/<task-id>/report.md is the work
-# product. Teardown proceeds only once the report exists and the shared
-# unresolved-decision completion gate verifies its captain-held inventory.
-# A scratch copy (kind=scout) and a --force run discard untracked content.
+# Scout tasks (kind=scout in meta) carve out of that check: their tracked edits
+# and commits are declared scratch and the report at data/<task-id>/report.md
+# is the work product. Teardown proceeds only once the report exists and the
+# shared unresolved-decision completion gate verifies its captain-held
+# inventory. An untracked entry that is not ignored is not declared scratch, so
+# a scout copy holding one refuses like a ship copy.
+# A --force run discards untracked content.
 # Treehouse's return resets with `git clean -fd`, which never deletes a nested
 # git repository, so the pool slot stays dirty and later checkouts skip it.
-# Before that return, teardown runs `git clean -ffdq` in the copy, and a forced
-# secondmate teardown does the same in each child copy it returns.
+# Before that return, teardown runs `git clean -ffdq` in a scout or forced
+# copy, and a forced secondmate teardown does the same in each child copy it
+# returns.
 # The second -f removes nested repositories, and -x stays off so ignored files remain.
-# A ship teardown without --force does not run that clean: it refuses untracked
-# entries, except those under the .claude/ allowance, so a nested repository
-# there can still survive the return.
+# A teardown without --force does not reach that clean with untracked entries
+# left: it refuses them (only firstmate's own turn-end markers are exempt), so
+# a nested repository there survives the refusal.
 # After a return that succeeds, teardown reads `git status --porcelain --untracked-files=all`.
 # Any remaining output, a status read that fails, or a copy that is missing or
 # no longer a readable worktree is reported at once with the lost pool slot and
@@ -2238,9 +2241,7 @@ validate_worktree_teardown_safety() {
   local dirty_raw dirty unpushed_raw unpushed DEFAULT unmerged_raw unmerged branch
   [ -d "$WT" ] || return 0
   [ "$FORCE" != "--force" ] || return 0
-  case "$KIND" in
-    secondmate|scout) return 0 ;;
-  esac
+  [ "$KIND" != secondmate ] || return 0
 
   if ! dirty_raw=$(git -C "$WT" status --porcelain 2>/dev/null); then
     if worktree_safety_blocked_by_lock "uncommitted changes"; then
@@ -2250,7 +2251,17 @@ validate_worktree_teardown_safety() {
     echo "Restore the git index state, or get the captain's explicit OK to discard, then --force." >&2
     return 1
   fi
-  dirty=$(printf '%s\n' "$dirty_raw" | grep -vE '^\?\? (\.claude/|\.fm-(grok|kimi)-turnend$)' || true)
+  dirty=$(printf '%s\n' "$dirty_raw" | grep -vE '^\?\? \.fm-(grok|kimi)-turnend$' || true)
+  # A scout's tracked edits and commits are its declared scratch; an untracked
+  # entry is not, so it refuses here like a ship's.
+  if [ "$KIND" = scout ]; then
+    dirty=$(printf '%s\n' "$dirty" | grep -E '^\?\? ' || true)
+    [ -n "$dirty" ] || return 0
+    echo "REFUSED: scout worktree $WT has untracked entries that are not its declared scratch." >&2
+    report_worktree_dirt "$dirty"
+    echo "Copy what must survive to its owner or $DATA/$ID/, have the worker commit or delete the rest, or get the captain's explicit OK to discard, then --force." >&2
+    return 1
+  fi
 
   if ! unpushed_raw=$(git -C "$WT" log --oneline HEAD --not --remotes -- 2>/dev/null); then
     if worktree_safety_blocked_by_lock "commits not on a remote"; then

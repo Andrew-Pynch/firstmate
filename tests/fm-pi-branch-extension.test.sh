@@ -2199,7 +2199,7 @@ await fire("before_agent_start", {
 await fire("agent_start", {}, defaultSessionCtx);
 await fire("turn_start", {});
 await fire("message_start", { message: processingMsg }, abortCtx);
-contract(["enter", "--words", "merge task-d when green, then cut the prerelease\n\n"]);
+contract(["enter", "--objective", "the accepted objective for this window", "--words", "merge task-d when green, then cut the prerelease\n\n"]);
 const openedByCustomRequest = await fire("context", { messages: [...history, processingMsg] }, abortCtx);
 if (!aborted) throw new Error("a custom processing turn with history was not aborted when the record appeared");
 if (openedByCustomRequest?.messages?.some((message) => message.customType === "fm-branch-process")) {

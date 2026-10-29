@@ -72,6 +72,9 @@
 # state/.primary-loss-alert records the notified primary identity under its
 # sibling .lock, so overlapping arms alert once until a fresh monitor starts.
 # An unprovable initial primary identity refuses by name before arming.
+# Replacement proof compares the current canonical session anchor to the one
+# captured at launch, so an outer harness wrapper is never its own successor.
+# Dedupe-lock contention is bounded to one second and cannot suppress the alert.
 # Other harnesses and explicit TERM/INT retirement keep their existing lifetime.
 # An actionable cycle has a small adapter successor-launch gap; this arm
 # covers primary loss through its own close, not machine-wide process loss.
@@ -189,6 +192,8 @@ case "$CYCLE_LOG_KEEP_LINES" in ''|*[!0-9]*|0) CYCLE_LOG_KEEP_LINES=1000 ;; esac
 
 PRIMARY_PID=${FM_WATCH_PRIMARY_PID:-}
 PRIMARY_IDENTITY=
+PRIMARY_LOCK_PID=
+PRIMARY_BACKEND_LOADED=0
 if [ -n "$PRIMARY_PID" ]; then
   case "$PRIMARY_PID" in
     *[!0-9]*|0|1)
@@ -201,6 +206,12 @@ if [ -n "$PRIMARY_PID" ]; then
     echo "watcher: FAILED - cannot establish primary process identity for pid $PRIMARY_PID" >&2
     exit 1
   fi
+  # The session anchor can be an outer harness, not the omp process itself.
+  # Snapshot it once so that same anchor cannot masquerade as a replacement.
+  # shellcheck source=/dev/null
+  . "$SCRIPT_DIR/fm-session-lock-lib.sh"
+  fm_session_lock_inspect "$STATE"
+  PRIMARY_LOCK_PID=$FM_LOCK_INSPECT_PID
 fi
 PRIMARY_ALERT_LOCK="$STATE/.primary-loss-alert.lock"
 PRIMARY_ALERT_MARKER="$STATE/.primary-loss-alert"
@@ -218,10 +229,9 @@ primary_alive() {
 }
 
 replacement_primary_alive() {
-  # shellcheck source=/dev/null
-  . "$SCRIPT_DIR/fm-session-lock-lib.sh"
+  [ -n "$PRIMARY_PID" ] || return 1
   fm_session_lock_inspect "$STATE"
-  [ "$FM_LOCK_INSPECT_STATE" = held ] && [ "$FM_LOCK_INSPECT_PID" != "$PRIMARY_PID" ]
+  [ "$FM_LOCK_INSPECT_STATE" = held ] && [ "$FM_LOCK_INSPECT_PID" != "$PRIMARY_LOCK_PID" ]
 }
 
 # Only recorded endpoints in this home count. The backend owner keeps this
@@ -229,8 +239,11 @@ replacement_primary_alive() {
 primary_loss_alert() {
   local meta target backend label reason
   if healthy_watcher && replacement_primary_alive; then return 0; fi
-  # shellcheck source=/dev/null
-  . "$SCRIPT_DIR/fm-backend.sh"
+  if [ "$PRIMARY_BACKEND_LOADED" -eq 0 ]; then
+    # shellcheck source=/dev/null
+    . "$SCRIPT_DIR/fm-backend.sh"
+    PRIMARY_BACKEND_LOADED=1
+  fi
   for meta in "$STATE"/*.meta; do
     [ -f "$meta" ] || continue
     target=$(fm_backend_target_of_meta "$meta")
@@ -239,17 +252,21 @@ primary_loss_alert() {
     label="fm-$(basename "$meta" .meta)"
     fm_backend_target_exists "${backend:-tmux}" "$target" "$label" || continue
     reason="check: primary-supervision-lost: primary supervision stopped without a healthy replacement while work is still live; restart firstmate to resume supervision"
-    fm_lock_acquire_wait "$PRIMARY_ALERT_LOCK" || return 1
-    if [ "$(cat "$PRIMARY_ALERT_MARKER" 2>/dev/null || true)" = "$PRIMARY_PID:$PRIMARY_IDENTITY" ]; then
+    if fm_lock_acquire_wait_max "$PRIMARY_ALERT_LOCK" 1; then
+      if [ "$(cat "$PRIMARY_ALERT_MARKER" 2>/dev/null || true)" = "$PRIMARY_PID:$PRIMARY_IDENTITY" ]; then
+        fm_lock_release "$PRIMARY_ALERT_LOCK"
+        return 0
+      fi
+      if ! fm_wake_append check primary-supervision-lost "$reason" \
+        || ! printf '%s\n' "$PRIMARY_PID:$PRIMARY_IDENTITY" > "$PRIMARY_ALERT_MARKER"; then
+        fm_lock_release "$PRIMARY_ALERT_LOCK"
+        return 1
+      fi
       fm_lock_release "$PRIMARY_ALERT_LOCK"
-      return 0
+    else
+      # Dedupe contention cannot suppress the only durable outage report.
+      fm_wake_append check primary-supervision-lost "$reason (alert dedupe lock unavailable)" || return 1
     fi
-    if ! fm_wake_append check primary-supervision-lost "$reason" \
-      || ! printf '%s\n' "$PRIMARY_PID:$PRIMARY_IDENTITY" > "$PRIMARY_ALERT_MARKER"; then
-      fm_lock_release "$PRIMARY_ALERT_LOCK"
-      return 1
-    fi
-    fm_lock_release "$PRIMARY_ALERT_LOCK"
     if [ -x "$SCRIPT_DIR/fm-telegram-send.sh" ]; then
       if ! FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" \
         "$SCRIPT_DIR/fm-telegram-send.sh" "$reason" >/dev/null 2>&1; then
@@ -963,7 +980,14 @@ while :; do
       if [ -n "$PRIMARY_PID" ]; then
         while fm_pid_alive "$child"; do
           if ! primary_alive; then
-            if healthy_watcher && replacement_primary_alive; then exit 0; fi
+            if healthy_watcher && [ "$HEALTHY_PID" != "$child" ] && replacement_primary_alive; then
+              cleanup_child
+              wait "$child" 2>/dev/null || true
+              cycle_log_append 0 none primary-replaced "attached:$HEALTHY_PID"
+              child=
+              child_out=
+              exit 0
+            fi
             primary_loss_alert
             cleanup_child
             wait "$child" 2>/dev/null || true

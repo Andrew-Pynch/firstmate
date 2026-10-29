@@ -1956,6 +1956,7 @@ test_append_wakes_handling_successor after-ack missing identical
 test_append_wakes_handling_successor after-ack malformed identical
 test_primary_exit_alerts_with_live_work() {
   local mode=$1 dir state fakebin primary i armout script replacement='' peer='' send_log grace=999999 watcher output
+  local anchor_pid=''
   dir=$(make_supercase "primary-exit-$mode")
   state="$dir/state"
   fakebin="$dir/fakebin"
@@ -1979,7 +1980,12 @@ SH
   "$dir/omp" 60 &
   primary=$!
   printf '%s\n' "$primary" > "$state/.lock"
-  [ "$mode" != cycle-close ] || grace=0
+  if [ "$mode" = anchor ]; then
+    "$dir/omp" 60 &
+    anchor_pid=$!
+    printf '%s\n' "$anchor_pid" > "$state/.lock"
+  fi
+  if [ "$mode" = cycle-close ] || [ "$mode" = happy ]; then grace=0; fi
   output=$armout
   if [ "$mode" = pipe ]; then
     output="$dir/arm.pipe"
@@ -2020,7 +2026,18 @@ SH
     wait_for_file_text "$dir/peer.out" 'watcher: attached' \
       || fail "second primary monitor did not attach"
   fi
-  if [ "$mode" = cycle-close ]; then
+  if [ "$mode" = contention ]; then
+    bash -c '. "$1"; fm_lock_acquire_wait "$2"; touch "$3"; sleep 60' _ \
+      "$ROOT/bin/fm-wake-lib.sh" "$state/.primary-loss-alert.lock" "$dir/alert-lock-ready" &
+    peer=$!
+    i=0
+    while [ "$i" -lt 100 ] && [ ! -e "$dir/alert-lock-ready" ]; do
+      sleep 0.1
+      i=$((i + 1))
+    done
+    [ -e "$dir/alert-lock-ready" ] || fail "dedupe lock fixture did not acquire its lock"
+  fi
+  if [ "$mode" = cycle-close ] || [ "$mode" = happy ]; then
     watcher=$(cat "$state/.watch.lock/pid")
     kill -STOP "$ARM_PID"
     printf 'done: fixture completed while primary was alive\n' > "$state/live.status"
@@ -2035,6 +2052,18 @@ SH
       kill "$primary" "$ARM_PID" 2>/dev/null || true
       fail "cycle-close fixture did not complete its actionable watcher cycle"
     fi
+    if [ "$mode" = happy ]; then
+      kill -CONT "$ARM_PID"
+      wait "$ARM_PID" || fail "a live primary's actionable close failed"
+      grep -q '^signal:' "$armout" || fail "the live primary lost its actionable output"
+      ! grep -q 'primary-supervision-lost' "$state/.wake-queue" \
+        || fail "a live primary's ordinary close was misreported as an outage"
+      [ ! -s "$send_log" ] || fail "an ordinary actionable close sent an outage message"
+      kill "$primary"
+      wait "$primary" 2>/dev/null || true
+      pass "watch-arm: a live primary receives the completed cycle without an outage alert"
+      return
+    fi
   fi
   if [ "$mode" != handoff ] && [ "$mode" != handoff-new ] && [ "$mode" != orphaned ]; then
     kill "$primary"
@@ -2042,7 +2071,7 @@ SH
   fi
   if [ "$mode" = cycle-close ]; then
     kill -CONT "$ARM_PID"
-  elif [ "$mode" != crash ] && [ "$mode" != pipe ]; then
+  elif [ "$mode" != crash ] && [ "$mode" != pipe ] && [ "$mode" != anchor ] && [ "$mode" != contention ]; then
     # omp shutdown retires the arm before its process disappears.
     kill -HUP "$ARM_PID"
     if [ "$mode" = two-hup ]; then
@@ -2094,6 +2123,15 @@ SH
     fail "dead primary with live work left no durable alert within one poll"
   fi
   wait "$ARM_PID" 2>/dev/null || true
+  if [ "$mode" = contention ]; then
+    kill "$peer" 2>/dev/null || true
+    grep -q 'alert dedupe lock unavailable' "$state/.wake-queue" \
+      || fail "dedupe contention did not leave a durable alert"
+  fi
+  if [ -n "$anchor_pid" ]; then
+    kill "$anchor_pid" 2>/dev/null || true
+    wait "$anchor_pid" 2>/dev/null || true
+  fi
   [ -z "$peer" ] || wait "$peer" 2>/dev/null || true
   grep -q 'primary-supervision-lost' "$send_log" \
     || fail "primary loss did not reach the Telegram sender"
@@ -2128,6 +2166,9 @@ test_primary_identity_failure_is_named_without_an_outage_alert() {
   pass "watch-arm: unreadable primary identity refuses by name without a false outage alert"
 }
 
+test_primary_exit_alerts_with_live_work happy
+test_primary_exit_alerts_with_live_work anchor
+test_primary_exit_alerts_with_live_work contention
 test_primary_exit_alerts_with_live_work pipe
 test_primary_exit_alerts_with_live_work two-hup
 test_primary_exit_alerts_with_live_work cycle-close

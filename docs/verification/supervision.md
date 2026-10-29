@@ -573,6 +573,12 @@ grok 0.2.103 (89c3d36fb6f1) [stable]
 | omp | `FM_OMP_LIVE_E2E=1 tests/fm-omp-primary-live-e2e.test.sh` | One initial `fm_watch_arm_omp` invocation (the openai-codex model reaches extension tools through omp's `xd://` virtual-file bridge, a `write` to `xd://fm_watch_arm_omp`, counted as the same invocation) started a live watcher; an actionable close spawned a ledger-linked successor and woke main exactly once; the lab is reaped by path, and omp 18.1.11 did not exit within 30s of its rpc stdin closing, recorded as a note. omp 18.1.11, 2026-09-05. |
 | Grok | `FM_GROK_LIVE_E2E=1 tests/fm-grok-continuity-live-e2e.test.sh` | Native task completion surfaced the actionable close and the cycle ledger recorded `reason=actionable-signal`. |
 
+On 2026-10-29, omp 18.11.0 was killed with SIGKILL after `/fm-watch-arm-omp` established a real watcher for an isolated live tmux endpoint.
+The existing arm queued `primary-supervision-lost` and reached a private Telegram sender recorder in 0.533 seconds with `FM_POLL=2`; this did not test the external Telegram service.
+`bin/fm-test-run.sh tests/fm-watch-arm.test.sh tests/fm-watcher-lock.test.sh` covers primary shutdown and abrupt loss, suppresses alarms for an empty home or a healthy replacement, and proves the next drain presents the alert.
+`tests/fm-omp-harness.test.sh` also passed with the host's real omp ancestor outside the detector's eight-parent window.
+Other harnesses retain their existing arm lifetime because they do not set the omp primary PID.
+
 Pi 0.81.1 repeated the continuity and clean-exit lifecycle on 2026-07-23 after the Calm presentation changes.
 
 Pi 0.86.1 repeated the isolated watcher-only live check on 2026-09-22:

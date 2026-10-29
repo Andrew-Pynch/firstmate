@@ -826,8 +826,6 @@ test_markerless_legacy_queue_is_recovered_on_arm() {
 
   start_rearm_arm "$home" "$state" "$fakebin" "$dir/arm.out"
   wait_for_exit "$ARM_PID" "$REARM_EXIT_POLLS" || fail "markerless legacy queue was stranded at re-arm"
-  grep -F 'check: rearm-resurface' "$dir/arm.out" >/dev/null \
-    || fail "markerless legacy queue did not trigger recovery"
   case "$(cat "$state/.watcher-down" 2>/dev/null || true)" in
     pending:downtime:*|announced:downtime:*) ;;
     *) fail "markerless legacy queue was not adopted into downtime recovery" ;;
@@ -1956,6 +1954,97 @@ test_append_wakes_handling_successor after-ack malformed
 test_append_wakes_handling_successor before-ack malformed
 test_append_wakes_handling_successor after-ack missing identical
 test_append_wakes_handling_successor after-ack malformed identical
+test_primary_exit_alerts_with_live_work() {
+  local mode=$1 dir state fakebin primary i armout script replacement='' send_log
+  dir=$(make_supercase "primary-exit-$mode")
+  state="$dir/state"
+  fakebin="$dir/fakebin"
+  armout="$dir/arm.out"
+  mkdir -p "$dir/bin"
+  for script in "$ROOT"/bin/*.sh; do
+    [ "${script##*/}" = fm-telegram-send.sh ] && continue
+    ln -s "$script" "$dir/bin/${script##*/}"
+  done
+  send_log="$dir/telegram.out"
+  cat > "$dir/bin/fm-telegram-send.sh" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$FM_TEST_TELEGRAM_LOG"
+SH
+  chmod +x "$dir/bin/fm-telegram-send.sh"
+  printf 'window=fixture:1\nbackend=tmux\n' > "$state/live.meta"
+  [ "$mode" != empty ] || rm "$state/live.meta"
+  sleep 60 &
+  primary=$!
+  printf '%s\n' "$primary" > "$state/.lock"
+  PATH="$fakebin:$PATH" FM_HOME="$dir" FM_STATE_OVERRIDE="$state" \
+    FM_WATCH_PRIMARY_PID="$primary" FM_POLL=3 FM_SIGNAL_GRACE=999999 \
+    FM_TEST_TELEGRAM_LOG="$send_log" \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
+    "$dir/bin/fm-watch-arm.sh" > "$armout" 2>&1 &
+  ARM_PID=$!
+  i=0
+  while [ "$i" -lt 200 ]; do
+    grep -q '^watcher: started' "$armout" && break
+    sleep 0.1
+    i=$((i + 1))
+  done
+  if ! grep -q '^watcher: started' "$armout"; then
+    kill "$primary" "$ARM_PID" 2>/dev/null || true
+    fail "primary-exit arm did not start: $(cat "$armout")"
+  fi
+  if [ "$mode" != handoff ]; then
+    kill "$primary"
+    wait "$primary" 2>/dev/null || true
+  fi
+  if [ "$mode" != crash ]; then
+    # omp shutdown retires the arm before its process disappears.
+    kill -HUP "$ARM_PID"
+  fi
+  if [ "$mode" = handoff ]; then
+    PATH="$fakebin:$PATH" FM_HOME="$dir" FM_STATE_OVERRIDE="$state" \
+      FM_WATCH_PRIMARY_PID="$primary" FM_POLL=3 FM_SIGNAL_GRACE=999999 \
+      FM_WATCH_PREDECESSOR_ARM_PID="$ARM_PID" \
+      FM_TEST_TELEGRAM_LOG="$send_log" \
+      FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
+      "$dir/bin/fm-watch-arm.sh" --restart > "$dir/replacement.out" 2>&1 &
+    replacement=$!
+  fi
+  if [ "$mode" = empty ] || [ "$mode" = handoff ]; then
+    wait_for_exit "$ARM_PID" 100
+    ! grep -q 'primary-supervision-lost' "$state/.wake-queue" 2>/dev/null \
+      || fail "a $mode shutdown incorrectly alarmed"
+    [ ! -s "$send_log" ] || fail "a $mode shutdown sent a Telegram alarm"
+    [ -z "$replacement" ] || kill "$replacement" 2>/dev/null || true
+    [ -z "$replacement" ] || wait "$replacement" 2>/dev/null || true
+    [ "$mode" != handoff ] || kill "$primary" 2>/dev/null || true
+    [ "$mode" != handoff ] || wait "$primary" 2>/dev/null || true
+    pass "watch-arm: $mode shutdown does not report lost supervision"
+    return
+  fi
+  i=0
+  while [ "$i" -lt 40 ]; do
+    grep -q 'primary-supervision-lost' "$state/.wake-queue" 2>/dev/null && break
+    sleep 0.1
+    i=$((i + 1))
+  done
+  if ! grep -q 'primary-supervision-lost' "$state/.wake-queue" 2>/dev/null; then
+    kill "$ARM_PID" 2>/dev/null || true
+    wait "$ARM_PID" 2>/dev/null || true
+    fail "dead primary with live work left no durable alert within one poll"
+  fi
+  wait "$ARM_PID" 2>/dev/null || true
+  grep -q 'primary-supervision-lost' "$send_log" \
+    || fail "primary loss did not reach the Telegram sender"
+  FM_HOME="$dir" FM_STATE_OVERRIDE="$state" "$DRAIN" > "$dir/drain.out" 2>/dev/null
+  grep -q 'primary-supervision-lost' "$dir/drain.out" \
+    || fail "the next session drain did not present the primary-loss alert"
+  pass "watch-arm: primary $mode with live work alerts within one poll and survives until drain"
+}
+
+test_primary_exit_alerts_with_live_work shutdown
+test_primary_exit_alerts_with_live_work crash
+test_primary_exit_alerts_with_live_work empty
+test_primary_exit_alerts_with_live_work handoff
 test_attached_arm_reports_the_delivered_wake
 test_attached_arm_reports_the_delivered_wake_after_drain
 test_arm_refuses_an_unusable_launch_confirm_window

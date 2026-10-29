@@ -13,6 +13,7 @@ When this session owns supervision and away mode is not active:
 5. The extension starts `bin/fm-watch-arm.sh --restart`, keeps the child attached to the live omp process, and owns every later successor launch.
 6. Ordinary same-process session replacement (`/new`, `/resume`, `/fork`), compaction, and in-process subagents keep watcher continuity without a model turn or another `fm_watch_arm_omp` call.
    The generation-owner contract, the in-flight actionable-close handoff, and recovery after a `session_shutdown` that no `session_start` follows live in `.omp/extensions/fm-primary-omp-watch.ts`; a `fm_watch_arm_omp` refusal names the handoff tokens it could not replay.
+   If the primary exits with live work, `bin/fm-watch-arm.sh` owns the bounded replacement check and durable primary-loss alert; drain that alert after restarting firstmate.
 7. After an actionable child close, the extension rechecks session-lock ownership and verifies one successor before it delivers the follow-up wake; its bounded fallback is defined in `docs/watcher-continuity.md`.
 8. Ordinary work, turn completion, and ordinary signal, stale, check, heartbeat, or other wake handling: do not call `fm_watch_arm_omp` again because continuity is extension-owned rather than model-memory-owned.
 9. An unexpected child close enters bounded exponential retry, and an exhausted retry or lost session lock is surfaced as a watcher failure instead of disappearing.

@@ -627,7 +627,11 @@ function stopGeneration(generation: SessionGeneration): ChildProcess | null {
   generation.retryTimer = null;
   generation.cleanupTimer = null;
   const child = generation.child;
-  if (child) child.kill("SIGTERM");
+  // HUP retires the cycle but lets the existing arm cover a missing successor.
+  if (child) {
+    child.kill(armHostMode.get(child) ? "SIGTERM" : "SIGHUP");
+    child.unref();
+  }
   generation.child = null;
   return child;
 }
@@ -1115,6 +1119,7 @@ export default function (pi: ExtensionAPI) {
       FM_HOME: fmHome,
       FM_ROOT_OVERRIDE: fmRoot,
       FM_CONFIG_OVERRIDE: config,
+      FM_WATCH_PRIMARY_PID: hostMode ? "" : String(process.pid),
       FM_WATCH_ARM_SCRIPT: hostMode ? hostScript : armScript,
       FM_WATCH_PREDECESSOR_ARM_PID: predecessorArmPid,
     };

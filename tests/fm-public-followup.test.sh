@@ -40,6 +40,11 @@ Promote the selected scout.
 
 ## Firstmate spec
 Verify promotion preserves the behavior under test.
+
+## Acceptance record
+Accept when: Promotion preserves the selected scout's task and delivery contract.
+Proof: The fixture observes the promoted instructions and published result.
+Evidence gate: NONE
 EOF
 }
 

@@ -157,6 +157,11 @@ Exercise T3 dispatch.
 
 ## Firstmate spec
 Verify the T3 lifecycle behavior under test.
+
+## Acceptance record
+Accept when: The T3 lifecycle behavior under test is proved.
+Proof: The fixture observes the expected public spawn and lifecycle result.
+Evidence gate: NONE
 EOF
 }
 

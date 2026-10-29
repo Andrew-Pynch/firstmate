@@ -310,7 +310,7 @@ run_native_ahoy_regressions() {
       OPENCODE_DB="$first_db" FM_HOME="$first_home" \
         OPENCODE_DISABLE_AUTOUPDATE=1 OPENCODE_DISABLE_LSP_DOWNLOAD=1 \
         OPENCODE_CONFIG_CONTENT='{"permission":{"*":"allow"}}' \
-        opencode run $OC_PRIVATE --format json --auto "/ahoy"
+        opencode run ${OC_PRIVATE:+"$OC_PRIVATE"} --format json --auto "/ahoy"
   ) >/dev/null || status=$?
   [ "$status" -eq 0 ] || fail "OpenCode native first-message Ahoy exited $status"
   session_id=$(sqlite3 "$first_db" "select id from $OC_SESSION_TABLE order by time_created desc limit 1;")
@@ -351,7 +351,7 @@ run_native_ahoy_regressions() {
       OPENCODE_DB="$later_db" FM_HOME="$later_home" \
         OPENCODE_DISABLE_AUTOUPDATE=1 OPENCODE_DISABLE_LSP_DOWNLOAD=1 \
         OPENCODE_CONFIG_CONTENT='{"permission":{"*":"allow"}}' \
-        opencode run $OC_PRIVATE --format json --auto --session "$session_id" "/ahoy"
+        opencode run ${OC_PRIVATE:+"$OC_PRIVATE"} --format json --auto --session "$session_id" "/ahoy"
   ) >/dev/null || status=$?
   [ "$status" -eq 0 ] || fail "OpenCode native later-message Ahoy exited $status"
   assistant_text=$(sqlite3 -json "$later_db" "$(sql_last_assistant_text "$session_id")" \

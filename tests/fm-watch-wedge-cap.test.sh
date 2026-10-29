@@ -1887,7 +1887,7 @@ test_wedge_cap_reports_gone_endpoint_on_terminal_override_route() {
     FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
     FM_WATCH_HANDLING_SUCCESSOR=1 \
     FM_STALE_ESCALATE_SECS=1 FM_POLL=1 FM_SIGNAL_GRACE=1 \
-    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 FM_WEDGE_MAX_ESCALATIONS=$max \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 FM_WEDGE_MAX_ESCALATIONS="$max" \
     PATH="$fakebin:$PATH" \
     "$WATCH" > "$out" &
   pid=$!
@@ -1908,7 +1908,7 @@ test_wedge_cap_reports_gone_endpoint_on_terminal_override_route() {
     FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
     FM_WATCH_HANDLING_SUCCESSOR=1 \
     FM_STALE_ESCALATE_SECS=1 FM_POLL=1 FM_SIGNAL_GRACE=1 \
-    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 FM_WEDGE_MAX_ESCALATIONS=$max \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 FM_WEDGE_MAX_ESCALATIONS="$max" \
     PATH="$fakebin:$PATH" \
     "$WATCH" > "$out" &
   pid=$!

@@ -190,7 +190,7 @@ test_line_is_bounded_and_keeps_its_counts() {
     printf '%s\n' "$(row long-row "$long_title" captain live - 1 in_flight)" \
       "$(row other-row "Other Row" captain live - 5 in_flight)" | jq -s -c '.')"
   width=60
-  out=$(run_line "$snap" FM_QUEUE_LINE_WIDTH=$width)
+  out=$(run_line "$snap" FM_QUEUE_LINE_WIDTH="$width")
   length=$(printf '%s' "$out" | jq -R 'length')
   [ "$length" -le "$width" ] || fail "the line is $length characters, over the $width bound: $out"
   assert_contains "$out" "⧗ 2 decisions" "cutting the item text must never cut the count"

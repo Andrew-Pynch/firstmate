@@ -23,10 +23,9 @@ When enabled, for each spawn Firstmate resolves one W3C `traceparent` carrier fo
 This feature parents no SDK span by itself.
 
 Because the injected carrier and the recorded carrier are the same string, an observer that reads the metadata reconstructs exactly the identity the child received.
-The delivery sits at the unconditional pre-launch environment site, so it covers ship and scout spawns across `claude`, `codex`, `opencode`, `pi`, `pi-signed`, `grok`, `kimi`, `cursor`, `gemini`, `muse`, `rovo`, `agy`, `devin`, `commandcode`, `polytoken`, and `cortex`, plus Secondmate spawns across that same set except the deliberately crewmate-only `gemini`, `muse`, `rovo`, `agy`, `devin`, `commandcode`, `polytoken`, and `cortex` adapters.
-This is the same coverage `GOTMPDIR` already has and requires no trace-specific `launch_template()` behavior.
-Ship and scout spawns reach that site on every pane-typed spawn backend (`tmux`, `herdr`, `zellij`, `orca`, `cmux`, `paseo`, `rex`); a Secondmate reaches it on every pane backend that accepts a Secondmate spawn (`tmux`, `herdr`, `zellij`, `rex`), because `bin/fm-spawn.sh` rejects a Secondmate on `orca`, `cmux`, and `paseo`.
-`t3code` has no pane, so its `claude` and `codex` ship, scout, and Secondmate spawns receive the same `TRACEPARENT` value under the same conditions through the backend's [per-directory harness environment](t3code-backend.md#per-directory-harness-environment) instead.
+The delivery sits at the shared pre-launch environment site, so it covers every supported ship, scout, and Secondmate launch; [runtime backend configuration](configuration.md#runtime-backend-configbackend--fm_backend) owns the supported combinations and limits.
+Pane-backed launches use the same environment channel as `GOTMPDIR` and require no trace-specific `launch_template()` behavior.
+T3 Code has no pane and receives the same `TRACEPARENT` value under the same conditions through its [per-directory harness environment](t3code-backend.md#per-directory-harness-environment) instead.
 
 ### Remote Secondmate routes
 

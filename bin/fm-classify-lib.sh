@@ -2190,21 +2190,23 @@ EOF
 # --- open-decision presentation record --------------------------------------
 #
 # The drain's OPEN DECISIONS section must never lose a decision, but a row the
-# same reader has already been shown in full needs no second reading. On
-# 2026-09-12/13, 237 of 386 drains re-printed the same 13 unchanged captain
-# decisions, for roughly 800k characters of one supervision session's
-# tool-result text. This record is what lets that section present a row once and
-# then report only its count.
+# same reader has already been shown in bounded form needs no second reading.
+# The record stores the full task/key/verb/note identity before display
+# truncation, so a change beyond the displayed prefix still re-presents the row.
 #
 # Reader identity is the pair (actor, session): the actor is main or branch, the
 # two separate conversations that share one home, and the session is the harness
 # pid state/.lock names while a session owns the home (bin/fm-lock.sh). A
 # missing, unreadable, malformed, or symlinked lock yields NO reader identity,
-# and an unidentified reader always gets every row in full - suppression is only
-# ever for a reader this record can name, so it can never hide a decision from
+# and an unidentified reader always gets the rows within display bounds.
+# Suppression is only ever for a reader this record can name, so it can never hide a decision from
 # the next session, from the other actor, or from a caller with no lock at all.
 # The actor is part of the identity because a shared record would make main and
 # branch alternately re-present the whole section.
+# A conversation rebuild within the same process must invalidate its actor's
+# record too: fm-sessionstart-run.sh owns the main reset at context boundaries,
+# and the Pi branch extension clears the branch record only when creating a new
+# conversation, preserving it when reopening that same conversation.
 #
 # This is presentation state only. status_open_decisions above remains the ONE
 # thing that decides what is open, and the fold's own cursor is untouched by

@@ -438,8 +438,9 @@
 #   superproject with read-tree and never moves submodule checkouts, so every
 #   pin move on the base would otherwise strand the next slot it hands out.
 #   Convergence happens before and after the base reset alike, and a submodule
-#   is only moved onto its pin after a fresh `fetch --prune` of its own origin
-#   proves its checked-out commit is contained in a remote branch; any submodule
+#   is only moved onto its pin after a fresh, pruned fetch of all origin branch
+#   heads proves its checked-out commit is contained in one of those branches.
+#   Tags and other remotes' tracking refs cannot supply that proof; any submodule
 #   that cannot be proven contained (an unpushed commit, no origin, a fetch or
 #   git error) refuses the spawn as uncommitted work and is left untouched.
 #   An origin-less slot cannot fetch, so its drift is still refused, reported as
@@ -4730,10 +4731,8 @@ EOF
   printf '%s' "$lines" >&2
 }
 
-# The containment proof convergence stands on: the submodule work tree is clean,
-# a fresh fetch of its own origin succeeds with --prune (so a deleted or rewritten
-# upstream branch cannot keep vouching for a commit), and the checked-out commit
-# is then reachable from a remote-tracking branch. Nothing is moved here.
+# The origin-only publication proof described in the launch contract above.
+# Nothing is moved here.
 spawn_submodule_checkout_contained() { # <worktree> <path>
   local sub=$1/$2 have unpushed
   [ -z "$(git -C "$sub" status --porcelain 2>/dev/null)" ] || return 1

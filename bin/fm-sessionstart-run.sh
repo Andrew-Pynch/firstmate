@@ -33,6 +33,10 @@
 #                           this process still holds the lock (the nudge stays
 #                           silent) and a plain instruction is enough when a new
 #                           process resumed an old session (the nudge fires).
+# Before routing startup/new/clear/compact/resume/fork, a verified lock owner
+# clears main's open-decision presentation record so replaced context sees the
+# decisions again even when the harness PID stays the same. Reload preserves it.
+# bin/fm-classify-lib.sh owns the record's identity and suppression contract.
 #
 # Every ordinary transport path exits 0, exactly like the nudge wrapper: a
 # Claude SessionStart exit 2 blocks session initialization, so a failed session

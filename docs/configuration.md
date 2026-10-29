@@ -1546,14 +1546,14 @@ A home that authenticates Claude through environment credentials on purpose shou
 A malformed file, a root that is not a readable directory, or a signed-out account refuses the launch and names the file to fix; Firstmate never falls back to the ambient account and never changes a global login or copies a credential.
 The spawn prints the pin as `account=` (plus `account_provider=` for Pi and omp) and records the same fields in the task record, so the session-start digest shows which account each worker launched on.
 
-Pins are not inherited into secondmate homes: the secondmate's own workers read that home's `config/claude-account` and `config/pi-account` files independently.
+Pins are not inherited into secondmate homes: the secondmate's own workers read that home's account files independently.
 A remote secondmate is launched on its host from its own home's configuration, so create the file in that remote home.
 
 [`bin/fm-worker-account-lib.sh`](../bin/fm-worker-account-lib.sh) owns parsing, the sign-in check, and the full list of credentials a Claude launch unsets; [runtime backend verification](verification/runtime-backends.md#worker-account-pin-sign-in-check) records the check against the real runners.
 
 ### Per-secondmate account pins
 
-To choose an account for one local secondmate's own agent, create `config/secondmate-accounts/<id>/claude-account` or `config/secondmate-accounts/<id>/pi-account` in the primary home.
+To choose an account for one local secondmate's own agent, create the matching account file from the [worker account table](#worker-account-pin-configclaude-account-configpi-account-configomp-account) under `config/secondmate-accounts/<id>/` in the primary home.
 Use the secondmate's registered identifier for `<id>`.
 These private files use the same [file format and provider selection](#file-format-and-provider-selection), sign-in checks, and refusal rules as the home-wide worker pins.
 
@@ -1627,7 +1627,8 @@ This keeps private brief content out of tracked files.
 When the file exists, `bin/fm-brief.sh` appends its text verbatim as the scaffold's last section, `# Home brief additions`, which defers to every other section of the brief, including the ship contract a later scout promotion appends below it.
 
 An absent or blank file changes nothing, while a present path that is not a readable regular file, or text carrying its own `Delivery contract: mode=` line, stops the scaffold before anything is written.
-The text is static and never executed or expanded; secondmate charters never take it, and the file is local to each home rather than part of secondmate inherited configuration.
+The text is static and never executed or expanded; secondmate charters never take it.
+The file is [inherited by secondmate homes](../bin/fm-config-inherit-lib.sh), so their own worker briefs receive the primary's standing instructions too.
 
 `bin/fm-brief.sh`'s header owns the placement rule and its safety argument.
 

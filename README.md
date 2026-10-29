@@ -42,7 +42,7 @@ Launching a supported harness inside it for your primary session instantiates yo
 ## Features
 
 - **One liaison** - you talk only to the first mate; it dispatches, supervises, escalates only real decisions, and reports plain outcomes.
-- **A visible crew** - every crewmate works in its own tmux window or Herdr tab, or in an experimental Zellij tab, experimental cmux workspace, experimental Tern block, experimental Orca terminal, or experimental T3 Code thread you can watch or interact with; the first mate reconciles.
+- **A visible crew** - every crewmate works in its own window, workspace, terminal, block, or thread you can watch or interact with; [runtime backend configuration](docs/configuration.md#runtime-backend-configbackend--fm_backend) lists the supported backends and their limits.
 - **Disposable worktrees** - each task runs in a clean [treehouse](https://github.com/kunchenguid/treehouse) git worktree, or an Orca-managed worktree when `backend=orca`, so parallel work on one repo never collides.
 - **Two task shapes** - ship tasks deliver authorized changes; scout tasks leave standalone investigation reports when the intake contract warrants separate research.
 - **Explicit project modes** - each project ships via `no-mistakes`, `direct-PR`, or `local-only`, with an optional `+yolo` merge-autonomy flag, an optional `branch=<prefix>` override for the default `fm/` ship-branch prefix, and an optional `forge=gerrit` binding under which the worker publishes a Gerrit change instead of opening a pull request.

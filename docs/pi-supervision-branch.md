@@ -159,6 +159,7 @@ That keeps the branch reasoning from the current generated prompt and the curren
 
 A model or effort change triggers a rebuild inside one main session.
 Only such a rebuild continues that session's own conversation, and `state/.branch-session` records it.
+Creating a fresh conversation clears the branch's [open-decision presentation record](../bin/fm-classify-lib.sh); reopening that same conversation during a model or effort rebuild preserves it.
 
 Earlier conversations stay on disk under `state/branch-session/`, exactly as Pi keeps its own session files.
 They are never reopened as live branch context.

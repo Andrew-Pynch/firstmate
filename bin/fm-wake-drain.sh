@@ -15,10 +15,9 @@
 # .wake-queue.actor-view.*) is created and removed under the queue lock, so one
 # found while taking that lock was left by a drain that died mid-write; each
 # locked drain rotates such leftovers away before doing anything else.
-# The OPEN DECISIONS section presents each row in full once per reader, then
-# reports a count and the re-present command; fm-classify-lib.sh's
-# "open-decision presentation record" owns that reader identity.
-# FM_OPEN_DECISIONS_REVEAL forces every row to print in full again, and
+# fm-classify-lib.sh's "open-decision presentation record" owns the
+# OPEN DECISIONS reader identity and suppression policy.
+# FM_OPEN_DECISIONS_REVEAL prints the current rows again within display bounds, and
 # FM_OPEN_DECISIONS_NO_RECORD does the same while recording nothing, for a
 # caller whose stdout no reader sees.
 # FM_STATUS_PRESENTATION_LOCK_TIMEOUT sets the positive whole-second wait for
@@ -487,14 +486,9 @@ EOF
 # lifetime, while still never dropping an old buried decision (see
 # fm-classify-lib.sh's "incremental (cursor-backed) open-decisions fold").
 #
-# Detection is unchanged; only RE-presentation is bounded. A row this reader was
-# already shown in full is counted instead of printed again, and
-# fm-classify-lib.sh's "open-decision presentation record" owns who counts as
-# the same reader: an unnamed reader, a new session, or FM_OPEN_DECISIONS_REVEAL=1
-# re-presents every row in full, and the count line carries the re-present
-# command and the unchanged tasks, so nothing becomes unreachable. A row whose
-# note changed is not the row that was presented and prints again. Bounded and
-# silent: prints nothing when no decision is open, which is the common case.
+# The count line carries the unchanged tasks and re-present command.
+# Reader identity and full-row change detection follow fm-classify-lib.sh's
+# presentation record contract. Prints nothing when no decision is open.
 print_open_decisions_section() {
   local snapshot=${1:-} open task key verb note line item_bytes=220 global_bytes=4000
   local output='' used=0 shown=0 omitted=0 bytes identity
@@ -515,9 +509,8 @@ print_open_decisions_section() {
   # can never retire a row on behalf of a reader that never saw it.
   [ -z "${FM_OPEN_DECISIONS_NO_RECORD:-}" ] || counting=0
 
-  # The reader's own record of what it has been shown in full. Empty means
-  # present everything, which is what this home cannot name the reader, what a
-  # fresh session, and what an explicit reveal all produce.
+  # Full identities of the bounded rows already displayed to this reader.
+  # An empty record makes every current row eligible for display.
   if [ "$counting" -eq 1 ] && [ -z "${FM_OPEN_DECISIONS_REVEAL:-}" ]; then
     presented=$(fm_open_decisions_presented_load "$STATE" "$ACTOR")
   fi
@@ -529,7 +522,7 @@ print_open_decisions_section() {
     [ "$key" = default ] || line="$line [key=$key]"
     line="$line $verb: $note"
     if [ -n "$presented" ] && _fm_open_decisions_presented_has "$presented" "$identity"; then
-      # Already read in full by this same reader: still presented, so it stays in
+      # Already displayed to this same reader: still presented, so it stays in
       # the record, but it costs this drain one counted entry instead of a line.
       unchanged=$((unchanged + 1))
       record="$record$identity
@@ -551,7 +544,7 @@ print_open_decisions_section() {
     bytes=$(( ${#line} + 1 ))
     if [ $((used + bytes)) -gt "$global_bytes" ]; then
       # Over the cap this row was NOT presented, so it stays out of the record
-      # and prints in full on the next drain rather than being counted later.
+      # and is eligible for display on the next drain rather than counted later.
       omitted=$((omitted + 1))
       continue
     fi
@@ -568,7 +561,7 @@ EOF
   # Stage the reader's next record before anything reaches stdout; the caller
   # commits it only after this section is delivered. No named reader, a
   # non-reader caller, or an unwritable state dir simply means the next drain
-  # presents in full again.
+  # presents the rows again within display bounds.
   if [ "$counting" -eq 1 ]; then
     presented_tmp="$(_fm_open_decisions_presented_path "$STATE" "$ACTOR").tmp.$$"
     if printf '%s' "$record" | fm_open_decisions_presented_stage "$STATE" "$presented_tmp"; then

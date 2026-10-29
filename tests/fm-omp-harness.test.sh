@@ -167,6 +167,11 @@ case "$1" in
   --version)
     [ -z "$version" ] || printf 'omp v%s\n' "$version"
     ;;
+  usage)
+    if [ -f "${PI_CODING_AGENT_DIR:-/nonexistent}/omp-signed-in" ]; then
+      printf '{"accounts":[{"provider":"openai-codex","identityKey":"email:fm-test@example.invalid"}]}\n'
+    fi
+    ;;
 esac
 exit 0
 SH
@@ -425,6 +430,27 @@ test_secondmate_omp_profile_pin() {
   assert_grep 'omp_profile=speak4' "$world/home/state/sm.meta" "the task record must carry the omp profile pin"
   assert_contains "$out" " omp_profile=speak4" "the spawned line must report the omp profile pin: $out"
   pass "fm-spawn: a pinned local omp secondmate launches with --profile and validates its model under that profile"
+}
+
+test_secondmate_omp_profile_conflicting_account_refuses() {
+  local world out status account_config scope
+  for scope in home secondmate; do
+    world=$(make_omp_secondmate_world "secondmate-omp-conflict-$scope")
+    mkdir -p "$world/home/config/secondmate-accounts/sm" "$world/account"
+    : > "$world/account/omp-signed-in"
+    printf 'speak4\n' > "$world/home/config/secondmate-accounts/sm/omp-profile"
+    account_config="$world/home/config"
+    [ "$scope" != secondmate ] || account_config="$account_config/secondmate-accounts/sm"
+    printf '%s\nopenai-codex\n' "$world/account" > "$account_config/omp-account"
+    out=$(run_omp_secondmate_spawn "$world" omp --secondmate --model openai-codex/gpt-6-astra)
+    status=$?
+    expect_code 1 "$status" "conflicting $scope account and profile pins must refuse: $out"
+    assert_contains "$out" "$world/home/config/secondmate-accounts/sm/omp-profile conflicts with $account_config/omp-account" \
+      "the refusal must identify both effective pin files"
+    assert_absent "$world/home/state/sm.meta" "a conflicting pin must not publish metadata"
+    [ ! -s "$world/launch.log" ] || fail "a conflicting pin must not launch an agent"
+  done
+  pass "fm-spawn: conflicting home or per-secondmate account and profile pins refuse before launch"
 }
 
 test_secondmate_omp_profile_absent_or_foreign_adds_nothing() {
@@ -1790,6 +1816,7 @@ test_spawn_model_validation_scoped_to_listed_providers
 test_secondmate_launch_relies_on_discovery
 test_secondmate_config_pinned_model_is_validated
 test_secondmate_omp_profile_pin
+test_secondmate_omp_profile_conflicting_account_refuses
 test_secondmate_omp_profile_absent_or_foreign_adds_nothing
 test_secondmate_omp_profile_malformed_refuses
 test_secondmate_requires_discoverable_supervision_extensions

@@ -10,9 +10,7 @@
 # (primary) home. Only a local secondmate's own omp agent reads it: ships,
 # scouts, other harnesses, and remote secondmates never do, and there is no
 # home-wide fallback file. It names an omp profile (`omp --profile <name>`,
-# omp's own isolated auth, sessions, settings, and caches); it is independent
-# of the worker account pin in bin/fm-worker-account-lib.sh, which pins a
-# runner's credential root rather than an omp profile.
+# omp's own isolated auth, sessions, settings, and caches).
 #
 # The pin is opt-in: an absent file is no pin, and the launch keeps today's
 # ambient behavior byte for byte. A present file must hold one profile name
@@ -55,7 +53,7 @@ fm_omp_profile_read() {
 # endpoint exists, and bin/fm-control.sh before a relaunch stops the live
 # agent.
 fm_omp_profile_select() {
-  local harness=$1 config=$2 mate=${3:-} raw=${4:-} cfg name rc
+  local harness=$1 config=$2 mate=${3:-} raw=${4:-} cfg name rc account_config
   [ "$harness" = omp ] && [ -n "$mate" ] || return 0
   cfg="$config/secondmate-accounts/$mate/omp-profile"
   name=$(fm_omp_profile_read "$cfg")
@@ -75,6 +73,11 @@ fm_omp_profile_select() {
   esac
   if [ -n "$raw" ]; then
     echo "error: $cfg pins secondmate $mate to omp profile $name, and a raw omp launch command runs verbatim, so it cannot carry --profile; launch with --harness omp instead, or remove $cfg" >&2
+    return 1
+  fi
+  account_config=$(fm_worker_account_config "$harness" "$config" "$mate") || return 1
+  if [ -e "$account_config/omp-account" ] || [ -L "$account_config/omp-account" ]; then
+    echo "error: $cfg conflicts with $account_config/omp-account: omp --profile overrides the pinned account directory; configure only one of these pins" >&2
     return 1
   fi
   printf '%s\n' "$name"

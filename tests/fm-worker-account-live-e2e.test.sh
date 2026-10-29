@@ -141,6 +141,10 @@ omp_live_cases() {
     omp usage accounts --json --provider openai-codex 2>/dev/null </dev/null)
   [ "$(printf '%s\n' "$out" | jq -r '.accounts | length' 2>/dev/null)" = 0 ] ||
     fail "omp $version: a named profile no longer overrides PI_CODING_AGENT_DIR ($out), so the launch's OMP_PROFILE shedding needs revisiting in bin/fm-spawn.sh"
+  out=$(env -i HOME="$HOME" PATH="$PATH" PI_CODING_AGENT_DIR="$signed" \
+    omp --profile fm-live usage accounts --json --provider openai-codex 2>/dev/null </dev/null)
+  [ "$(printf '%s\n' "$out" | jq -r '.accounts | length' 2>/dev/null)" = 0 ] ||
+    fail "omp $version: --profile no longer overrides PI_CODING_AGENT_DIR ($out), so the conflicting-pin refusal needs revisiting in bin/fm-omp-profile-lib.sh"
   pass "omp $version: the pin check reads the root's stored logins, and a named profile would replace the pinned root"
   CHECKED="$CHECKED omp"
 }

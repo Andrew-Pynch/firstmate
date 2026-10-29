@@ -1586,7 +1586,8 @@ There is no home-wide fallback file.
 
 Only a local secondmate's own omp agent reads this file.
 Ships, scouts, other runners, and remote secondmates never read it, and another secondmate's file never applies.
-The profile pin is independent of the [per-secondmate account pins](#per-secondmate-account-pins), which select a Claude or Pi login root rather than an omp profile.
+The profile pin cannot be combined with an effective `omp-account` pin from the home or [per-secondmate account pins](#per-secondmate-account-pins), because omp gives `--profile` precedence over the pinned account directory.
+Conflicting pins refuse before launch or before a relaunch stops the current agent.
 
 For example, `config/secondmate-accounts/speak4/omp-profile` containing `speak4` launches the local secondmate named `speak4` with `omp --profile speak4`.
 An empty, malformed, or unreadable file refuses with its path before any worker endpoint, local copy, or task record exists, and never falls back to the default profile.

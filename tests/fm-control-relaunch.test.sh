@@ -1092,6 +1092,47 @@ SH
   pass "fm-control relaunch: mate pins are re-read for Claude and Pi, and unusable pins refuse before stopping the agent"
 }
 
+test_secondmate_omp_profile_conflict_refuses_before_stop() {
+  local dir out rc scope account_config id=rl-sm-omp-conflict
+  for scope in home secondmate; do
+    dir=$(new_case "sm-omp-conflict-$scope" "$id")
+    fm_git_worktree "$dir/proj" "$dir/wt" "task-$id"
+    mkdir -p "$dir/home/config/secondmate-accounts/$id" "$dir/account" "$dir/wt/data"
+    printf '%s\n' "$id" > "$dir/wt/.fm-secondmate-home"
+    printf '# agents\n' > "$dir/wt/AGENTS.md"
+    printf '# charter\n' > "$dir/wt/data/charter.md"
+    printf 'omp openai-codex/gpt-6-astra\n' > "$dir/home/config/secondmate-harness"
+    printf 'speak4\n' > "$dir/home/config/secondmate-accounts/$id/omp-profile"
+    account_config="$dir/home/config"
+    [ "$scope" != secondmate ] || account_config="$account_config/secondmate-accounts/$id"
+    printf '%s\nopenai-codex\n' "$dir/account" > "$account_config/omp-account"
+    cat > "$dir/fakebin/omp" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = usage ]; then
+  printf '{"accounts":[{"provider":"openai-codex","identityKey":"email:fm-test@example.invalid"}]}\n'
+fi
+SH
+    chmod +x "$dir/fakebin/omp"
+    printf omp > "$dir/fake/command"
+    printf omp > "$dir/fake/becomes"
+    {
+      printf 'window=fmses:fm-%s\nendpoint_task_id=%s\n' "$id" "$id"
+      printf 'worktree=%s\nproject=%s\nhome=%s\n' "$dir/wt" "$dir/wt" "$dir/wt"
+      printf 'harness=omp\nkind=secondmate\nmode=secondmate\nyolo=off\nmodel=openai-codex/gpt-6-astra\neffort=default\n'
+    } > "$dir/home/state/$id.meta"
+    cp "$dir/home/state/$id.meta" "$dir/meta-before"
+    out=$(run_control "$dir" "$id" relaunch); rc=$?
+    expect_code 1 "$rc" "conflicting $scope pins must refuse relaunch: $out"
+    assert_contains "$out" "$dir/home/config/secondmate-accounts/$id/omp-profile conflicts with $account_config/omp-account" \
+      "the refusal must identify both effective pin files"
+    [ "$(cat "$dir/fake/command")" = omp ] || fail "the existing agent must remain running"
+    [ ! -s "$dir/fake/literal" ] || fail "a conflicting pin must send no lifecycle input"
+    [ ! -s "$dir/fake/keys" ] || fail "a conflicting pin must send no lifecycle keys"
+    cmp -s "$dir/meta-before" "$dir/home/state/$id.meta" || fail "a conflicting pin must preserve metadata"
+  done
+  pass "fm-control relaunch: conflicting omp account and profile pins refuse before stopping the agent"
+}
+
 test_pi_exclude_tools_follow_the_relaunch() {
   local dir out rc id=rl-pi-excl
   dir=$(new_case pi-exclude "$id")
@@ -3092,6 +3133,7 @@ test_omp_relaunch_keeps_its_per_spawn_account_and_checks_it_before_stop
 test_signed_out_worker_account_pin_refuses_before_stop
 test_worker_account_pin_follows_the_relaunch
 test_secondmate_account_pin_follows_relaunch_and_refuses_before_stop
+test_secondmate_omp_profile_conflict_refuses_before_stop
 test_pi_exclude_tools_follow_the_relaunch
 test_exclude_tools_refusals_happen_before_the_agent_stops
 test_explicit_model_wins_over_the_recorded_one

@@ -195,6 +195,7 @@ PRIMARY_PID=${FM_WATCH_PRIMARY_PID:-}
 PRIMARY_IDENTITY=
 PRIMARY_LOCK_PID=
 PRIMARY_BACKEND_LOADED=0
+PRIMARY_ALERTED=0
 if [ -n "$PRIMARY_PID" ]; then
   case "$PRIMARY_PID" in
     *[!0-9]*|0|1)
@@ -249,6 +250,7 @@ primary_send_alert() {
 # passive and scoped on every supported backend; no shared inventory scan.
 primary_loss_alert() {
   local meta target backend label reason alert_locked=0 sender_pid sender_status=0 queue_status=0
+  [ "$PRIMARY_ALERTED" -eq 0 ] || return 0
   if healthy_watcher && replacement_primary_alive; then return 0; fi
   if [ "$PRIMARY_BACKEND_LOADED" -eq 0 ]; then
     # shellcheck source=/dev/null
@@ -266,6 +268,7 @@ primary_loss_alert() {
     if fm_lock_acquire_wait_max "$PRIMARY_ALERT_LOCK" 1; then
       if [ "$(cat "$PRIMARY_ALERT_MARKER" 2>/dev/null || true)" = "$PRIMARY_PID:$PRIMARY_IDENTITY" ]; then
         fm_lock_release "$PRIMARY_ALERT_LOCK"
+        PRIMARY_ALERTED=1
         return 0
       fi
       alert_locked=1
@@ -274,6 +277,7 @@ primary_loss_alert() {
     fi
     # A live queue-lock holder must not prevent the independent alert channel
     # from seeing primary loss. This bounded sender remains our waited child.
+    PRIMARY_ALERTED=1
     primary_send_alert "$reason" &
     sender_pid=$!
     fm_wake_append check primary-supervision-lost "$reason" || queue_status=1
@@ -295,18 +299,22 @@ primary_loss_alert() {
 }
 
 primary_shutdown_handoff() {
-  local deadline poll=${FM_POLL:-15}
+  local timer poll=${FM_POLL:-15}
   case "$poll" in ''|*[!0-9]*|0) poll=15 ;; esac
-  # Reserve the last whole second for endpoint proof and durable publication,
-  # rather than spending the entire poll budget waiting for a replacement.
-  deadline=$((SECONDS + poll - 1))
+  # A relative sleep does not lose the fractional second of the current clock
+  # tick. Reserve half a second for endpoint proof and durable publication.
+  sleep "$((poll - 1)).5" &
+  timer=$!
   while :; do
     if healthy_watcher && { primary_alive || replacement_primary_alive; }; then
+      kill "$timer" 2>/dev/null || true
+      wait "$timer" 2>/dev/null || true
       return 0
     fi
-    [ "$SECONDS" -lt "$deadline" ] || break
+    fm_pid_alive "$timer" || break
     sleep 0.1
   done
+  wait "$timer" 2>/dev/null || true
   primary_loss_alert
 }
 # Lifecycle writes are bounded and best-effort so an observability failure

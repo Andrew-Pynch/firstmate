@@ -826,6 +826,8 @@ test_markerless_legacy_queue_is_recovered_on_arm() {
 
   start_rearm_arm "$home" "$state" "$fakebin" "$dir/arm.out"
   wait_for_exit "$ARM_PID" "$REARM_EXIT_POLLS" || fail "markerless legacy queue was stranded at re-arm"
+  # The stalled-main check can surface this old queue before rearm-resurface.
+  # Assert recovery and delivery below, not which check wins that race.
   case "$(cat "$state/.watcher-down" 2>/dev/null || true)" in
     pending:downtime:*|announced:downtime:*) ;;
     *) fail "markerless legacy queue was not adopted into downtime recovery" ;;
@@ -1956,8 +1958,9 @@ test_append_wakes_handling_successor after-ack missing identical
 test_append_wakes_handling_successor after-ack malformed identical
 test_primary_exit_alerts_with_live_work() {
   local mode=$1 dir state fakebin primary i armout script replacement='' peer='' send_log grace=999999 watcher output
+  local handoff_delay=${2:-0.8} poll=${3:-3}
   local anchor_pid=''
-  dir=$(make_supercase "primary-exit-$mode")
+  dir=$(make_supercase "primary-exit-$mode-$handoff_delay-$poll")
   state="$dir/state"
   fakebin="$dir/fakebin"
   armout="$dir/arm.out"
@@ -1985,9 +1988,9 @@ SH
     anchor_pid=$!
     printf '%s\n' "$anchor_pid" > "$state/.lock"
   fi
-  if [ "$mode" = cycle-close ] || [ "$mode" = happy ] || [ "$mode" = pipe-close ]; then grace=0; fi
+  if [ "$mode" = cycle-close ] || [ "$mode" = happy ] || [ "$mode" = pipe-close ] || [ "$mode" = contention-pipe-close ]; then grace=0; fi
   output=$armout
-  if [ "$mode" = pipe ] || [ "$mode" = pipe-close ]; then
+  if [ "$mode" = pipe ] || [ "$mode" = pipe-close ] || [ "$mode" = contention-pipe-close ]; then
     output="$dir/arm.pipe"
     mkfifo "$output"
     if [ "$mode" = pipe ]; then
@@ -2000,7 +2003,7 @@ SH
     peer=$!
   fi
   PATH="$fakebin:$PATH" FM_HOME="$dir" FM_STATE_OVERRIDE="$state" \
-    FM_WATCH_PRIMARY_PID="$primary" FM_POLL=3 FM_SIGNAL_GRACE="$grace" \
+    FM_WATCH_PRIMARY_PID="$primary" FM_POLL="$poll" FM_SIGNAL_GRACE="$grace" \
     FM_FAKE_TMUX_WINDOW='fixture:fixture' \
     FM_TEST_TELEGRAM_LOG="$send_log" FM_TEST_TELEGRAM_FAIL="$([ "$mode" = send-failure ] && echo 1 || echo 0)" \
     FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
@@ -2022,7 +2025,7 @@ SH
   fi
   if [ "$mode" = attached ]; then
     PATH="$fakebin:$PATH" FM_HOME="$dir" FM_STATE_OVERRIDE="$state" \
-      FM_WATCH_PRIMARY_PID="$primary" FM_POLL=3 FM_SIGNAL_GRACE=999999 \
+      FM_WATCH_PRIMARY_PID="$primary" FM_POLL="$poll" FM_SIGNAL_GRACE=999999 \
       FM_FAKE_TMUX_WINDOW='fixture:fixture' \
       FM_TEST_TELEGRAM_LOG="$send_log" \
       FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
@@ -2031,7 +2034,7 @@ SH
     wait_for_file_text "$dir/peer.out" 'watcher: attached' \
       || fail "second primary monitor did not attach"
   fi
-  if [ "$mode" = contention ] || [ "$mode" = queue-contention ]; then
+  if [ "$mode" = contention ] || [ "$mode" = queue-contention ] || [ "$mode" = contention-pipe-close ]; then
     local held_lock="$state/.primary-loss-alert.lock"
     [ "$mode" != queue-contention ] || held_lock="$state/.wake-queue.lock"
     bash -c '. "$1"; fm_lock_acquire_wait "$2"; touch "$3"; sleep 60' _ \
@@ -2044,7 +2047,7 @@ SH
     done
     [ -e "$dir/alert-lock-ready" ] || fail "dedupe lock fixture did not acquire its lock"
   fi
-  if [ "$mode" = cycle-close ] || [ "$mode" = happy ] || [ "$mode" = pipe-close ]; then
+  if [ "$mode" = cycle-close ] || [ "$mode" = happy ] || [ "$mode" = pipe-close ] || [ "$mode" = contention-pipe-close ]; then
     watcher=$(cat "$state/.watch.lock/pid")
     kill -STOP "$ARM_PID"
     printf 'done: fixture completed while primary was alive\n' > "$state/live.status"
@@ -2076,7 +2079,7 @@ SH
     kill "$primary"
     wait "$primary" 2>/dev/null || true
   fi
-  if [ "$mode" = cycle-close ] || [ "$mode" = pipe-close ]; then
+  if [ "$mode" = cycle-close ] || [ "$mode" = pipe-close ] || [ "$mode" = contention-pipe-close ]; then
     kill -CONT "$ARM_PID"
   elif [ "$mode" != crash ] && [ "$mode" != pipe ] && [ "$mode" != anchor ] && [ "$mode" != contention ] && [ "$mode" != queue-contention ]; then
     # omp shutdown retires the arm before its process disappears.
@@ -2087,8 +2090,8 @@ SH
     fi
   fi
   if [ "$mode" = handoff ] || [ "$mode" = handoff-new ]; then
-    # A replacement may start later and in another process after quit.
-    sleep 0.2
+    # Exercise both delayed and immediate replacement, including short polls.
+    [ "$handoff_delay" = 0 ] || sleep "$handoff_delay"
     if [ "$mode" = handoff-new ]; then
       kill "$primary"
       wait "$primary" 2>/dev/null || true
@@ -2096,9 +2099,8 @@ SH
       primary=$!
       printf '%s\n' "$primary" > "$state/.lock"
     fi
-    sleep 0.6
     PATH="$fakebin:$PATH" FM_HOME="$dir" FM_STATE_OVERRIDE="$state" \
-      FM_WATCH_PRIMARY_PID="$primary" FM_POLL=3 FM_SIGNAL_GRACE=999999 \
+      FM_WATCH_PRIMARY_PID="$primary" FM_POLL="$poll" FM_SIGNAL_GRACE=999999 \
       FM_FAKE_TMUX_WINDOW='fixture:fixture' \
       FM_WATCH_PREDECESSOR_ARM_PID="$ARM_PID" \
       FM_TEST_TELEGRAM_LOG="$send_log" \
@@ -2144,7 +2146,7 @@ SH
     fail "dead primary with live work left no durable alert within one poll"
   fi
   wait "$ARM_PID" 2>/dev/null || true
-  if [ "$mode" = contention ]; then
+  if [ "$mode" = contention ] || [ "$mode" = contention-pipe-close ]; then
     kill "$peer" 2>/dev/null || true
     grep -q 'alert dedupe lock unavailable' "$state/.wake-queue" \
       || fail "dedupe contention did not leave a durable alert"
@@ -2195,6 +2197,10 @@ test_primary_identity_failure_is_named_without_an_outage_alert() {
   pass "watch-arm: unknown initial session anchor refuses before launching a watcher"
 }
 
+test_primary_exit_alerts_with_live_work contention-pipe-close
+test_primary_exit_alerts_with_live_work handoff 0 2
+test_primary_exit_alerts_with_live_work handoff-new 0 2
+test_primary_exit_alerts_with_live_work handoff 0.8 2
 test_primary_exit_alerts_with_live_work queue-contention
 test_primary_exit_alerts_with_live_work happy
 test_primary_exit_alerts_with_live_work anchor

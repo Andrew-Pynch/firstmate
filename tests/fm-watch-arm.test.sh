@@ -2031,9 +2031,11 @@ SH
     wait_for_file_text "$dir/peer.out" 'watcher: attached' \
       || fail "second primary monitor did not attach"
   fi
-  if [ "$mode" = contention ]; then
+  if [ "$mode" = contention ] || [ "$mode" = queue-contention ]; then
+    local held_lock="$state/.primary-loss-alert.lock"
+    [ "$mode" != queue-contention ] || held_lock="$state/.wake-queue.lock"
     bash -c '. "$1"; fm_lock_acquire_wait "$2"; touch "$3"; sleep 60' _ \
-      "$ROOT/bin/fm-wake-lib.sh" "$state/.primary-loss-alert.lock" "$dir/alert-lock-ready" &
+      "$ROOT/bin/fm-wake-lib.sh" "$held_lock" "$dir/alert-lock-ready" &
     peer=$!
     i=0
     while [ "$i" -lt 100 ] && [ ! -e "$dir/alert-lock-ready" ]; do
@@ -2076,7 +2078,7 @@ SH
   fi
   if [ "$mode" = cycle-close ] || [ "$mode" = pipe-close ]; then
     kill -CONT "$ARM_PID"
-  elif [ "$mode" != crash ] && [ "$mode" != pipe ] && [ "$mode" != anchor ] && [ "$mode" != contention ]; then
+  elif [ "$mode" != crash ] && [ "$mode" != pipe ] && [ "$mode" != anchor ] && [ "$mode" != contention ] && [ "$mode" != queue-contention ]; then
     # omp shutdown retires the arm before its process disappears.
     kill -HUP "$ARM_PID"
     if [ "$mode" = two-hup ]; then
@@ -2115,6 +2117,20 @@ SH
     [ "$mode" = empty ] || wait "$primary" 2>/dev/null || true
     pass "watch-arm: $mode shutdown does not report lost supervision"
     return
+  fi
+  if [ "$mode" = queue-contention ]; then
+    i=0
+    while [ "$i" -lt 40 ] && [ ! -s "$send_log" ]; do
+      sleep 0.1
+      i=$((i + 1))
+    done
+    if [ ! -s "$send_log" ]; then
+      kill "$peer" "$ARM_PID" 2>/dev/null || true
+      fail "a held wake-queue lock suppressed the independent Telegram alert"
+    fi
+    kill "$peer" 2>/dev/null || true
+    wait "$peer" 2>/dev/null || true
+    peer=''
   fi
   i=0
   while [ "$i" -lt 40 ]; do
@@ -2179,6 +2195,7 @@ test_primary_identity_failure_is_named_without_an_outage_alert() {
   pass "watch-arm: unknown initial session anchor refuses before launching a watcher"
 }
 
+test_primary_exit_alerts_with_live_work queue-contention
 test_primary_exit_alerts_with_live_work happy
 test_primary_exit_alerts_with_live_work anchor
 test_primary_exit_alerts_with_live_work contention

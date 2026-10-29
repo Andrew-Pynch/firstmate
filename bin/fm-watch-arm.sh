@@ -64,8 +64,9 @@
 # while waiting, so an abruptly lost primary cannot leave an unread cycle.
 # On omp's shutdown HUP, this same arm retires its watcher but remains for at
 # most FM_POLL seconds to allow a replacement to establish supervision.
-# Without a healthy successor and with a recorded live endpoint it queues
-# primary-supervision-lost for the next drain and sends the Telegram alert.
+# Without a healthy successor and with a recorded live endpoint it starts the
+# Telegram send independently and queues primary-supervision-lost for the next
+# drain, so queue-lock contention cannot suppress the external alert.
 # A lost output pipe also alerts, even before readiness can be reported.
 # Sender failure adds a durable delivery-failure row so missing Telegram
 # configuration is visible at the next drain without delaying the first alert.
@@ -238,10 +239,16 @@ replacement_primary_alive() {
   [ "$FM_LOCK_INSPECT_STATE" = held ] && [ "$FM_LOCK_INSPECT_PID" != "$PRIMARY_LOCK_PID" ]
 }
 
+primary_send_alert() {
+  [ -x "$SCRIPT_DIR/fm-telegram-send.sh" ] || return 127
+  FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" \
+    "$SCRIPT_DIR/fm-telegram-send.sh" "$1" >/dev/null 2>&1
+}
+
 # Only recorded endpoints in this home count. The backend owner keeps this
 # passive and scoped on every supported backend; no shared inventory scan.
 primary_loss_alert() {
-  local meta target backend label reason
+  local meta target backend label reason alert_locked=0 sender_pid sender_status=0 queue_status=0
   if healthy_watcher && replacement_primary_alive; then return 0; fi
   if [ "$PRIMARY_BACKEND_LOADED" -eq 0 ]; then
     # shellcheck source=/dev/null
@@ -261,24 +268,28 @@ primary_loss_alert() {
         fm_lock_release "$PRIMARY_ALERT_LOCK"
         return 0
       fi
-      if ! fm_wake_append check primary-supervision-lost "$reason" \
-        || ! printf '%s\n' "$PRIMARY_PID:$PRIMARY_IDENTITY" > "$PRIMARY_ALERT_MARKER"; then
-        fm_lock_release "$PRIMARY_ALERT_LOCK"
-        return 1
+      alert_locked=1
+    else
+      reason="$reason (alert dedupe lock unavailable)"
+    fi
+    # A live queue-lock holder must not prevent the independent alert channel
+    # from seeing primary loss. This bounded sender remains our waited child.
+    primary_send_alert "$reason" &
+    sender_pid=$!
+    fm_wake_append check primary-supervision-lost "$reason" || queue_status=1
+    if [ "$alert_locked" -eq 1 ]; then
+      if [ "$queue_status" -eq 0 ]; then
+        printf '%s\n' "$PRIMARY_PID:$PRIMARY_IDENTITY" > "$PRIMARY_ALERT_MARKER" || queue_status=1
       fi
       fm_lock_release "$PRIMARY_ALERT_LOCK"
-    else
-      # Dedupe contention cannot suppress the only durable outage report.
-      fm_wake_append check primary-supervision-lost "$reason (alert dedupe lock unavailable)" || return 1
     fi
-    if [ -x "$SCRIPT_DIR/fm-telegram-send.sh" ]; then
-      if ! FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" \
-        "$SCRIPT_DIR/fm-telegram-send.sh" "$reason" >/dev/null 2>&1; then
-        fm_wake_append check primary-supervision-lost "$reason (Telegram delivery failed)" || return 1
-      fi
-    else
-      fm_wake_append check primary-supervision-lost "$reason (Telegram sender unavailable)" || return 1
-    fi
+    wait "$sender_pid" || sender_status=$?
+    [ "$queue_status" -eq 0 ] || return 1
+    case "$sender_status" in
+      0) ;;
+      127) fm_wake_append check primary-supervision-lost "$reason (Telegram sender unavailable)" || return 1 ;;
+      *) fm_wake_append check primary-supervision-lost "$reason (Telegram delivery failed)" || return 1 ;;
+    esac
     return 0
   done
 }
@@ -995,9 +1006,9 @@ while :; do
               child_out=
               exit 0
             fi
-            primary_loss_alert
             cleanup_child
             wait "$child" 2>/dev/null || true
+            primary_loss_alert
             cycle_log_append 1 none primary-session-lost none
             exit 1
           fi

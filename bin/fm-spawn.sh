@@ -1213,7 +1213,7 @@ for a in "$@"; do
     ;;
   --project-token) want_value=project_token ;;
   --project-token=*)
-    PROJECT_TOKEN=${a#--project-token=}
+    PROJECT_TOKEN=${a#*=}
     PROJECT_TOKEN_SET=1
     ;;
   *) POS+=("$a") ;;
@@ -4836,7 +4836,7 @@ freshen_spawn_worktree_base() { # <worktree> <base-branch> <project> <mode>; 2 w
   if [ -n "$status" ]; then
     drift=$(spawn_submodule_drift_paths "$worktree" "$status") || {
       echo "error: pooled worktree '$worktree' is not clean; refusing to discard uncommitted work while refreshing its base" >&2
-      return 1
+      return 2
     }
     if ! spawn_worktree_has_origin_config "$worktree"; then
       if describe_stale_submodule_pins "$worktree" "$drift"; then
@@ -4844,14 +4844,14 @@ freshen_spawn_worktree_base() { # <worktree> <base-branch> <project> <mode>; 2 w
       else
         echo "error: pooled worktree '$worktree' is not clean; refusing to discard uncommitted work while refreshing its base" >&2
       fi
-      return 1
+      return 2
     fi
     while IFS= read -r path; do
       [ -n "$path" ] || continue
       spawn_submodule_checkout_contained "$worktree" "$path" && continue
       echo "error: submodule '$path' in pooled worktree '$worktree' holds a commit a fresh fetch of its origin cannot prove pushed" >&2
       echo "error: pooled worktree '$worktree' is not clean; refusing to discard uncommitted work while refreshing its base" >&2
-      return 1
+      return 2
     done <<EOF
 $drift
 EOF

@@ -897,7 +897,7 @@ test_native_restart_rearms_undelivered_stale_warning() {
       export FM_HOME="$home" FM_STATE_OVERRIDE="$state" FM_CONFIG_OVERRIDE="$CONFIG"
       export FM_TEST_HARNESS=grok
       export FM_ESCALATE_BATCH_SECS=999999 FM_STALE_ESCALATE_SECS=5 FM_MAX_DEFER_SECS=0
-      "$ROOT/bin/fm-afk-launch.sh" enter --words 'supervise pending work' >/dev/null \
+      "$ROOT/bin/fm-afk-launch.sh" enter --objective 'supervise pending work' --words 'supervise pending work' >/dev/null \
         && "$ROOT/bin/fm-afk-launch.sh" start-native || exit 1
       t3_run '
         . "$0/bin/fm-supervise-daemon.sh"
@@ -914,7 +914,7 @@ test_native_restart_rearms_undelivered_stale_warning() {
       [ -f "$state/.subsuper-reported-stale-worker" ] || exit 1
       # A warning already delivered for another condition must stay suppressed.
       printf 900 > "$state/.subsuper-reported-stale-delivered"
-      "$ROOT/bin/fm-afk-launch.sh" enter --words 'supervise pending work' >/dev/null || exit 1
+      "$ROOT/bin/fm-afk-launch.sh" enter --objective 'supervise pending work' --words 'supervise pending work' >/dev/null || exit 1
       first=$(cat "$state/.subsuper-escalations")
       # Failed startup must restore both the queue and its suppression markers.
       bash -c '

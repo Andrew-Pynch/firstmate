@@ -372,6 +372,21 @@ test_opencode2_exit_retries_ctrl_c_once() {
   pass "fm-control exit: OpenCode 2.x retries Ctrl-C exactly once while the agent is still alive"
 }
 
+test_opencode2_exit_preserves_a_pending_draft() {
+  local dir out rc
+  dir=$(new_case exit-opencode2-pending)
+  add_task "$dir" t1 opencode
+  printf 'opencode_version=2.0.22\n' >> "$dir/home/state/t1.meta"
+  alive_as "$dir" opencode
+  printf '%s\n' 'transcript box' '❯ keep this draft' > "$dir/fake/pane"
+  out=$(run_control "$dir" t1 exit); rc=$?
+  expect_code 1 "$rc" "OpenCode 2 exit must refuse a pending draft"$'\n'"$out"
+  assert_contains "$out" "visibly holds pending text" "the refusal must name the draft"
+  [ -z "$(keys_sent "$dir")" ] || fail "exit cleared or submitted the pending draft"
+  [ -z "$(literals "$dir")" ] || fail "exit typed into the pending draft"
+  pass "fm-control exit: OpenCode 2 preserves pending composer text without sending a key"
+}
+
 test_interrupt_sends_each_harness_verified_key() {
   local dir out rc harness expected key repeat clear got want
   for harness in $VERIFIED_HARNESSES; do
@@ -1369,6 +1384,7 @@ EOF
 test_exit_types_each_harness_verified_command
 test_opencode_exit_matches_recorded_major
 test_opencode2_exit_retries_ctrl_c_once
+test_opencode2_exit_preserves_a_pending_draft
 test_interrupt_sends_each_harness_verified_key
 test_devin_interrupt_invalidates_busy
 test_devin_idle_interrupt_sends_one_press

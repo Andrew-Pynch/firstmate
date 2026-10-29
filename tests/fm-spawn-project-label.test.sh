@@ -97,12 +97,17 @@ for shape in primary secondmate primary-flat secondmate-flat unmatched-parent; d
     tabs:[{workspace_id:"w1",tab_id:"w1:t1",label:"Main",focused:true}],
     panes:[{workspace_id:"w1",tab_id:"w1:t1",pane_id:"w1:p1"}]
   }' > "$stub_state"
+  if [ "$shape" = primary ]; then
+    token_args=(--project-token=parts)
+  else
+    token_args=(--project-token parts)
+  fi
   out=$(env -u HERDR_ENV -u HERDR_PANE_ID -u HERDR_SOCKET_PATH -u HERDR_WORKSPACE_ID \
     FM_HOME="$home" FM_ROOT_OVERRIDE="$dir/code" FM_SPAWN_NO_GUARD=1 \
     FM_LABEL_STUB_STATE="$stub_state" FM_LABEL_STUB_WT="$wt" FM_LABEL_STUB_LOCKS="$dir/locks" \
     HERDR_SESSION=label-fixture PATH="$fake:$PATH" \
     bash "$dir/code/bin/fm-spawn.sh" "$id" "$project" 'true' --harness codex \
-      --mode local-only --yolo off --backend herdr --project-token parts 2>&1) \
+      --mode local-only --yolo off --backend herdr "${token_args[@]}" 2>&1) \
     || fail "$shape project-label spawn failed: $out"
   jq -e --arg parent "$parent_label" '
     (.workspaces[] | select(.workspace_id == "w1") | .label == $parent and .tokens == null)

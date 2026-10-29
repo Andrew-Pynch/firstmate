@@ -792,17 +792,6 @@ do_exit() {
   if [ -n "$hazard" ] && rendered_matches "$hazard"; then
     die "task $ID shows the $HARNESS revert picker, where typed text becomes a search and Enter reverts file changes; refusing to type the $cmd exit command. Close it with $(fm_control_interrupt_key "$HARNESS"), never Enter, then retry '$VERB'"
   fi
-  if [ "$cmd" = C-c ]; then
-    # OpenCode 2 exits by key after clearing any restored composer text.
-    fm_backend_send_key "$BACKEND" "$T" C-u "$LABEL" \
-      || die "the exit key could not be sent to task $ID on $BACKEND"
-    fm_backend_send_key "$BACKEND" "$T" C-c "$LABEL" \
-      || die "the exit key could not be sent to task $ID on $BACKEND"
-    if ! wait_agent_state "$SETTLE_WAIT" dead >/dev/null; then
-      fm_backend_send_key "$BACKEND" "$T" C-c "$LABEL" \
-        || die "the exit key could not be sent to task $ID on $BACKEND"
-    fi
-  else
   : > "$FM_COMPOSER_DIALOG_SINK" \
     || die "task $ID's dialog check could not be recorded"
   # The composer gate below is upstream's, kept intact wherever the composer can
@@ -841,6 +830,17 @@ do_exit() {
         || die "task $ID's composer state is '$composer_state', not proven empty; refusing to type the $cmd exit command because it could concatenate onto existing text. Clear the composer, then retry '$VERB'"
       ;;
   esac
+  if [ "$cmd" = C-c ]; then
+    # OpenCode 2 exits by key after clearing any restored composer text.
+    fm_backend_send_key "$BACKEND" "$T" C-u "$LABEL" \
+      || die "the exit key could not be sent to task $ID on $BACKEND"
+    fm_backend_send_key "$BACKEND" "$T" C-c "$LABEL" \
+      || die "the exit key could not be sent to task $ID on $BACKEND"
+    if ! wait_agent_state "$SETTLE_WAIT" dead >/dev/null; then
+      fm_backend_send_key "$BACKEND" "$T" C-c "$LABEL" \
+        || die "the exit key could not be sent to task $ID on $BACKEND"
+    fi
+  else
   case "$submission" in
     atomic-line)
       # Herdr's atomic pane-run submit is the measured-deterministic exit for

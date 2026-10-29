@@ -1985,13 +1985,18 @@ SH
     anchor_pid=$!
     printf '%s\n' "$anchor_pid" > "$state/.lock"
   fi
-  if [ "$mode" = cycle-close ] || [ "$mode" = happy ]; then grace=0; fi
+  if [ "$mode" = cycle-close ] || [ "$mode" = happy ] || [ "$mode" = pipe-close ]; then grace=0; fi
   output=$armout
-  if [ "$mode" = pipe ]; then
+  if [ "$mode" = pipe ] || [ "$mode" = pipe-close ]; then
     output="$dir/arm.pipe"
     mkfifo "$output"
-    # Open the read end so launch succeeds, then disappear before readiness.
-    bash -c 'exec 3< "$1"' _ "$output" &
+    if [ "$mode" = pipe ]; then
+      # Open the read end so launch succeeds, then disappear before readiness.
+      bash -c 'exec 3< "$1"' _ "$output" &
+    else
+      # Consume readiness, then disappear before the external cat of the wake.
+      bash -c 'IFS= read -r line < "$1"; printf "%s\n" "$line" > "$2"' _ "$output" "$armout" &
+    fi
     peer=$!
   fi
   PATH="$fakebin:$PATH" FM_HOME="$dir" FM_STATE_OVERRIDE="$state" \
@@ -2037,7 +2042,7 @@ SH
     done
     [ -e "$dir/alert-lock-ready" ] || fail "dedupe lock fixture did not acquire its lock"
   fi
-  if [ "$mode" = cycle-close ] || [ "$mode" = happy ]; then
+  if [ "$mode" = cycle-close ] || [ "$mode" = happy ] || [ "$mode" = pipe-close ]; then
     watcher=$(cat "$state/.watch.lock/pid")
     kill -STOP "$ARM_PID"
     printf 'done: fixture completed while primary was alive\n' > "$state/live.status"
@@ -2065,11 +2070,11 @@ SH
       return
     fi
   fi
-  if [ "$mode" != handoff ] && [ "$mode" != handoff-new ] && [ "$mode" != orphaned ]; then
+  if [ "$mode" != handoff ] && [ "$mode" != handoff-new ] && [ "$mode" != orphaned ] && [ "$mode" != pipe-close ]; then
     kill "$primary"
     wait "$primary" 2>/dev/null || true
   fi
-  if [ "$mode" = cycle-close ]; then
+  if [ "$mode" = cycle-close ] || [ "$mode" = pipe-close ]; then
     kill -CONT "$ARM_PID"
   elif [ "$mode" != crash ] && [ "$mode" != pipe ] && [ "$mode" != anchor ] && [ "$mode" != contention ]; then
     # omp shutdown retires the arm before its process disappears.
@@ -2137,7 +2142,7 @@ SH
     || fail "primary loss did not reach the Telegram sender"
   [ "$(wc -l < "$send_log" | tr -d '[:space:]')" -eq 1 ] \
     || fail "concurrent primary monitors sent duplicate Telegram alerts"
-  if [ "$mode" = orphaned ]; then
+  if [ "$mode" = orphaned ] || [ "$mode" = pipe-close ]; then
     kill "$primary"
     wait "$primary" 2>/dev/null || true
   fi
@@ -2164,12 +2169,21 @@ test_primary_identity_failure_is_named_without_an_outage_alert() {
     "identity failure did not name its cause"
   [ ! -s "$dir/state/.wake-queue" ] || fail "identity-read failure reported a dead primary"
   pass "watch-arm: unreadable primary identity refuses by name without a false outage alert"
+  dir=$(make_case primary-anchor-failure)
+  out=$(FM_HOME="$dir" FM_STATE_OVERRIDE="$dir/state" FM_WATCH_PRIMARY_PID="$$" "$WATCH_ARM" 2>&1)
+  rc=$?
+  expect_code 1 "$rc" "an unreadable primary anchor must refuse monitoring"
+  assert_contains "$out" 'cannot establish live primary session anchor' \
+    "anchor failure did not name its cause"
+  [ ! -e "$dir/state/.last-watcher-beat" ] || fail "unknown anchor still started a watcher"
+  pass "watch-arm: unknown initial session anchor refuses before launching a watcher"
 }
 
 test_primary_exit_alerts_with_live_work happy
 test_primary_exit_alerts_with_live_work anchor
 test_primary_exit_alerts_with_live_work contention
 test_primary_exit_alerts_with_live_work pipe
+test_primary_exit_alerts_with_live_work pipe-close
 test_primary_exit_alerts_with_live_work two-hup
 test_primary_exit_alerts_with_live_work cycle-close
 test_primary_exit_alerts_with_live_work shutdown

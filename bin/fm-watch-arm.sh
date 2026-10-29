@@ -211,6 +211,10 @@ if [ -n "$PRIMARY_PID" ]; then
   # shellcheck source=/dev/null
   . "$SCRIPT_DIR/fm-session-lock-lib.sh"
   fm_session_lock_inspect "$STATE"
+  if [ "$FM_LOCK_INSPECT_STATE" != held ]; then
+    echo "watcher: FAILED - cannot establish live primary session anchor" >&2
+    exit 1
+  fi
   PRIMARY_LOCK_PID=$FM_LOCK_INSPECT_PID
 fi
 PRIMARY_ALERT_LOCK="$STATE/.primary-loss-alert.lock"
@@ -218,7 +222,7 @@ PRIMARY_ALERT_MARKER="$STATE/.primary-loss-alert"
 
 primary_monitor_started() {
   [ -n "$PRIMARY_PID" ] || return 0
-  fm_lock_acquire_wait "$PRIMARY_ALERT_LOCK" || return 1
+  fm_lock_try_acquire "$PRIMARY_ALERT_LOCK" || return 0
   rm -f "$PRIMARY_ALERT_MARKER"
   fm_lock_release "$PRIMARY_ALERT_LOCK"
 }
@@ -649,7 +653,10 @@ watch_output_reason_type() {
 
 print_watch_output() {
   local out=$1
-  [ -s "$out" ] && cat "$out"
+  if [ -s "$out" ] && ! cat "$out"; then
+    [ -z "$PRIMARY_PID" ] || handle_arm_signal PIPE 141
+    return 1
+  fi
 }
 
 handling_successor_generation() {

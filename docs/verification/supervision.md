@@ -574,8 +574,8 @@ grok 0.2.103 (89c3d36fb6f1) [stable]
 | Grok | `FM_GROK_LIVE_E2E=1 tests/fm-grok-continuity-live-e2e.test.sh` | Native task completion surfaced the actionable close and the cycle ledger recorded `reason=actionable-signal`. |
 
 On 2026-10-29, omp 18.11.0 supervised an isolated live tmux endpoint through its real RPC session and `/fm-watch-arm-omp`.
-After replay onto the frozen reanchor source, SIGKILL reached the durable `primary-supervision-lost` alert and the actual Telegram sender with a private fake transport in 0.401 seconds with `FM_POLL=2`.
-Closing RPC stdin exercised the installed runtime's normal session disposal and reached both outputs in 0.702 seconds, with omp exiting zero.
+After replay onto the frozen reanchor source, SIGKILL reached the durable `primary-supervision-lost` alert and the actual Telegram sender with a private fake transport in 0.151 seconds with `FM_POLL=2`.
+Closing RPC stdin exercised the installed runtime's normal session disposal and reached both outputs in 0.602 seconds, with omp exiting zero.
 Before replay, stopping the arm while its watcher completed an actionable cycle, killing omp, then resuming the arm reached a private sender recorder in 0.100 seconds with `FM_POLL=2`; the deterministic cycle-close regression also covers the replayed tree.
 These smoke tests did not contact the external Telegram service.
 `bin/fm-test-run.sh tests/fm-watch-arm.test.sh tests/fm-watcher-lock.test.sh` covers primary shutdown and abrupt loss, suppresses alarms for an empty home or a healthy replacement, and proves the next drain presents the alert.

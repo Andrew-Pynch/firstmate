@@ -2449,6 +2449,10 @@ EOF
     "the full startup fixture did not exercise a mutating sweep"
 
   append_wake "$home/state" signal task-r "done: queued after the re-emit too" || fail "seed second wake failed"
+  printf 'needs-decision [key=rebuild]: choose deployment target\n' > "$home/state/pending.status"
+  FM_STATE_OVERRIDE="$home/state" "$ROOT/bin/fm-wake-drain.sh" >/dev/null || fail 'initial decision drain failed'
+  FM_STATE_OVERRIDE="$home/state" "$ROOT/bin/fm-wake-drain.sh" > "$home/counted.out" || fail 'repeat decision drain failed'
+  assert_contains "$(cat "$home/counted.out")" 'unchanged' 'the initial context must have seen the decision'
   reemit=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$root" FM_FAKE_HARNESS_PID=$$ PATH="$fakebin:$BASE_PATH" \
     env -u CLAUDECODE -u PI_CODING_AGENT -u FM_PI_HARNESS -u GROK_AGENT \
     "$SESSION_START" --reemit)
@@ -2456,6 +2460,7 @@ EOF
   assert_contains "$reemit" "SESSION START (CONTEXT RE-EMIT) - $home" "--reemit did not label itself"
   assert_not_contains "$reemit" "SECONDMATE_LIVENESS" "--reemit repeated a mutating sweep startup already ran"
   assert_contains "$reemit" "done: queued after the re-emit too" "--reemit did not drain the wake queue"
+  assert_contains "$reemit" 'pending [key=rebuild] needs-decision: choose deployment target' 'a rebuilt context must see previously presented decisions'
   [ -s "$home/state/.wake-queue" ] || fail "--reemit removed the wake before its handling acknowledgement"
   sequence=$(printf '%s\n' "$reemit" | sed -n 's/^WAKE_ACK_REQUIRED:.*--ack-through \([0-9][0-9]*\) --recovery-generation [A-Za-z0-9._-][A-Za-z0-9._-]*$/\1/p' | tail -1)
   generation=$(printf '%s\n' "$reemit" | sed -n 's/^WAKE_ACK_REQUIRED:.*--ack-through [0-9][0-9]* --recovery-generation \([A-Za-z0-9._-][A-Za-z0-9._-]*\)$/\1/p' | tail -1)

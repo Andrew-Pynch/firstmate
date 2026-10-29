@@ -556,7 +556,7 @@ test_remote_restart_lands_on_the_per_mate_pin() {
 
   expect_code 0 "$rc" "a mate with its own override should restart onto it"$'\n'"$out"
   relaunch_line=$(grep '^fm-remote-secondmate-control.sh relaunch' "$dir/ssh.log" | head -1)
-  [ "$relaunch_line" = "fm-remote-secondmate-control.sh relaunch sm2 pi mate-model max" ] \
+  [ "$relaunch_line" = "fm-remote-secondmate-control.sh relaunch sm2 pi mate-model max --code-root /srv/fm" ] \
     || fail "the mate's own override did not reach the host relaunch: $relaunch_line\n$out"
   pass "T6a a remote mate with a per-mate override restarts onto that override, not the default pin"
 }
@@ -573,7 +573,7 @@ test_remote_restart_uses_the_default_for_an_unpinned_mate() {
 
   expect_code 0 "$rc" "a mate with no override should restart onto the default pin"$'\n'"$out"
   relaunch_line=$(grep '^fm-remote-secondmate-control.sh relaunch' "$dir/ssh.log" | head -1)
-  [ "$relaunch_line" = "fm-remote-secondmate-control.sh relaunch sm2 codex big-model high" ] \
+  [ "$relaunch_line" = "fm-remote-secondmate-control.sh relaunch sm2 codex big-model high --code-root /srv/fm" ] \
     || fail "an unpinned mate did not resolve the default pin: $relaunch_line\n$out"
   pass "T6b a remote mate with no override line still restarts onto the default pin"
 }
@@ -594,7 +594,7 @@ test_remote_restart_with_a_legacy_pin_file_uses_the_first_line() {
 
   expect_code 0 "$rc" "a legacy pin file must not refuse a restart"$'\n'"$out"
   relaunch_line=$(grep '^fm-remote-secondmate-control.sh relaunch' "$dir/ssh.log" | head -1)
-  [ "$relaunch_line" = "fm-remote-secondmate-control.sh relaunch sm2 codex big-model high" ] \
+  [ "$relaunch_line" = "fm-remote-secondmate-control.sh relaunch sm2 codex big-model high --code-root /srv/fm" ] \
     || fail "the restart did not use the first line of the legacy pin: $relaunch_line\n$out"
   pass "T6d a legacy pin file still restarts the mate onto its first line"
 }

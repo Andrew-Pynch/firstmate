@@ -1133,6 +1133,68 @@ SH
   pass "fm-control relaunch: conflicting omp account and profile pins refuse before stopping the agent"
 }
 
+test_secondmate_code_root_refuses_before_stop() {
+  local dir scenario root out rc id=rl-sm-code-root
+  for scenario in missing plain incomplete nested recorded environment claude; do
+    dir=$(new_case "sm-code-root-$scenario" "$id")
+    fm_git_worktree "$dir/proj" "$dir/wt" "task-$id"
+    mkdir -p "$dir/wt/data" "$dir/wt/state" "$dir/home/config"
+    printf '%s\n' "$id" > "$dir/wt/.fm-secondmate-home"
+    printf '# agents\n' > "$dir/wt/AGENTS.md"
+    printf '# charter\n' > "$dir/wt/data/charter.md"
+    printf codex > "$dir/fake/command"
+    printf '%s\n' "$dir/wt" > "$dir/fake/cwd"
+    {
+      printf 'window=fmses:fm-%s\nendpoint_task_id=%s\n' "$id" "$id"
+      printf 'worktree=%s\nproject=%s\nhome=%s\n' "$dir/wt" "$dir/wt" "$dir/wt"
+      printf 'harness=codex\nkind=secondmate\nmode=secondmate\nyolo=off\nmodel=default\neffort=default\n'
+    } > "$dir/home/state/$id.meta"
+    root="$dir/code"
+    local -a args=(--harness codex --code-root "$root")
+    case "$scenario" in
+      plain) mkdir -p "$root" ;;
+      incomplete) fm_git_init_commit "$root" ;;
+      nested)
+        fm_git_init_commit "$dir/code-parent"
+        root="$dir/code-parent/nested"
+        mkdir -p "$root"
+        args=(--harness codex --code-root "$root")
+        ;;
+      recorded)
+        printf 'code_root=%s\n' "$root" >> "$dir/home/state/$id.meta"
+        args=(--harness codex)
+        ;;
+      environment) args=(--harness codex) ;;
+      claude)
+        fm_git_init_commit "$root"
+        mkdir -p "$root/bin"
+        : > "$root/bin/fm-session-start.sh"
+        printf 'code_root=%s\n' "$root" >> "$dir/home/state/$id.meta"
+        args=(--harness claude)
+        ;;
+    esac
+    cp "$dir/home/state/$id.meta" "$dir/meta-before"
+    if [ "$scenario" = environment ]; then
+      out=$(FM_SECONDMATE_CODE_ROOT="$root" run_control "$dir" "$id" relaunch "${args[@]}"); rc=$?
+    else
+      out=$(run_control "$dir" "$id" relaunch "${args[@]}"); rc=$?
+    fi
+    expect_code 1 "$rc" "an invalid $scenario code root must refuse: $out"
+    [ "$(cat "$dir/fake/command")" = codex ] || fail "the $scenario refusal stopped the agent"
+    [ ! -s "$dir/fake/literal" ] && [ ! -s "$dir/fake/keys" ] || fail "the $scenario refusal sent lifecycle input"
+    cmp -s "$dir/meta-before" "$dir/home/state/$id.meta" || fail "the $scenario refusal changed metadata"
+    case "$scenario" in
+      claude) assert_contains "$out" 'a claude secondmate cannot launch from a code root' 'the incompatible harness must be identified' ;;
+      *) assert_contains "$out" '--code-root' 'the invalid code root must be identified' ;;
+    esac
+  done
+  [ "$(fm_control_secondmate_code_root "$dir/wt" "$root" codex)" = "$root" ] \
+    || fail 'a valid separate code root must be accepted for codex'
+  [ "$(fm_control_secondmate_code_root "$dir/wt" "$dir/wt" claude)" = "$dir/wt" ] \
+    || fail 'a claude secondmate must be allowed to use its own home'
+  pass 'fm-control relaunch: code-root validation refuses before stopping the agent'
+}
+
 test_pi_exclude_tools_follow_the_relaunch() {
   local dir out rc id=rl-pi-excl
   dir=$(new_case pi-exclude "$id")
@@ -3134,6 +3196,7 @@ test_signed_out_worker_account_pin_refuses_before_stop
 test_worker_account_pin_follows_the_relaunch
 test_secondmate_account_pin_follows_relaunch_and_refuses_before_stop
 test_secondmate_omp_profile_conflict_refuses_before_stop
+test_secondmate_code_root_refuses_before_stop
 test_pi_exclude_tools_follow_the_relaunch
 test_exclude_tools_refusals_happen_before_the_agent_stops
 test_explicit_model_wins_over_the_recorded_one

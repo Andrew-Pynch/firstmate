@@ -1076,6 +1076,16 @@ resolve_relaunch_profile() {
   # transaction, where nothing has changed yet.
   fm_control_harness_supports_kind "$TARGET_HARNESS" "$KIND" \
     || die "'$TARGET_HARNESS' is not verified to run a $KIND task, so relaunching $ID onto it would stop the running agent for a launch that must be refused; choose an adapter verified for this kind"
+  if [ "$KIND" = secondmate ]; then
+    local code_root=$NEW_CODE_ROOT
+    if [ "$CODE_ROOT_SET" = 0 ]; then
+      code_root=${FM_SECONDMATE_CODE_ROOT:-$(fm_meta_get "$META" code_root)}
+    fi
+    NEW_CODE_ROOT=$(fm_control_secondmate_code_root "$WT" "$code_root" "$TARGET_HARNESS") || return 1
+    CODE_ROOT_SET=1
+  elif [ "$CODE_ROOT_SET" = 1 ]; then
+    die "--code-root applies only to a secondmate; task $ID is kind=$KIND"
+  fi
   # A model or effort chosen for the previous harness does not transfer to a
   # different one, so an explicit harness change resets both axes unless the
   # caller names them too.

@@ -138,6 +138,14 @@ if [ -z "$SOURCE" ] && [ ! -t 0 ]; then
 fi
 
 case "$SOURCE" in
+  startup|new|clear|compact|resume|fork)
+    if fm_session_lock_owned_by_self "$STATE"; then
+      rm -f -- "$STATE/.open-decisions-presented.main"
+    fi
+    ;;
+esac
+
+case "$SOURCE" in
   resume|reload|fork)
     exec "$SCRIPT_DIR/fm-sessionstart-nudge.sh"
     ;;

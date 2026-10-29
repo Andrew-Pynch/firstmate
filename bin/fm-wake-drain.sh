@@ -497,7 +497,7 @@ EOF
 # silent: prints nothing when no decision is open, which is the common case.
 print_open_decisions_section() {
   local snapshot=${1:-} open task key verb note line item_bytes=220 global_bytes=4000
-  local output='' used=0 shown=0 omitted=0 bytes
+  local output='' used=0 shown=0 omitted=0 bytes identity
   local presented='' record='' unchanged=0 unchanged_list='' entry listed=0 list_max=8
   local count_line presented_tmp counting=1
 
@@ -524,19 +524,15 @@ print_open_decisions_section() {
 
   while IFS=$'\t' read -r task key verb note; do
     [ -n "$task" ] || continue
+    identity="$task"$'\t'"$key"$'\t'"$verb"$'\t'"$note"
     line="$task"
     [ "$key" = default ] || line="$line [key=$key]"
     line="$line $verb: $note"
-    # The shared cut counts the item's own characters; the trailing newline this
-    # section's global budget also pays for is this caller's, so the per-item
-    # allowance passed down is one short of the cap.
-    fm_cap_line_var "$line" $((item_bytes - 1))
-    line=$FM_LINE_CAP_LINE
-    if [ -n "$presented" ] && _fm_open_decisions_presented_has "$presented" "$line"; then
+    if [ -n "$presented" ] && _fm_open_decisions_presented_has "$presented" "$identity"; then
       # Already read in full by this same reader: still presented, so it stays in
       # the record, but it costs this drain one counted entry instead of a line.
       unchanged=$((unchanged + 1))
-      record="$record$line
+      record="$record$identity
 "
       if [ "$listed" -lt "$list_max" ]; then
         entry="$task"
@@ -547,6 +543,11 @@ print_open_decisions_section() {
       fi
       continue
     fi
+    # The shared cut counts the item's own characters; the trailing newline this
+    # section's global budget also pays for is this caller's, so the per-item
+    # allowance passed down is one short of the cap.
+    fm_cap_line_var "$line" $((item_bytes - 1))
+    line=$FM_LINE_CAP_LINE
     bytes=$(( ${#line} + 1 ))
     if [ $((used + bytes)) -gt "$global_bytes" ]; then
       # Over the cap this row was NOT presented, so it stays out of the record
@@ -556,7 +557,7 @@ print_open_decisions_section() {
     fi
     output="$output$line
 "
-    record="$record$line
+    record="$record$identity
 "
     used=$((used + bytes))
     shown=$((shown + 1))

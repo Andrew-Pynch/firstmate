@@ -280,6 +280,30 @@ test_a_changed_decision_note_is_presented_again() {
   pass "a decision whose text changed is not the row that was presented and prints again"
 }
 
+test_long_decision_change_past_display_limit_is_presented_again() {
+  local dir state out prefix first second
+  dir=$(make_case presented-long-changed)
+  state="$dir/state"
+  out="$dir/drain.out"
+  prefix=$(printf '%0300d' 0)
+  name_session "$state" 424242
+  printf 'needs-decision [key=long]: %s first-choice\n' "$prefix" > "$state/t1.status"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail 'first long decision drain failed'
+  first=$(open_rows "$out")
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail 'unchanged long decision drain failed'
+  [ -z "$(open_rows "$out")" ] || fail 'an unchanged long decision must be counted'
+  printf 'needs-decision [key=long]: %s second-choice\n' "$prefix" >> "$state/t1.status"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail 'changed long decision drain failed'
+  second=$(open_rows "$out")
+  [ -n "$second" ] || fail 'a change beyond the display limit must be presented again'
+  [ "$first" = "$second" ] || fail 'the changed suffix must lie beyond the unchanged display prefix'
+  [ "${#second}" -le 219 ] || fail 'the changed decision exceeded the display bound'
+  [ -z "$(count_line "$out")" ] || fail 'the changed long decision must not count as unchanged'
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail 'post-change drain failed'
+  [ -z "$(open_rows "$out")" ] || fail 'the newly presented full identity must be remembered'
+  pass 'a decision changed past the display limit is shown again within the same output bound'
+}
+
 test_reveal_re_presents_every_row_in_full() {
   local dir state out
   dir=$(make_case presented-reveal)
@@ -477,6 +501,7 @@ test_status_symlink_is_not_followed
 test_unchanged_decisions_are_presented_once_per_reader
 test_a_new_decision_prints_in_full_among_counted_rows
 test_a_changed_decision_note_is_presented_again
+test_long_decision_change_past_display_limit_is_presented_again
 test_reveal_re_presents_every_row_in_full
 test_a_new_session_is_shown_every_decision_again
 test_a_reader_with_no_named_session_always_gets_the_full_list

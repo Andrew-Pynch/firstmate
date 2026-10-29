@@ -1463,11 +1463,6 @@ test_required_captain_hold_tests_fail_without_tasks_axi() {
   pass "all four required captain-hold tests fail when tasks-axi is unavailable"
 }
 
-if [ -n "${FM_TEST_ONLY:-}" ]; then
-  "$FM_TEST_ONLY"
-  exit 0
-fi
-
 test_explicit_external_pause_uses_only_the_long_cadence() {
   local reason dir state fakebin out capture statusf window sig key back index=0
   for reason in 'paused: vendor reply pending, declared by Main' \
@@ -1504,7 +1499,20 @@ test_explicit_external_pause_uses_only_the_long_cadence() {
   pass "Main-declared and explicit external pauses absorb stable/churning live panes until the long recheck"
 }
 
+test_selected_case_preserves_failure_status() {
+  local rc=0
+  FM_TEST_ONLY=false bash "$ROOT/tests/fm-watch-triage-pause.test.sh" || rc=$?
+  expect_code 1 "$rc" 'a selected failing command must fail the test process'
+  pass 'selective dispatch returns the selected command failure status'
+}
+
+if [ -n "${FM_TEST_ONLY:-}" ]; then
+  "$FM_TEST_ONLY"
+  exit $?
+fi
+
 fm_test_run \
+  test_selected_case_preserves_failure_status \
   test_explicit_external_pause_uses_only_the_long_cadence \
   test_required_captain_hold_tests_fail_without_tasks_axi \
   test_nonterminal_stale_not_working_surfaced \

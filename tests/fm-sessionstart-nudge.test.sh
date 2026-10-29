@@ -274,6 +274,37 @@ test_run_clear_and_compact_reemit() {
   pass "run wrapper: clear and compact re-emit the digest without repeating startup sweeps"
 }
 
+test_run_rebuild_forgets_presented_decisions_in_same_process() {
+  local root="$TMP_ROOT/rebuild-decisions" source out
+  make_run_primary "$root"
+  mkdir -p "$root/runtime"
+  ln -s /bin/bash "$root/runtime/pi"
+  for source in clear resume; do
+    out=$(env -u CLAUDECODE -u GROK_AGENT PI_CODING_AGENT=true FM_PI_HARNESS=pi \
+      FM_GATE_REFUSE_BYPASS=0 FM_ROOT_OVERRIDE="$root" FM_HOME="$root" PATH="$RUN_PATH" \
+      "$root/runtime/pi" -c '
+        set -eu
+        root=$1; runner=$2; drain=$3; source=$4
+        printf "%s\n" "$$" > "$root/state/.lock"
+        printf "%s\n" "$$" > "$root/state/.session-start-complete"
+        printf "needs-decision [key=rebuild]: choose deployment target\n" > "$root/state/t1.status"
+        FM_STATE_OVERRIDE="$root/state" "$drain" > "$root/first.out"
+        FM_STATE_OVERRIDE="$root/state" "$drain" > "$root/counted.out"
+        grep -F "unchanged" "$root/counted.out" >/dev/null
+        "$runner" --source "$source" </dev/null > "$root/rebuild.out"
+        if [ "$source" = clear ]; then
+          grep -F "t1 [key=rebuild] needs-decision: choose deployment target" "$root/rebuild.out"
+        else
+          FM_STATE_OVERRIDE="$root/state" "$drain" > "$root/after.out"
+          grep -F "t1 [key=rebuild] needs-decision: choose deployment target" "$root/after.out"
+        fi
+        [ "$(cat "$root/state/.lock")" = "$$" ]
+      ' _ "$root" "$RUN" "$ROOT/bin/fm-wake-drain.sh" "$source" 2>&1) \
+      || fail "same-process $source hid a decision: $out"
+  done
+  pass 'clear and resume present decisions again without changing the harness PID'
+}
+
 test_run_rebuild_forwards_source_to_drifted_instruction_refresh() {
   local root="$TMP_ROOT/run-instruction-refresh" baseline compact_out clear_out resume_out
   make_run_primary "$root"
@@ -1105,6 +1136,7 @@ test_namespace_pid1_lock_holder_is_silent
 test_opencode_plugin_delivers_exact_nudge_once
 test_run_startup_runs_the_full_digest
 test_run_clear_and_compact_reemit
+test_run_rebuild_forgets_presented_decisions_in_same_process
 test_run_rebuild_forwards_source_to_drifted_instruction_refresh
 test_run_compact_without_completion_refreshes_before_finishing_startup
 test_run_clear_without_completion_finishes_startup

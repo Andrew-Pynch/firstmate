@@ -4176,28 +4176,8 @@ if [ "$KIND" = secondmate ]; then
     SECONDMATE_CODE_ROOT=$(fm_meta_get "$RELAUNCH_META" code_root)
   fi
   if [ -n "$SECONDMATE_CODE_ROOT" ]; then
-    WT=$(cd "$SECONDMATE_CODE_ROOT" 2>/dev/null && pwd -P) || {
-      echo "error: --code-root is not a readable directory: $SECONDMATE_CODE_ROOT" >&2
-      exit 1
-    }
-    if [ "$WT" = "$PROJ_ABS" ]; then
-      # The home is already the checkout to run from; nothing moves.
-      WT="$PROJ_ABS"
-    else
-      case "$HARNESS" in
-      claude*)
-        echo "error: a claude secondmate cannot launch from a code root: its workspace-trust pre-registration is scoped to the mate home, and Claude Code would wedge on the trust dialog in a directory it has not seen. Launch this mate from its home, or select a harness whose supervision does not need that registration" >&2
-        exit 1
-        ;;
-      esac
-      [ "$(git -C "$WT" rev-parse --show-toplevel 2>/dev/null)" = "$WT" ] || {
-        echo "error: --code-root must be a git worktree root, so the mate's own scripts and extensions resolve predictably: $SECONDMATE_CODE_ROOT" >&2
-        exit 1
-      }
-      [ -f "$WT/bin/fm-session-start.sh" ] || {
-        echo "error: --code-root is not a firstmate checkout (no bin/fm-session-start.sh): $WT" >&2
-        exit 1
-      }
+    WT=$(fm_control_secondmate_code_root "$PROJ_ABS" "$SECONDMATE_CODE_ROOT" "$HARNESS") || exit 1
+    if [ "$WT" != "$PROJ_ABS" ]; then
       echo "notice: secondmate $ID runs its code from $WT with its home at $PROJ_ABS; state, data, and projects stay in the home" >&2
     fi
   fi

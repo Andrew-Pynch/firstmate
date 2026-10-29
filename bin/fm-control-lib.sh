@@ -12,13 +12,6 @@
 # verbs addressed to an exact task id, with the per-harness mechanics owned
 # here rather than improvised per harness in agent prose.
 #
-# This file owns three capability tables plus their pure artifact-path tables,
-# and ONE named exception to that purity - fm_control_endpoint_absence_verdict,
-# the single owner of the per-backend endpoint-absence proof, which does run
-# backend reads. Everything else has no side effects, runs no backend command,
-# and reads no state, so sourcing this file is still free and the tables can be
-# read by a test as a pure contract:
-#
 #   1. Verb allowlist. There is no arbitrary-text and no generic raw-key entry
 #      point on the control plane; a caller either names an allowlisted verb or
 #      is refused.
@@ -43,6 +36,32 @@
 # its durable instruction. The relaunch-time exception is
 # fm_control_relaunch_resume_flag below: a reference the endpoint's runtime
 # bound as its status authority is returned to a replacement with that adapter.
+
+fm_control_secondmate_code_root() {
+  local home root requested=$2 harness=$3
+  home=$(cd "$1" 2>/dev/null && pwd -P) || return 1
+  root=$(cd "${requested:-$home}" 2>/dev/null && pwd -P) || {
+    echo "error: --code-root is not a readable directory: $requested" >&2
+    return 1
+  }
+  if [ "$root" != "$home" ]; then
+    case "$harness" in
+      claude*)
+        echo "error: a claude secondmate cannot launch from a code root: its workspace-trust pre-registration is scoped to the mate home, and Claude Code would wedge on the trust dialog in a directory it has not seen. Launch this mate from its home, or select a harness whose supervision does not need that registration" >&2
+        return 1
+        ;;
+    esac
+    [ "$(git -C "$root" rev-parse --show-toplevel 2>/dev/null)" = "$root" ] || {
+      echo "error: --code-root must be a git worktree root, so the mate's own scripts and extensions resolve predictably: $requested" >&2
+      return 1
+    }
+    [ -f "$root/bin/fm-session-start.sh" ] || {
+      echo "error: --code-root is not a firstmate checkout (no bin/fm-session-start.sh): $root" >&2
+      return 1
+    }
+  fi
+  printf '%s\n' "$root"
+}
 
 # The complete control-plane verb allowlist, one per line.
 fm_control_verbs() {

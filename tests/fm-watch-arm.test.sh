@@ -1955,7 +1955,7 @@ test_append_wakes_handling_successor before-ack malformed
 test_append_wakes_handling_successor after-ack missing identical
 test_append_wakes_handling_successor after-ack malformed identical
 test_primary_exit_alerts_with_live_work() {
-  local mode=$1 dir state fakebin primary i armout script replacement='' peer='' send_log
+  local mode=$1 dir state fakebin primary i armout script replacement='' peer='' send_log grace=999999 watcher
   dir=$(make_supercase "primary-exit-$mode")
   state="$dir/state"
   fakebin="$dir/fakebin"
@@ -1976,8 +1976,9 @@ SH
   sleep 60 &
   primary=$!
   printf '%s\n' "$primary" > "$state/.lock"
+  [ "$mode" != cycle-close ] || grace=0
   PATH="$fakebin:$PATH" FM_HOME="$dir" FM_STATE_OVERRIDE="$state" \
-    FM_WATCH_PRIMARY_PID="$primary" FM_POLL=3 FM_SIGNAL_GRACE=999999 \
+    FM_WATCH_PRIMARY_PID="$primary" FM_POLL=3 FM_SIGNAL_GRACE="$grace" \
     FM_TEST_TELEGRAM_LOG="$send_log" \
     FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
     "$dir/bin/fm-watch-arm.sh" > "$armout" 2>&1 &
@@ -2002,11 +2003,29 @@ SH
     wait_for_file_text "$dir/peer.out" 'watcher: attached' \
       || fail "second primary monitor did not attach"
   fi
+  if [ "$mode" = cycle-close ]; then
+    watcher=$(cat "$state/.watch.lock/pid")
+    kill -STOP "$ARM_PID"
+    printf 'done: fixture completed while primary was alive\n' > "$state/live.status"
+    i=0
+    while [ "$i" -lt 100 ] && is_live_non_zombie "$watcher"; do
+      sleep 0.1
+      i=$((i + 1))
+    done
+    if is_live_non_zombie "$watcher" \
+      || ! grep -q 'live.status' "$state/.wake-queue" 2>/dev/null; then
+      kill -CONT "$ARM_PID"
+      kill "$primary" "$ARM_PID" 2>/dev/null || true
+      fail "cycle-close fixture did not complete its actionable watcher cycle"
+    fi
+  fi
   if [ "$mode" != handoff ]; then
     kill "$primary"
     wait "$primary" 2>/dev/null || true
   fi
-  if [ "$mode" != crash ]; then
+  if [ "$mode" = cycle-close ]; then
+    kill -CONT "$ARM_PID"
+  elif [ "$mode" != crash ]; then
     # omp shutdown retires the arm before its process disappears.
     kill -HUP "$ARM_PID"
   fi
@@ -2072,6 +2091,7 @@ test_primary_identity_failure_is_named_without_an_outage_alert() {
   pass "watch-arm: unreadable primary identity refuses by name without a false outage alert"
 }
 
+test_primary_exit_alerts_with_live_work cycle-close
 test_primary_exit_alerts_with_live_work shutdown
 test_primary_exit_alerts_with_live_work crash
 test_primary_exit_alerts_with_live_work empty

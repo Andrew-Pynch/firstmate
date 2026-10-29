@@ -576,7 +576,8 @@ grok 0.2.103 (89c3d36fb6f1) [stable]
 On 2026-10-29, omp 18.11.0 supervised an isolated live tmux endpoint through its real RPC session and `/fm-watch-arm-omp`.
 SIGKILL reached the durable `primary-supervision-lost` alert and a private Telegram sender recorder in 0.533 seconds with `FM_POLL=2`.
 Closing RPC stdin exercised the installed runtime's normal session disposal and reached both outputs in 1.407 seconds, with omp exiting zero.
-Neither smoke test contacted the external Telegram service.
+Stopping the arm while its watcher completed an actionable cycle, killing omp, then resuming the arm reached both outputs in 0.100 seconds with `FM_POLL=2`.
+These smoke tests did not contact the external Telegram service.
 `bin/fm-test-run.sh tests/fm-watch-arm.test.sh tests/fm-watcher-lock.test.sh` covers primary shutdown and abrupt loss, suppresses alarms for an empty home or a healthy replacement, and proves the next drain presents the alert.
 `tests/fm-omp-harness.test.sh` also passed with the host's real omp ancestor outside the detector's eight-parent window.
 Other harnesses retain their existing arm lifetime because they do not set the omp primary PID.

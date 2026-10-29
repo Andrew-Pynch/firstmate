@@ -2361,7 +2361,7 @@ recorded_pr_read() {
   FM_PR_RECORD_STATE=
   FM_PR_RECORD_MERGED=
   case "$FM_PR_PROVIDER" in
-    github) fm_pr_github_read_record "${FM_PR_PATH%%/*}" "${FM_PR_PATH#*/}" "$FM_PR_NUMBER" ;;
+    github) fm_pr_github_read_record "$FM_PR_HOST" "${FM_PR_PATH%%/*}" "${FM_PR_PATH#*/}" "$FM_PR_NUMBER" ;;
     gitlab) fm_pr_gitlab_read_record "$FM_PR_HOST" "$FM_PR_PATH" "$FM_PR_NUMBER" ;;
     forgejo) fm_pr_forgejo_read_record "$FM_PR_HOST" "$FM_PR_PATH" "$FM_PR_NUMBER" ;;
     gerrit) fm_pr_gerrit_read_record "$FM_PR_HOST" "$FM_PR_NUMBER" ;;

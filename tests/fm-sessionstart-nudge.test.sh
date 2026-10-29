@@ -280,6 +280,7 @@ test_run_rebuild_forgets_presented_decisions_in_same_process() {
   mkdir -p "$root/runtime"
   ln -s /bin/bash "$root/runtime/pi"
   for source in clear resume; do
+    # shellcheck disable=SC2016 # The child Bash expands positional parameters, variables, and $$.
     out=$(env -u CLAUDECODE -u GROK_AGENT PI_CODING_AGENT=true FM_PI_HARNESS=pi \
       FM_GATE_REFUSE_BYPASS=0 FM_ROOT_OVERRIDE="$root" FM_HOME="$root" PATH="$RUN_PATH" \
       "$root/runtime/pi" -c '

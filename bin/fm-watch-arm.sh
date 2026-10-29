@@ -66,10 +66,15 @@
 # most FM_POLL seconds to allow a replacement to establish supervision.
 # Without a healthy successor and with a recorded live endpoint it queues
 # primary-supervision-lost for the next drain and sends the Telegram alert.
+# A lost output pipe also alerts, even before readiness can be reported.
+# Sender failure adds a durable delivery-failure row so missing Telegram
+# configuration is visible at the next drain without delaying the first alert.
 # state/.primary-loss-alert records the notified primary identity under its
 # sibling .lock, so overlapping arms alert once until a fresh monitor starts.
 # An unprovable initial primary identity refuses by name before arming.
 # Other harnesses and explicit TERM/INT retirement keep their existing lifetime.
+# An actionable cycle has a small adapter successor-launch gap; this arm
+# covers primary loss through its own close, not machine-wide process loss.
 #
 # --restart: stop ONLY this FM_HOME's watcher (the pid recorded in THIS home's
 # state/.watch.lock) and own a fresh cycle, or attach if a verified live peer
@@ -212,6 +217,12 @@ primary_alive() {
     && [ "$(fm_pid_identity "$PRIMARY_PID" 2>/dev/null || true)" = "$PRIMARY_IDENTITY" ]
 }
 
+replacement_primary_alive() {
+  local pid
+  IFS= read -r pid < "$STATE/.lock" || return 1
+  [ "$pid" != "$PRIMARY_PID" ] && fm_pid_alive "$pid"
+}
+
 # Only recorded endpoints in this home count. The backend owner keeps this
 # passive and scoped on every supported backend; no shared inventory scan.
 primary_loss_alert() {
@@ -225,7 +236,7 @@ primary_loss_alert() {
     backend=$(fm_backend_of_meta "$meta")
     label="fm-$(basename "$meta" .meta)"
     fm_backend_target_exists "${backend:-tmux}" "$target" "$label" || continue
-    reason="check: primary-supervision-lost: primary session ended without a replacement while work is still live; restart firstmate to resume supervision"
+    reason="check: primary-supervision-lost: primary supervision stopped without a healthy replacement while work is still live; restart firstmate to resume supervision"
     fm_lock_acquire_wait "$PRIMARY_ALERT_LOCK" || return 1
     if [ "$(cat "$PRIMARY_ALERT_MARKER" 2>/dev/null || true)" = "$PRIMARY_PID:$PRIMARY_IDENTITY" ]; then
       fm_lock_release "$PRIMARY_ALERT_LOCK"
@@ -254,8 +265,9 @@ primary_shutdown_handoff() {
   case "$poll" in ''|*[!0-9]*|0) poll=15 ;; esac
   deadline=$((SECONDS + poll))
   while :; do
-    healthy_watcher && return 0
-    primary_alive || break
+    if healthy_watcher && { primary_alive || replacement_primary_alive; }; then
+      return 0
+    fi
     [ "$SECONDS" -lt "$deadline" ] || break
     sleep 0.1
   done
@@ -541,6 +553,7 @@ attach_and_wait() {
       return 1
     fi
     if [ -n "$PRIMARY_PID" ] && ! primary_alive; then
+      if healthy_watcher && replacement_primary_alive; then return 0; fi
       primary_loss_alert
       return 1
     fi
@@ -792,7 +805,10 @@ cleanup_child() {
 # shellcheck disable=SC2329 # Invoked indirectly by the signal traps below.
 handle_arm_signal() {
   local signal=$1 rc=$2
-  trap - HUP TERM INT
+  trap - HUP TERM INT PIPE
+  if { [ "$signal" = HUP ] || [ "$signal" = PIPE ]; } && [ -n "$PRIMARY_PID" ]; then
+    exec >/dev/null 2>&1
+  fi
   if [ -n "$child" ] && fm_pid_alive "$child"; then
     # The watcher installs its own cleanup traps only after acquiring and
     # publishing the home-bound lock identity. Do not TERM it in the middle of
@@ -811,11 +827,11 @@ handle_arm_signal() {
   fi
   cycle_log_append "$rc" "$signal" arm-interrupted none
   cleanup_child
-  if [ "$signal" = HUP ] && [ -n "$PRIMARY_PID" ]; then
-    # The session may already be disposing its pipes. Alert delivery and the
-    # durable queue do not depend on an omp reader surviving this handoff.
-    exec >/dev/null 2>&1
-    primary_shutdown_handoff
+  if [ -n "$PRIMARY_PID" ]; then
+    case "$signal" in
+      HUP) primary_shutdown_handoff ;;
+      PIPE) primary_loss_alert ;;
+    esac
   fi
   exit "$rc"
 }
@@ -823,6 +839,7 @@ handle_arm_signal() {
 trap 'handle_arm_signal HUP 129' HUP
 trap 'handle_arm_signal TERM 143' TERM
 trap 'handle_arm_signal INT 130' INT
+[ -z "$PRIMARY_PID" ] || trap 'handle_arm_signal PIPE 141' PIPE
 
 child_out=$(mktemp "$STATE/.watch-arm-output.XXXXXX") || {
   echo "watcher: FAILED - no live watcher with a fresh beacon"

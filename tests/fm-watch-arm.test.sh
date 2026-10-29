@@ -1955,12 +1955,13 @@ test_append_wakes_handling_successor before-ack malformed
 test_append_wakes_handling_successor after-ack missing identical
 test_append_wakes_handling_successor after-ack malformed identical
 test_primary_exit_alerts_with_live_work() {
-  local mode=$1 dir state fakebin primary i armout script replacement='' peer='' send_log grace=999999 watcher
+  local mode=$1 dir state fakebin primary i armout script replacement='' peer='' send_log grace=999999 watcher output
   dir=$(make_supercase "primary-exit-$mode")
   state="$dir/state"
   fakebin="$dir/fakebin"
   armout="$dir/arm.out"
   mkdir -p "$dir/bin"
+  ln -s "$ROOT/bin/backends" "$dir/bin/backends"
   for script in "$ROOT"/bin/*.sh; do
     [ "${script##*/}" = fm-telegram-send.sh ] && continue
     ln -s "$script" "$dir/bin/${script##*/}"
@@ -1969,33 +1970,48 @@ test_primary_exit_alerts_with_live_work() {
   cat > "$dir/bin/fm-telegram-send.sh" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$FM_TEST_TELEGRAM_LOG"
+exit "${FM_TEST_TELEGRAM_FAIL:-0}"
 SH
   chmod +x "$dir/bin/fm-telegram-send.sh"
-  printf 'window=fixture:1\nbackend=tmux\n' > "$state/live.meta"
+  printf 'window=fixture:0\nbackend=tmux\n' > "$state/live.meta"
   [ "$mode" != empty ] || rm "$state/live.meta"
   sleep 60 &
   primary=$!
   printf '%s\n' "$primary" > "$state/.lock"
   [ "$mode" != cycle-close ] || grace=0
+  output=$armout
+  if [ "$mode" = pipe ]; then
+    output="$dir/arm.pipe"
+    mkfifo "$output"
+    # Open the read end so launch succeeds, then disappear before readiness.
+    bash -c 'exec 3< "$1"' _ "$output" &
+    peer=$!
+  fi
   PATH="$fakebin:$PATH" FM_HOME="$dir" FM_STATE_OVERRIDE="$state" \
     FM_WATCH_PRIMARY_PID="$primary" FM_POLL=3 FM_SIGNAL_GRACE="$grace" \
-    FM_TEST_TELEGRAM_LOG="$send_log" \
+    FM_FAKE_TMUX_WINDOW='fixture:fixture' \
+    FM_TEST_TELEGRAM_LOG="$send_log" FM_TEST_TELEGRAM_FAIL="$([ "$mode" = send-failure ] && echo 1 || echo 0)" \
     FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
-    "$dir/bin/fm-watch-arm.sh" > "$armout" 2>&1 &
+    "$dir/bin/fm-watch-arm.sh" > "$output" 2> "$armout.err" &
   ARM_PID=$!
   i=0
   while [ "$i" -lt 200 ]; do
-    grep -q '^watcher: started' "$armout" && break
+    if [ "$mode" = pipe ]; then
+      [ -e "$state/.last-watcher-beat" ] && break
+    else
+      grep -q '^watcher: started' "$armout" 2>/dev/null && break
+    fi
     sleep 0.1
     i=$((i + 1))
   done
-  if ! grep -q '^watcher: started' "$armout"; then
+  if [ "$mode" != pipe ] && ! grep -q '^watcher: started' "$armout"; then
     kill "$primary" "$ARM_PID" 2>/dev/null || true
     fail "primary-exit arm did not start: $(cat "$armout")"
   fi
   if [ "$mode" = attached ]; then
     PATH="$fakebin:$PATH" FM_HOME="$dir" FM_STATE_OVERRIDE="$state" \
       FM_WATCH_PRIMARY_PID="$primary" FM_POLL=3 FM_SIGNAL_GRACE=999999 \
+      FM_FAKE_TMUX_WINDOW='fixture:fixture' \
       FM_TEST_TELEGRAM_LOG="$send_log" \
       FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
       "$dir/bin/fm-watch-arm.sh" > "$dir/peer.out" 2>&1 &
@@ -2019,37 +2035,45 @@ SH
       fail "cycle-close fixture did not complete its actionable watcher cycle"
     fi
   fi
-  if [ "$mode" != handoff ]; then
+  if [ "$mode" != handoff ] && [ "$mode" != handoff-new ] && [ "$mode" != orphaned ]; then
     kill "$primary"
     wait "$primary" 2>/dev/null || true
   fi
   if [ "$mode" = cycle-close ]; then
     kill -CONT "$ARM_PID"
-  elif [ "$mode" != crash ]; then
+  elif [ "$mode" != crash ] && [ "$mode" != pipe ]; then
     # omp shutdown retires the arm before its process disappears.
     kill -HUP "$ARM_PID"
   fi
-  if [ "$mode" = handoff ]; then
-    # The extension waits up to one second for retirement before activating
-    # another generation. Keep that real delay inside the poll budget.
-    sleep 1.2
+  if [ "$mode" = handoff ] || [ "$mode" = handoff-new ]; then
+    # A replacement may start later and in another process after quit.
+    sleep 0.2
+    if [ "$mode" = handoff-new ]; then
+      kill "$primary"
+      wait "$primary" 2>/dev/null || true
+      sleep 60 &
+      primary=$!
+      printf '%s\n' "$primary" > "$state/.lock"
+    fi
+    sleep 0.6
     PATH="$fakebin:$PATH" FM_HOME="$dir" FM_STATE_OVERRIDE="$state" \
       FM_WATCH_PRIMARY_PID="$primary" FM_POLL=3 FM_SIGNAL_GRACE=999999 \
+      FM_FAKE_TMUX_WINDOW='fixture:fixture' \
       FM_WATCH_PREDECESSOR_ARM_PID="$ARM_PID" \
       FM_TEST_TELEGRAM_LOG="$send_log" \
       FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
       "$dir/bin/fm-watch-arm.sh" --restart > "$dir/replacement.out" 2>&1 &
     replacement=$!
   fi
-  if [ "$mode" = empty ] || [ "$mode" = handoff ]; then
+  if [ "$mode" = empty ] || [ "$mode" = handoff ] || [ "$mode" = handoff-new ]; then
     wait_for_exit "$ARM_PID" 100
     ! grep -q 'primary-supervision-lost' "$state/.wake-queue" 2>/dev/null \
       || fail "a $mode shutdown incorrectly alarmed"
     [ ! -s "$send_log" ] || fail "a $mode shutdown sent a Telegram alarm"
     [ -z "$replacement" ] || kill "$replacement" 2>/dev/null || true
     [ -z "$replacement" ] || wait "$replacement" 2>/dev/null || true
-    [ "$mode" != handoff ] || kill "$primary" 2>/dev/null || true
-    [ "$mode" != handoff ] || wait "$primary" 2>/dev/null || true
+    [ "$mode" = empty ] || kill "$primary" 2>/dev/null || true
+    [ "$mode" = empty ] || wait "$primary" 2>/dev/null || true
     pass "watch-arm: $mode shutdown does not report lost supervision"
     return
   fi
@@ -2070,6 +2094,14 @@ SH
     || fail "primary loss did not reach the Telegram sender"
   [ "$(wc -l < "$send_log" | tr -d '[:space:]')" -eq 1 ] \
     || fail "concurrent primary monitors sent duplicate Telegram alerts"
+  if [ "$mode" = orphaned ]; then
+    kill "$primary"
+    wait "$primary" 2>/dev/null || true
+  fi
+  if [ "$mode" = send-failure ]; then
+    grep -q 'Telegram delivery failed' "$state/.wake-queue" \
+      || fail "sender failure did not remain visible to the next session"
+  fi
   FM_HOME="$dir" FM_STATE_OVERRIDE="$state" "$DRAIN" > "$dir/drain.out" 2>/dev/null
   grep -q 'primary-supervision-lost' "$dir/drain.out" \
     || fail "the next session drain did not present the primary-loss alert"
@@ -2091,8 +2123,12 @@ test_primary_identity_failure_is_named_without_an_outage_alert() {
   pass "watch-arm: unreadable primary identity refuses by name without a false outage alert"
 }
 
+test_primary_exit_alerts_with_live_work pipe
 test_primary_exit_alerts_with_live_work cycle-close
 test_primary_exit_alerts_with_live_work shutdown
+test_primary_exit_alerts_with_live_work handoff-new
+test_primary_exit_alerts_with_live_work orphaned
+test_primary_exit_alerts_with_live_work send-failure
 test_primary_exit_alerts_with_live_work crash
 test_primary_exit_alerts_with_live_work empty
 test_primary_exit_alerts_with_live_work handoff

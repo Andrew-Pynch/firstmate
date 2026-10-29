@@ -669,7 +669,9 @@ async function stopSessionGeneration(generation: SessionGeneration, replacement:
     throw error;
   } finally {
     const child = stopGeneration(generation);
-    await waitForGenerationChildClose(child);
+    // Plain arms retain only the bounded shutdown handoff. Waiting for that
+    // handoff here would delay the successor that is supposed to satisfy it.
+    if (child && armHostMode.get(child)) await waitForGenerationChildClose(child);
   }
   const currentTokens = generation.pendingActionables.map((pending) => pending.token).join("\n");
   if (replacement && currentTokens && currentTokens !== persistedTokens) {

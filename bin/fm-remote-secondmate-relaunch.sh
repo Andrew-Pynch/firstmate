@@ -72,6 +72,7 @@ printf '%s\n' "$RELAUNCH_OUT"
 NEW_HARNESS=$(printf '%s\n' "$RELAUNCH_OUT" | sed -n 's/^harness=//p' | tail -1)
 NEW_MODEL=$(printf '%s\n' "$RELAUNCH_OUT" | sed -n 's/^model=//p' | tail -1)
 NEW_EFFORT=$(printf '%s\n' "$RELAUNCH_OUT" | sed -n 's/^effort=//p' | tail -1)
+NEW_CODE_ROOT=$(printf '%s\n' "$RELAUNCH_OUT" | sed -n 's/^code_root=//p' | tail -1)
 [ -n "$NEW_HARNESS" ] || die "the host's route confirmation carried no harness to record"
 
 META_LOCK=$(fm_meta_lock_path "$META") || die "metadata lock path is invalid for $ID"
@@ -84,9 +85,10 @@ META_TMP=$(mktemp "$STATE/.fm-remote-relaunch-meta.XXXXXX") || {
   printf 'harness=%s\n' "$NEW_HARNESS"
   printf 'model=%s\n' "$NEW_MODEL"
   printf 'effort=%s\n' "$NEW_EFFORT"
+  [ -z "$NEW_CODE_ROOT" ] || printf 'code_root=%s\n' "$NEW_CODE_ROOT"
 } >> "$META_TMP"
 # Every other line is preserved in its original relative order after the
-# refreshed harness/model/effort. A pr= line's own identity block (pr_head=
+# refreshed fields. A pr= line's own identity block (pr_head=
 # and the x_* fields fm_pr_metadata_identity_parse allows after it) must stay
 # LAST in the record: that parser rejects any other key following pr=, so
 # writing harness/model/effort after it would break PR movement monitoring on
@@ -94,6 +96,7 @@ META_TMP=$(mktemp "$STATE/.fm-remote-relaunch-meta.XXXXXX") || {
 while IFS= read -r line || [ -n "$line" ]; do
   case "$line" in
     harness=*|model=*|effort=*) ;;
+    code_root=*) [ -n "$NEW_CODE_ROOT" ] || printf '%s\n' "$line" >> "$META_TMP" ;;
     *) printf '%s\n' "$line" >> "$META_TMP" ;;
   esac
 done < "$META"

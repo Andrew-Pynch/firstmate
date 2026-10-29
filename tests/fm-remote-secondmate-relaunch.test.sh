@@ -43,6 +43,7 @@ reset_meta() {
     "model=openai-codex/gpt-5.6-sol" \
     "effort=medium" \
     "home=/srv/fm-home" \
+    "code_root=/srv/old" \
     "projects=alpha" \
     "remote_host=remote-mac" \
     "remote_root=/srv/fm" \
@@ -92,12 +93,14 @@ printf 'herdr_session=fm-remote\n'
 printf 'harness=%s\n' "$harness"
 printf 'model=%s\n' "$model"
 printf 'effort=%s\n' "$effort"
+[ -z "${FM_FAKE_CONFIRMED_CODE_ROOT:-}" ] || printf 'code_root=%s\n' "$FM_FAKE_CONFIRMED_CODE_ROOT"
 SH
 chmod +x "$FAKEBIN/fake-ssh"
 
 run_relaunch() {  # <args...>
   env FM_HOME="$HOME_DIR" FM_SSH_BIN="$FAKEBIN/fake-ssh" \
     FM_FAKE_RELAUNCH_MODE="${FM_FAKE_RELAUNCH_MODE:-}" \
+    FM_FAKE_CONFIRMED_CODE_ROOT="${FM_FAKE_CONFIRMED_CODE_ROOT:-}" \
     "$ROOT/bin/fm-remote-secondmate-relaunch.sh" "$@" 2>&1
 }
 
@@ -136,6 +139,34 @@ assert_grep 'model=claude-opus-5-5' "$HOME_DIR/state/ios.meta" \
 assert_no_grep 'harness=default' "$HOME_DIR/state/ios.meta" \
   "the parent record must not keep the unresolved request"
 pass "a remote relaunch records the identity the host confirmed"
+
+reset_meta
+FM_FAKE_CONFIRMED_CODE_ROOT='/srv/confirmed code root'
+OUT=$(run_relaunch ios codex default default --code-root /srv/requested); RC=$?
+unset FM_FAKE_CONFIRMED_CODE_ROOT
+expect_code 0 "$RC" "a confirmed code-root move should succeed: $OUT"
+[ "$(sed -n 's/^code_root=//p' "$HOME_DIR/state/ios.meta")" = '/srv/confirmed code root' ] \
+  || fail 'the parent must record the host-confirmed code root rather than the requested or previous root'
+[ "$(grep -c '^code_root=' "$HOME_DIR/state/ios.meta")" -eq 1 ] \
+  || fail 'the old code-root field must be replaced rather than duplicated'
+OUT=$(run_relaunch ios codex default default); RC=$?
+expect_code 0 "$RC" "a legacy host response without a code root should still succeed: $OUT"
+[ "$(sed -n 's/^code_root=//p' "$HOME_DIR/state/ios.meta")" = '/srv/confirmed code root' ] \
+  || fail 'an omitted host code root must not overwrite the last confirmed value'
+pass 'remote relaunch records only a confirmed code-root change and preserves it for legacy responses'
+
+HOST_HOME="$TMP/host-home"
+mkdir -p "$HOST_HOME/bin" "$HOST_HOME/state/parent-route"
+printf 'ios\n' > "$HOST_HOME/.fm-secondmate-home"
+: > "$HOST_HOME/AGENTS.md"
+fm_write_meta "$HOST_HOME/state/parent-route/ios.meta" \
+  'window=fm-remote:p1' 'endpoint_task_id=ios' 'backend=herdr' \
+  'herdr_session=fm-remote' 'herdr_workspace_id=w1' 'herdr_tab_id=t1' 'herdr_pane_id=p1' 'harness=codex' \
+  'kind=secondmate' "worktree=$HOST_HOME" "project=$HOST_HOME" 'code_root=/srv/confirmed code root'
+OUT=$(FM_HOME="$HOST_HOME" "$ROOT/bin/fm-remote-secondmate-control.sh" route ios 2>&1); RC=$?
+expect_code 0 "$RC" "the host should report its confirmed route: $OUT"
+assert_contains "$OUT" 'code_root=/srv/confirmed code root' 'the host route must include its recorded code root'
+pass 'the host route serializes the code root from its endpoint metadata'
 
 # --- a refused relaunch leaves the parent's record untouched -----------------
 reset_meta

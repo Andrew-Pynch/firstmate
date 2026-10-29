@@ -3398,10 +3398,12 @@ test_branch_session_is_new_at_every_main_session_start() {
 const prelude = process.env.DRIVER_PRELUDE;
 await eval(`(async () => { ${prelude}; globalThis.__t = { fire, dispatch, settle, makeCtx, home }; })()`);
 const { fire, dispatch, settle, makeCtx, home } = globalThis.__t;
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 
 const pointerFile = `${home}/state/.branch-session`;
 const readPointer = () => readFileSync(pointerFile, "utf8").trim();
+const presentedFile = `${home}/state/.open-decisions-presented.branch`;
+const presentedRecord = `${process.pid}\nreview\tdeploy\tneeds-decision\tchoose deployment target\n`;
 
 // 1. The first wake of a session opens the branch conversation and records it.
 await fire("session_start", {}, makeCtx());
@@ -3413,6 +3415,8 @@ if (readPointer() !== first.getSessionFile()) {
   throw new Error(`the pointer does not name the live branch conversation: ${readPointer()}`);
 }
 
+writeFileSync(presentedFile, presentedRecord);
+
 // 2. WITHIN one main session the conversation persists: a model or effort
 // change drops the live branch and the next wake continues the same file.
 await fire("thinking_level_select", { level: "high", previousLevel: "medium" });
@@ -3422,6 +3426,10 @@ await settle(() => (globalThis.__fmSessions ?? []).length === 2, "same-session r
 const continued = globalThis.__fmSessions[1].options.sessionManager;
 if (!continued.opened || continued.getSessionFile() !== first.getSessionFile()) {
   throw new Error(`a rebuild inside one session must continue that session's conversation: ${continued.getSessionFile()}`);
+}
+
+if (readFileSync(presentedFile, "utf8") !== presentedRecord) {
+  throw new Error("reopening the same conversation changed its decision presentation record");
 }
 
 // 3. A main session start - /new here, and identically /resume, /fork, or a
@@ -3438,6 +3446,9 @@ if (replacement.getSessionFile() === first.getSessionFile()) {
 }
 if (readPointer() !== replacement.getSessionFile()) {
   throw new Error(`the pointer did not follow the new branch conversation: ${readPointer()}`);
+}
+if (existsSync(presentedFile)) {
+  throw new Error("the replacement conversation retained its predecessor decision presentation record");
 }
 console.log(readPointer());
 process.exit(0);

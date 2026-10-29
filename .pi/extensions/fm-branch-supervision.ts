@@ -1335,6 +1335,7 @@ export default function (pi: ExtensionAPI) {
     }
     if (!sessionManager) {
       sessionManager = SessionManager.create(fmRoot, sessionsDir);
+      rmSync(join(state, ".open-decisions-presented.branch"), { force: true });
     }
     branchSessionGeneration = branchGeneration;
     branchSessionFile = sessionManager.getSessionFile() ?? "";

@@ -1955,7 +1955,7 @@ test_append_wakes_handling_successor before-ack malformed
 test_append_wakes_handling_successor after-ack missing identical
 test_append_wakes_handling_successor after-ack malformed identical
 test_primary_exit_alerts_with_live_work() {
-  local mode=$1 dir state fakebin primary i armout script replacement='' send_log
+  local mode=$1 dir state fakebin primary i armout script replacement='' peer='' send_log
   dir=$(make_supercase "primary-exit-$mode")
   state="$dir/state"
   fakebin="$dir/fakebin"
@@ -1992,6 +1992,16 @@ SH
     kill "$primary" "$ARM_PID" 2>/dev/null || true
     fail "primary-exit arm did not start: $(cat "$armout")"
   fi
+  if [ "$mode" = attached ]; then
+    PATH="$fakebin:$PATH" FM_HOME="$dir" FM_STATE_OVERRIDE="$state" \
+      FM_WATCH_PRIMARY_PID="$primary" FM_POLL=3 FM_SIGNAL_GRACE=999999 \
+      FM_TEST_TELEGRAM_LOG="$send_log" \
+      FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
+      "$dir/bin/fm-watch-arm.sh" > "$dir/peer.out" 2>&1 &
+    peer=$!
+    wait_for_file_text "$dir/peer.out" 'watcher: attached' \
+      || fail "second primary monitor did not attach"
+  fi
   if [ "$mode" != handoff ]; then
     kill "$primary"
     wait "$primary" 2>/dev/null || true
@@ -2001,6 +2011,9 @@ SH
     kill -HUP "$ARM_PID"
   fi
   if [ "$mode" = handoff ]; then
+    # The extension waits up to one second for retirement before activating
+    # another generation. Keep that real delay inside the poll budget.
+    sleep 1.2
     PATH="$fakebin:$PATH" FM_HOME="$dir" FM_STATE_OVERRIDE="$state" \
       FM_WATCH_PRIMARY_PID="$primary" FM_POLL=3 FM_SIGNAL_GRACE=999999 \
       FM_WATCH_PREDECESSOR_ARM_PID="$ARM_PID" \
@@ -2033,18 +2046,38 @@ SH
     fail "dead primary with live work left no durable alert within one poll"
   fi
   wait "$ARM_PID" 2>/dev/null || true
+  [ -z "$peer" ] || wait "$peer" 2>/dev/null || true
   grep -q 'primary-supervision-lost' "$send_log" \
     || fail "primary loss did not reach the Telegram sender"
+  [ "$(wc -l < "$send_log" | tr -d '[:space:]')" -eq 1 ] \
+    || fail "concurrent primary monitors sent duplicate Telegram alerts"
   FM_HOME="$dir" FM_STATE_OVERRIDE="$state" "$DRAIN" > "$dir/drain.out" 2>/dev/null
   grep -q 'primary-supervision-lost' "$dir/drain.out" \
     || fail "the next session drain did not present the primary-loss alert"
   pass "watch-arm: primary $mode with live work alerts within one poll and survives until drain"
 }
 
+test_primary_identity_failure_is_named_without_an_outage_alert() {
+  local dir out rc
+  dir=$(make_case primary-identity-failure)
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$dir/fakebin/ps"
+  chmod +x "$dir/fakebin/ps"
+  out=$(PATH="$dir/fakebin:$PATH" FM_HOME="$dir" FM_STATE_OVERRIDE="$dir/state" \
+    FM_PROC_ROOT_OVERRIDE="$dir/no-proc" FM_WATCH_PRIMARY_PID="$$" "$WATCH_ARM" 2>&1)
+  rc=$?
+  expect_code 1 "$rc" "an unprovable primary identity must refuse monitoring"
+  assert_contains "$out" 'cannot establish primary process identity' \
+    "identity failure did not name its cause"
+  [ ! -s "$dir/state/.wake-queue" ] || fail "identity-read failure reported a dead primary"
+  pass "watch-arm: unreadable primary identity refuses by name without a false outage alert"
+}
+
 test_primary_exit_alerts_with_live_work shutdown
 test_primary_exit_alerts_with_live_work crash
 test_primary_exit_alerts_with_live_work empty
 test_primary_exit_alerts_with_live_work handoff
+test_primary_exit_alerts_with_live_work attached
+test_primary_identity_failure_is_named_without_an_outage_alert
 test_attached_arm_reports_the_delivered_wake
 test_attached_arm_reports_the_delivered_wake_after_drain
 test_arm_refuses_an_unusable_launch_confirm_window

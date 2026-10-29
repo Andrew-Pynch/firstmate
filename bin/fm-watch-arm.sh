@@ -66,6 +66,9 @@
 # most FM_POLL seconds to allow a replacement to establish supervision.
 # Without a healthy successor and with a recorded live endpoint it queues
 # primary-supervision-lost for the next drain and sends the Telegram alert.
+# state/.primary-loss-alert records the notified primary identity under its
+# sibling .lock, so overlapping arms alert once until a fresh monitor starts.
+# An unprovable initial primary identity refuses by name before arming.
 # Other harnesses and explicit TERM/INT retirement keep their existing lifetime.
 #
 # --restart: stop ONLY this FM_HOME's watcher (the pid recorded in THIS home's
@@ -182,8 +185,27 @@ case "$CYCLE_LOG_KEEP_LINES" in ''|*[!0-9]*|0) CYCLE_LOG_KEEP_LINES=1000 ;; esac
 PRIMARY_PID=${FM_WATCH_PRIMARY_PID:-}
 PRIMARY_IDENTITY=
 if [ -n "$PRIMARY_PID" ]; then
+  case "$PRIMARY_PID" in
+    *[!0-9]*|0|1)
+      echo "watcher: FAILED - invalid FM_WATCH_PRIMARY_PID" >&2
+      exit 1
+      ;;
+  esac
   PRIMARY_IDENTITY=$(fm_pid_identity "$PRIMARY_PID" 2>/dev/null || true)
+  if [ -z "$PRIMARY_IDENTITY" ]; then
+    echo "watcher: FAILED - cannot establish primary process identity for pid $PRIMARY_PID" >&2
+    exit 1
+  fi
 fi
+PRIMARY_ALERT_LOCK="$STATE/.primary-loss-alert.lock"
+PRIMARY_ALERT_MARKER="$STATE/.primary-loss-alert"
+
+primary_monitor_started() {
+  [ -n "$PRIMARY_PID" ] || return 0
+  fm_lock_acquire_wait "$PRIMARY_ALERT_LOCK" || return 1
+  rm -f "$PRIMARY_ALERT_MARKER"
+  fm_lock_release "$PRIMARY_ALERT_LOCK"
+}
 
 primary_alive() {
   [ -n "$PRIMARY_IDENTITY" ] && fm_pid_alive "$PRIMARY_PID" \
@@ -204,9 +226,25 @@ primary_loss_alert() {
     label="fm-$(basename "$meta" .meta)"
     fm_backend_target_exists "${backend:-tmux}" "$target" "$label" || continue
     reason="check: primary-supervision-lost: primary session ended without a replacement while work is still live; restart firstmate to resume supervision"
-    fm_wake_append check primary-supervision-lost "$reason" || return 1
-    FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" \
-      "$SCRIPT_DIR/fm-telegram-send.sh" "$reason" >/dev/null 2>&1 || true
+    fm_lock_acquire_wait "$PRIMARY_ALERT_LOCK" || return 1
+    if [ "$(cat "$PRIMARY_ALERT_MARKER" 2>/dev/null || true)" = "$PRIMARY_PID:$PRIMARY_IDENTITY" ]; then
+      fm_lock_release "$PRIMARY_ALERT_LOCK"
+      return 0
+    fi
+    if ! fm_wake_append check primary-supervision-lost "$reason" \
+      || ! printf '%s\n' "$PRIMARY_PID:$PRIMARY_IDENTITY" > "$PRIMARY_ALERT_MARKER"; then
+      fm_lock_release "$PRIMARY_ALERT_LOCK"
+      return 1
+    fi
+    fm_lock_release "$PRIMARY_ALERT_LOCK"
+    if [ -x "$SCRIPT_DIR/fm-telegram-send.sh" ]; then
+      if ! FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" \
+        "$SCRIPT_DIR/fm-telegram-send.sh" "$reason" >/dev/null 2>&1; then
+        fm_wake_append check primary-supervision-lost "$reason (Telegram delivery failed)" || return 1
+      fi
+    else
+      fm_wake_append check primary-supervision-lost "$reason (Telegram sender unavailable)" || return 1
+    fi
     return 0
   done
 }
@@ -502,11 +540,11 @@ attach_and_wait() {
       fail_arm_ground_gone
       return 1
     fi
+    if [ -n "$PRIMARY_PID" ] && ! primary_alive; then
+      primary_loss_alert
+      return 1
+    fi
     if healthy_watcher; then
-      if [ -n "$PRIMARY_PID" ] && ! primary_alive; then
-        primary_loss_alert
-        return 1
-      fi
       if [ "$HEALTHY_PID" != "$attached_pid" ] || [ "$HEALTHY_IDENTITY" != "$cycle_watcher_identity" ]; then
         cycle_log_append unknown unknown lock-replaced "attached:$HEALTHY_PID"
         attached_pid=$HEALTHY_PID
@@ -883,6 +921,7 @@ while :; do
       fi
       cycle_mark_predecessor_successor "started:$child"
       [ "$TAKEN_OVER" -eq 0 ] || cycle_mark_predecessor_successor "started:$child" "$ARM_PID"
+      primary_monitor_started || exit 1
       if [ -n "$handling_generation" ]; then
         echo "watcher: started pid=$child (beacon fresh) recovery-generation=$handling_generation"
       else

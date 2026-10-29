@@ -77,7 +77,7 @@ test_report_after_the_return_is_queued_for_main() {
   home="$TMP_ROOT/report-return"
   state="$home/state"
   mkdir -p "$state"
-  FM_HOME="$home" "$CONTRACT" enter --words 'watch the fleet' >/dev/null 2>&1 || fail "fixture: could not record the away posture"
+  FM_HOME="$home" "$CONTRACT" enter --objective 'the accepted objective for this window' --words 'watch the fleet' >/dev/null 2>&1 || fail "fixture: could not record the away posture"
   printf 'turn=t1\nrows=4\ntasks=alpha\nunscoped=0\nwake=signal: alpha.status\n' > "$state/.supervision-host-turn"
 
   out=$(FM_HOME="$home" FM_SUPERVISION_ACTOR=branch FM_BRANCH_REPORT_TURN=t1 "$REPORT" --task alpha --verdict routine --summary 'steered while away' 2>&1); rc=$?
@@ -299,7 +299,7 @@ test_branch_outcomes_present_a_long_away_window_once() {
   home="$TMP_ROOT/drain-away-window"
   mkdir -p "$home/state" "$home/config"
   : > "$home/config/supervision-host"
-  FM_HOME="$home" "$ROOT/bin/fm-afk-contract.sh" enter --words 'watch the fleet' >/dev/null 2>&1 \
+  FM_HOME="$home" "$ROOT/bin/fm-afk-contract.sh" enter --objective 'the accepted objective for this window' --words 'watch the fleet' >/dev/null 2>&1 \
     || fail "fixture: could not record the away posture"
   pad=$(awk 'BEGIN { for (i = 0; i < 200; i++) printf "z" }')
   for n in $(seq 1 40); do

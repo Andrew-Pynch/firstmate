@@ -1468,7 +1468,44 @@ if [ -n "${FM_TEST_ONLY:-}" ]; then
   exit 0
 fi
 
+test_explicit_external_pause_uses_only_the_long_cadence() {
+  local reason dir state fakebin out capture statusf window sig key back index=0
+  for reason in 'paused: vendor reply pending, declared by Main' \
+                'paused: awaiting external input'; do
+    index=$((index + 1))
+    dir=$(make_case "explicit-external-pause-$index")
+    state="$dir/state"; fakebin="$dir/fakebin"; out="$dir/watch.out"
+    capture="$dir/pane.txt"; statusf="$state/parked.status"; window=test:fm-parked
+    key=test_fm-parked
+    printf 'window=%s\nkind=ship\nharness=grok\nbackend=tmux\n' "$window" > "$state/parked.meta"
+    printf '%s\n' "$reason" > "$statusf"
+    sig=$(seen_sig "$statusf"); printf '%s' "$sig" > "$state/.seen-parked_status"
+    printf 'parked, elapsed 1s' > "$capture"
+    printf '%s' "$(hash_text 'parked, elapsed 1s')" > "$state/.hash-$key"
+    printf '1\n' > "$state/.count-$key"
+    printf '%s\n' $(( $(date +%s) - 500 )) > "$state/.stale-since-$key"
+    parked_watch_round "$state" "$fakebin" "$out" "$capture" "$window" absorb \
+      || fail "an explicit external pause emitted a short-cadence stale wake: $(cat "$out")"
+    [ ! -s "$state/.wake-queue" ] || fail "fresh explicit pause queued a wake"
+    ack_stopped_cycle "$state" || fail "could not acknowledge the intentional pause stop"
+    printf 'parked, elapsed 2s' > "$capture"
+    parked_watch_round "$state" "$fakebin" "$out" "$capture" "$window" absorb \
+      || fail "pane churn bypassed the explicit pause cadence"
+    ack_stopped_cycle "$state" || fail "could not acknowledge the churn stop"
+    back=$(( $(date +%s) - 1500 ))
+    if [ "$(uname)" = Darwin ]; then touch -mt "$(date -r "$back" '+%Y%m%d%H%M.%S')" "$statusf"
+    else touch -m -d "@$back" "$statusf"; fi
+    sig=$(seen_sig "$statusf"); printf '%s' "$sig" > "$state/.seen-parked_status"
+    parked_watch_round "$state" "$fakebin" "$out" "$capture" "$window" exit \
+      || fail "the long-cadence explicit pause recheck never arrived"
+    assert_contains "$(cat "$out")" 'awaiting external' "recheck did not name the external wait"
+    assert_not_contains "$(cat "$out")" 'possible wedge' "external pause climbed the wedge ladder"
+  done
+  pass "Main-declared and explicit external pauses absorb stable/churning live panes until the long recheck"
+}
+
 fm_test_run \
+  test_explicit_external_pause_uses_only_the_long_cadence \
   test_required_captain_hold_tests_fail_without_tasks_axi \
   test_nonterminal_stale_not_working_surfaced \
   test_nonterminal_stale_paused_absorbed_then_resurfaced \

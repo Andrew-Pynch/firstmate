@@ -385,12 +385,8 @@ test_secondmate_config_pinned_model_is_validated() {
 make_omp_secondmate_world() {  # <name> -> echoes <world>; seeded home at <world>/sm, fakebin at <world>/fake/fakebin
   local world=$TMP_ROOT/$1 home fakebin
   home="$world/sm"
-  mkdir -p "$world/home/state" "$world/home/data" "$world/home/config" "$home/bin" "$home/data"
-  printf '# Firstmate\n' > "$home/AGENTS.md"
-  printf 'sm\n' > "$home/.fm-secondmate-home"
-  printf 'charter\n' > "$home/data/charter.md"
-  printf '%s\n' 'projects/' 'state/' 'data/' 'config/' '.no-mistakes/' > "$home/.gitignore"
-  git -C "$home" init -q -b main
+  mkdir -p "$world/home/state" "$world/home/data" "$world/home/config"
+  seed_omp_secondmate_home "$home" sm
   fakebin=$(make_spawn_fakebin "$world/fake" claude)
   make_fake_omp "$fakebin"
   : > "$world/launch.log"

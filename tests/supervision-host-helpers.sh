@@ -109,7 +109,7 @@ case "$mode" in
   handle|captain|captain-close-before-return|held|captain-held|hold-lease|hold-marker|return|return-silent|return-fail|return-fail-silent|return-many|return-lookup-fail|return-first|noack|emptyresult|go-away)
     case "$mode" in held|captain-held) read -r _ < "$FM_HOME/stub-release" ;; esac
     [ "$mode" != return-first ] || "$FM_REPO/bin/fm-afk-contract.sh" archive >> "$FM_HOME/engine-return.log" 2>&1
-    [ "$mode" != go-away ] || "$FM_REPO/bin/fm-afk-contract.sh" enter --words 'gone mid-turn' >> "$FM_HOME/engine-return.log" 2>&1
+    [ "$mode" != go-away ] || "$FM_REPO/bin/fm-afk-contract.sh" enter --objective 'the accepted objective for this window' --words 'gone mid-turn' >> "$FM_HOME/engine-return.log" 2>&1
     "$FM_REPO/bin/fm-lease.sh" claim "$task" >> "$FM_HOME/engine-lease.log" 2>&1
     [ "$mode" != hold-lease ] || "$FM_REPO/bin/fm-lease.sh" check "$task" >> "$FM_HOME/engine-lease.log" 2>&1
     if [ "$mode" = captain ] || [ "$mode" = captain-held ] \
@@ -244,7 +244,7 @@ make_home() {  # <name> <attended|away|quiet> [config line]
   [ "$2" = away ] \
     || printf '{"hook_event_name":"UserPromptSubmit","prompt_id":"p0","prompt":"watch the fleet for me"}' > "$home/mirror-seed.0"
   if [ "$2" = away ]; then
-    FM_HOME="$home" "$CONTRACT" enter --words 'watch the fleet; merge nothing' >/dev/null 2>&1 \
+    FM_HOME="$home" "$CONTRACT" enter --objective 'the accepted objective for this window' --words 'watch the fleet; merge nothing' >/dev/null 2>&1 \
       || fail "fixture: could not record the away posture"
   fi
   # Quiet mode's record with no daemon flag: a quiet entry whose daemon never
@@ -621,7 +621,7 @@ assert_returned_driver_is_caught() {  # <attended|away>
   home=$(make_primary_home "hook-returned-driver-$posture")
   ln -s "$ROOT/.agents" "$home/.agents"
   if [ "$posture" = away ]; then
-    FM_HOME="$home" "$CONTRACT" enter --words 'keep the worker moving' >/dev/null 2>&1 \
+    FM_HOME="$home" "$CONTRACT" enter --objective 'the accepted objective for this window' --words 'keep the worker moving' >/dev/null 2>&1 \
       || fail "returned driver: could not record away posture"
   fi
   FM_STALE_ESCALATE_SECS=4 start_hook_session "$home"

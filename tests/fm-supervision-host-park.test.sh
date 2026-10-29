@@ -84,7 +84,7 @@ test_latch_keeps_attended_closes_on_main_and_skips_unopted_homes() {
   main_drain_and_ack "$home"
 
   : > "$home/config/supervision-host-off"
-  FM_HOME="$home" "$CONTRACT" enter --words 'watch the fleet; merge nothing' >/dev/null 2>&1 \
+  FM_HOME="$home" "$CONTRACT" enter --objective 'the accepted objective for this window' --words 'watch the fleet; merge nothing' >/dev/null 2>&1 \
     || fail "fixture: could not record the away posture again"
   park_again "$home"
   append_status "$home" 'away after opting out'

@@ -218,15 +218,17 @@ primary_alive() {
 }
 
 replacement_primary_alive() {
-  local pid
-  IFS= read -r pid < "$STATE/.lock" || return 1
-  [ "$pid" != "$PRIMARY_PID" ] && fm_pid_alive "$pid"
+  # shellcheck source=/dev/null
+  . "$SCRIPT_DIR/fm-session-lock-lib.sh"
+  fm_session_lock_inspect "$STATE"
+  [ "$FM_LOCK_INSPECT_STATE" = held ] && [ "$FM_LOCK_INSPECT_PID" != "$PRIMARY_PID" ]
 }
 
 # Only recorded endpoints in this home count. The backend owner keeps this
 # passive and scoped on every supported backend; no shared inventory scan.
 primary_loss_alert() {
   local meta target backend label reason
+  if healthy_watcher && replacement_primary_alive; then return 0; fi
   # shellcheck source=/dev/null
   . "$SCRIPT_DIR/fm-backend.sh"
   for meta in "$STATE"/*.meta; do
@@ -806,6 +808,7 @@ cleanup_child() {
 handle_arm_signal() {
   local signal=$1 rc=$2
   trap - HUP TERM INT PIPE
+  trap '' HUP PIPE
   if { [ "$signal" = HUP ] || [ "$signal" = PIPE ]; } && [ -n "$PRIMARY_PID" ]; then
     exec >/dev/null 2>&1
   fi
@@ -958,13 +961,15 @@ while :; do
       if [ -n "$PRIMARY_PID" ]; then
         while fm_pid_alive "$child"; do
           if ! primary_alive; then
+            if healthy_watcher && replacement_primary_alive; then exit 0; fi
             primary_loss_alert
             cleanup_child
             wait "$child" 2>/dev/null || true
             cycle_log_append 1 none primary-session-lost none
             exit 1
           fi
-          sleep "$ATTACH_POLL"
+          sleep "$ATTACH_POLL" &
+          wait "$!" || true
         done
       fi
       wait "$child"

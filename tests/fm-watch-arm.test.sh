@@ -1975,7 +1975,8 @@ SH
   chmod +x "$dir/bin/fm-telegram-send.sh"
   printf 'window=fixture:0\nbackend=tmux\n' > "$state/live.meta"
   [ "$mode" != empty ] || rm "$state/live.meta"
-  sleep 60 &
+  ln -s /bin/sleep "$dir/omp"
+  "$dir/omp" 60 &
   primary=$!
   printf '%s\n' "$primary" > "$state/.lock"
   [ "$mode" != cycle-close ] || grace=0
@@ -2044,6 +2045,10 @@ SH
   elif [ "$mode" != crash ] && [ "$mode" != pipe ]; then
     # omp shutdown retires the arm before its process disappears.
     kill -HUP "$ARM_PID"
+    if [ "$mode" = two-hup ]; then
+      sleep 0.2
+      kill -HUP "$ARM_PID"
+    fi
   fi
   if [ "$mode" = handoff ] || [ "$mode" = handoff-new ]; then
     # A replacement may start later and in another process after quit.
@@ -2051,7 +2056,7 @@ SH
     if [ "$mode" = handoff-new ]; then
       kill "$primary"
       wait "$primary" 2>/dev/null || true
-      sleep 60 &
+      "$dir/omp" 60 &
       primary=$!
       printf '%s\n' "$primary" > "$state/.lock"
     fi
@@ -2124,6 +2129,7 @@ test_primary_identity_failure_is_named_without_an_outage_alert() {
 }
 
 test_primary_exit_alerts_with_live_work pipe
+test_primary_exit_alerts_with_live_work two-hup
 test_primary_exit_alerts_with_live_work cycle-close
 test_primary_exit_alerts_with_live_work shutdown
 test_primary_exit_alerts_with_live_work handoff-new

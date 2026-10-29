@@ -661,6 +661,42 @@ test_pruned_upstream_branch_no_longer_proves_containment() {
   pass "a pruned upstream branch no longer proves containment; the commit is refused and kept"
 }
 
+test_stale_backup_ref_does_not_prove_submodule_publication() {
+  local rec id out status orphan parent_before
+  id='pool-sub-stale-backup-r8'
+  rec=$(make_submodule_case sub-stale-backup "$id")
+  read_submodule_case "$rec"
+  strand_submodule_pin
+  git -C "$CASE_DIR/sub-origin" checkout --quiet -b gone "$SUBPIN1"
+  printf 'unpublished after branch deletion\n' > "$CASE_DIR/sub-origin/gone.txt"
+  git -C "$CASE_DIR/sub-origin" add gone.txt
+  git -C "$CASE_DIR/sub-origin" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' commit -qm gone
+  orphan=$(git -C "$CASE_DIR/sub-origin" rev-parse HEAD)
+  git -C "$POOL_DIR/ui" remote add backup "file://$CASE_DIR/sub-origin"
+  git -C "$POOL_DIR/ui" fetch --quiet backup
+  git -C "$POOL_DIR/ui" checkout --quiet "$orphan"
+  git -C "$CASE_DIR/sub-origin" checkout --quiet "$SUBPIN1"
+  git -C "$CASE_DIR/sub-origin" branch -q -D gone
+  [ "$(git -C "$POOL_DIR/ui" rev-parse refs/remotes/backup/gone)" = "$orphan" ] \
+    || fail 'the fixture must retain the deleted branch as a stale backup ref'
+  [ -z "$(git -C "$POOL_DIR/ui" ls-remote --heads backup gone)" ] \
+    || fail 'the backup branch must actually be deleted from its remote'
+  parent_before=$(git -C "$POOL_DIR" rev-parse HEAD)
+
+  out=$(run_spawn "$id" --mode no-mistakes --yolo off)
+  status=$?
+  [ "$status" -ne 0 ] || fail 'a stale backup ref authorized moving an unpublished submodule checkout'
+  assert_contains "$out" 'fresh fetch of its origin cannot prove pushed' \
+    'the refusal must identify the missing fresh publication proof'
+  [ "$(git -C "$POOL_DIR" rev-parse HEAD)" = "$parent_before" ] \
+    || fail 'refusal must preserve the parent checkout'
+  [ "$(git -C "$POOL_DIR/ui" rev-parse HEAD)" = "$orphan" ] \
+    || fail 'refusal must preserve the detached submodule checkout'
+  [ "$(git -C "$POOL_DIR/ui" rev-parse refs/remotes/backup/gone)" = "$orphan" ] \
+    || fail 'the origin check must not change unrelated backup refs'
+  pass 'a stale backup ref cannot authorize submodule convergence'
+}
+
 test_stale_submodule_pin_explains_itself() {
   local rec id out status before before_sub
   id='pool-stale-pin-r7'
@@ -1530,6 +1566,7 @@ test_inactive_conditional_origin_include_launches_pool
 test_spawn_converges_pin_moved_by_its_own_reset
 test_drifted_slot_converges_after_fresh_fetch
 test_pruned_upstream_branch_no_longer_proves_containment
+test_stale_backup_ref_does_not_prove_submodule_publication
 test_stale_submodule_pin_explains_itself
 test_unpushed_submodule_commit_is_still_uncommitted_work
 test_work_inside_submodule_is_still_uncommitted_work

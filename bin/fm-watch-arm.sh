@@ -265,7 +265,9 @@ primary_loss_alert() {
 primary_shutdown_handoff() {
   local deadline poll=${FM_POLL:-15}
   case "$poll" in ''|*[!0-9]*|0) poll=15 ;; esac
-  deadline=$((SECONDS + poll))
+  # Reserve the last whole second for endpoint proof and durable publication,
+  # rather than spending the entire poll budget waiting for a replacement.
+  deadline=$((SECONDS + poll - 1))
   while :; do
     if healthy_watcher && { primary_alive || replacement_primary_alive; }; then
       return 0

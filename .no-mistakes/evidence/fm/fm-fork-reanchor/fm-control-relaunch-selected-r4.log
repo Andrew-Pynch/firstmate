@@ -1,0 +1,4 @@
+ok - fm-control relaunch: conflicting omp account and profile pins refuse before stopping the agent
+ok - fm-control relaunch: code-root validation refuses before stopping the agent
+
+exit=0

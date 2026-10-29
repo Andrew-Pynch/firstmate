@@ -1,0 +1,13 @@
+not ok - the away posture must park main and present after archive: file:///home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/[eval1]:12
+  if (result.status !== 0) throw new Error(`fm-afk-contract.sh ${args.join(" ")} failed: ${result.stderr}`);
+                                 ^
+
+Error: fm-afk-contract.sh enter --words merge task-d when green, then cut the prerelease
+
+ failed: fm-afk-contract: refusing to enter: this away mandate has no concrete accepted objective, so nothing is recorded and the posture is not active; enter again with --objective <text> derived from the captain's words (the session-start digest and the afk return brief re-print this objective, so it must be the real one)
+
+    at contract (file:///home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/[eval1]:12:34)
+    at file:///home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/[eval1]:180:1
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+
+Node.js v22.23.4: expected exit 0, got 1

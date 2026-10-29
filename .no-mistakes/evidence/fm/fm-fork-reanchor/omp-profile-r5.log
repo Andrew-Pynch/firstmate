@@ -1,0 +1,2 @@
+ok - fm-spawn: a pinned local omp secondmate launches with --profile and validates its model under that profile
+ok - fm-spawn: conflicting home or per-secondmate account and profile pins refuse before launch

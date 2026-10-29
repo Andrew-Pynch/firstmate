@@ -1,0 +1,10 @@
+ok - a slot stranded on a pushed submodule pin converges and launches
+CLI under test (allocator and terminal doubled): fm-spawn.sh pool-sub-stale-backup-r8 --mode no-mistakes --yolo off
+warning: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r2/tmp/fm-spawn-pool-base-freshen.LeFtPo/sub-stale-backup/home/data/pool-sub-stale-backup-r8/launch-brief.md records no ship branch; defaulting to legacy branch fm/pool-sub-stale-backup-r8
+warning: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r2/tmp/fm-spawn-pool-base-freshen.LeFtPo/sub-stale-backup/home/data/pool-sub-stale-backup-r8/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+error: submodule 'ui' in pooled worktree '/home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r2/tmp/fm-spawn-pool-base-freshen.LeFtPo/sub-stale-backup/pool' holds a commit a fresh fetch of its origin cannot prove pushed
+error: pooled worktree '/home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r2/tmp/fm-spawn-pool-base-freshen.LeFtPo/sub-stale-backup/pool' is not clean; refusing to discard uncommitted work while refreshing its base
+exit=1
+parent before=2b92394f1acbe7d28b418275a1b76ea351abfea8 after=2b92394f1acbe7d28b418275a1b76ea351abfea8
+submodule before=a6ec0f5e96e1997bf1462bc4f7e188b49464a1cd after=a6ec0f5e96e1997bf1462bc4f7e188b49464a1cd
+ok - a stale backup ref cannot authorize submodule convergence

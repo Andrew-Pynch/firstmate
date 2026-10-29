@@ -1,0 +1,16 @@
+window=firstmate:fm-traceproof
+endpoint_task_id=traceproof
+worktree=/home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-current/process/user/.treehouse/project-abaa69/1/project
+project=/home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-current/process/project
+harness=claude
+approval_mode=bypass
+kind=ship
+mode=no-mistakes
+yolo=off
+branch=fm/traceproof
+tasktmp=/tmp/fm-traceproof
+model=default
+effort=default
+busy_gen=g1793250478.1484679.7693
+spawn_gen=s1793250478.1478409.19090
+traceparent=00-ca534963ebfc012b298e4f7b331b5ebf-5fcc36c9f7037db4-01

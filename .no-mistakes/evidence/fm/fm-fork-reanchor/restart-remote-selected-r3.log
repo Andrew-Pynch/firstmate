@@ -1,0 +1,6 @@
+ok - T6 a remote mate restarts through the host-local control plane over the fm-on hop
+ok - T6a a remote mate with a per-mate override restarts onto that override, not the default pin
+ok - T6b a remote mate with no override line still restarts onto the default pin
+ok - T6d a legacy pin file still restarts the mate onto its first line
+ok - T6b a mate with no recorded code root passes none, so its host keeps its own
+exit=0

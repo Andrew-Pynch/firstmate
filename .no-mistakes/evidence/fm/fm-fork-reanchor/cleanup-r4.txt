@@ -1,0 +1,1 @@
+Named Herdr lab teardown succeeded and verified the default-session tripwire. Pi RPC process stopped. Isolated Chrome and HTTP server stopped. Removed .test-r4 and this turn's leftover disposable restart fixtures. No tracked files changed.

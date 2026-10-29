@@ -1,0 +1,24 @@
+ok - native Ultra survives local restart and the remote restart transport
+ok - T6 a remote mate restarts through the host-local control plane over the fm-on hop
+ok - T6a a remote mate with a per-mate override restarts onto that override, not the default pin
+ok - T6b a remote mate with no override line still restarts onto the default pin
+ok - T6b a mate with no recorded code root passes none, so its host keeps its own
+/home/andrew/.no-mistakes/evidence/01M62VWHSRWT01MB25T4A9K8M7/fm-secondmate-restart-selected-r4.sh: line 36: /home/andrew/.no-mistakes/evidence/01M62VWHSRWT01MB25T4A9K8M7/t3-fake-lib.sh: No such file or directory
+/home/andrew/.no-mistakes/evidence/01M62VWHSRWT01MB25T4A9K8M7/fm-secondmate-restart-selected-r4.sh: line 1: t3_fake_stop: command not found
+rm: cannot remove '/tmp/fm-secondmate-restart.hExIWK/native-local-15020/home/state/sm1.git-hooks/sendemail-validate': Permission denied
+rm: cannot remove '/tmp/fm-secondmate-restart.hExIWK/native-local-15020/home/state/sm1.git-hooks/pre-auto-gc': Permission denied
+rm: cannot remove '/tmp/fm-secondmate-restart.hExIWK/native-local-15020/home/state/sm1.git-hooks/post-rewrite': Permission denied
+rm: cannot remove '/tmp/fm-secondmate-restart.hExIWK/native-local-15020/home/state/sm1.git-hooks/pre-push': Permission denied
+rm: cannot remove '/tmp/fm-secondmate-restart.hExIWK/native-local-15020/home/state/sm1.git-hooks/post-merge': Permission denied
+rm: cannot remove '/tmp/fm-secondmate-restart.hExIWK/native-local-15020/home/state/sm1.git-hooks/post-checkout': Permission denied
+rm: cannot remove '/tmp/fm-secondmate-restart.hExIWK/native-local-15020/home/state/sm1.git-hooks/pre-rebase': Permission denied
+rm: cannot remove '/tmp/fm-secondmate-restart.hExIWK/native-local-15020/home/state/sm1.git-hooks/post-commit': Permission denied
+rm: cannot remove '/tmp/fm-secondmate-restart.hExIWK/native-local-15020/home/state/sm1.git-hooks/prepare-commit-msg': Permission denied
+rm: cannot remove '/tmp/fm-secondmate-restart.hExIWK/native-local-15020/home/state/sm1.git-hooks/pre-merge-commit': Permission denied
+rm: cannot remove '/tmp/fm-secondmate-restart.hExIWK/native-local-15020/home/state/sm1.git-hooks/pre-commit': Permission denied
+rm: cannot remove '/tmp/fm-secondmate-restart.hExIWK/native-local-15020/home/state/sm1.git-hooks/post-applypatch': Permission denied
+rm: cannot remove '/tmp/fm-secondmate-restart.hExIWK/native-local-15020/home/state/sm1.git-hooks/pre-applypatch': Permission denied
+rm: cannot remove '/tmp/fm-secondmate-restart.hExIWK/native-local-15020/home/state/sm1.git-hooks/applypatch-msg': Permission denied
+rm: cannot remove '/tmp/fm-secondmate-restart.hExIWK/native-local-15020/home/state/sm1.git-hooks/commit-msg': Permission denied
+
+exit=0

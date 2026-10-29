@@ -1,0 +1,5 @@
+$ FM_HOME=<isolated lab> bin/fm-spawn.sh mate <mate-home> --secondmate --harness omp --code-root <worktree>
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-phase/manual-home-3
+error: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-phase/manual-home-3/config/secondmate-accounts/mate/omp-profile conflicts with /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-phase/manual-home-3/config/omp-account: omp --profile overrides the pinned account directory; configure only one of these pins
+exit=1
+metadata_created=False

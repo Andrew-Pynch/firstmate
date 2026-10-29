@@ -1,0 +1,15 @@
+warning: /tmp/fm-spawn-pool-base-freshen.PI8bUG/sub-drifted/home/data/pool-sub-drifted-r1/launch-brief.md records no ship branch; defaulting to legacy branch fm/pool-sub-drifted-r1
+warning: /tmp/fm-spawn-pool-base-freshen.PI8bUG/sub-drifted/home/data/pool-sub-drifted-r1/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+spawned pool-sub-drifted-r1 harness=codex kind=ship mode=no-mistakes yolo=off window=firstmate:fm-pool-sub-drifted-r1 worktree=/tmp/fm-spawn-pool-base-freshen.PI8bUG/sub-drifted/pool
+exit=0
+expected submodule=3a808e7150283d3faccf30c658ad57e38d78b317
+actual submodule=3a808e7150283d3faccf30c658ad57e38d78b317
+ok - a slot stranded on a pushed submodule pin converges and launches
+warning: /tmp/fm-spawn-pool-base-freshen.PI8bUG/sub-stale-backup/home/data/pool-sub-stale-backup-r8/launch-brief.md records no ship branch; defaulting to legacy branch fm/pool-sub-stale-backup-r8
+warning: /tmp/fm-spawn-pool-base-freshen.PI8bUG/sub-stale-backup/home/data/pool-sub-stale-backup-r8/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+error: submodule 'ui' in pooled worktree '/tmp/fm-spawn-pool-base-freshen.PI8bUG/sub-stale-backup/pool' holds a commit a fresh fetch of its origin cannot prove pushed
+error: pooled worktree '/tmp/fm-spawn-pool-base-freshen.PI8bUG/sub-stale-backup/pool' is not clean; refusing to discard uncommitted work while refreshing its base
+exit=1
+parent before=60cdb549a018caa06f063cc7f4c9f7e35c6db659 after=60cdb549a018caa06f063cc7f4c9f7e35c6db659
+submodule before=60a78a66ea518312bba3f8be75fd43f4ba643b12 after=60a78a66ea518312bba3f8be75fd43f4ba643b12
+ok - a stale backup ref cannot authorize submodule convergence

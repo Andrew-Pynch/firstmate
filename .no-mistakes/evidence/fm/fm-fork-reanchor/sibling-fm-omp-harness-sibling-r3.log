@@ -1,0 +1,6 @@
+$ bash /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r3/sibling-fm-omp-harness.test.sh (exact HEAD copy with sibling TMPDIR)
+ok - fm-spawn: a pinned local omp secondmate launches with --profile and validates its model under that profile
+ok - fm-spawn: conflicting home or per-secondmate account and profile pins refuse before launch
+ok - fm-spawn: a malformed or reserved omp profile pin refuses before any record or launch
+
+exit=0

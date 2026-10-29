@@ -1,0 +1,58 @@
+$ bash tests/fm-wake-drain-open-decisions.test.sh
+DRAIN COPY: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-phase/tmp/fm-wake-drain-open-decisions-tests.eJc35N/buried/state/.last-drain.1793248062.250741.txt
+ok - a needs-decision buried under later routine/other-key lines still reports as open
+DRAIN COPY: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-phase/tmp/fm-wake-drain-open-decisions-tests.eJc35N/long-note/state/.last-drain.1793248063.254904.txt
+DRAIN COPY: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-phase/tmp/fm-wake-drain-open-decisions-tests.eJc35N/long-note/state/.last-drain.1793248063.258140.txt
+ok - an over-long open decision is cut to its per-item budget with the shared truncation marker
+DRAIN COPY: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-phase/tmp/fm-wake-drain-open-decisions-tests.eJc35N/resolved/state/.last-drain.1793248064.261658.txt
+ok - an explicit resolved [key=X] closes the keyed decision
+DRAIN COPY: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-phase/tmp/fm-wake-drain-open-decisions-tests.eJc35N/unrelated-terminal/state/.last-drain.1793248064.265803.txt
+ok - a later unrelated terminal line never clears an open decision
+DRAIN COPY: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-phase/tmp/fm-wake-drain-open-decisions-tests.eJc35N/reserved-key/state/.last-drain.1793248065.270124.txt
+DRAIN COPY: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-phase/tmp/fm-wake-drain-open-decisions-tests.eJc35N/reserved-key/state/.last-drain.1793248065.274411.txt
+ok - a reserved decision key can only be opened or closed by its owning library
+ok - no open decisions across the fleet prints nothing
+DRAIN COPY: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-phase/tmp/fm-wake-drain-open-decisions-tests.eJc35N/fleet-wide/state/.last-drain.1793248066.282379.txt
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 1 --recovery-generation 281907.1793248066.kcxtgg
+ok - the open-decision section is fleet-wide, not scoped to this drain's own queued records
+DRAIN COPY: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-phase/tmp/fm-wake-drain-open-decisions-tests.eJc35N/empty-queue-fast-path/state/.last-drain.1793248067.286246.txt
+ok - a buried open decision surfaces even when the wake queue itself is empty
+ok - a filtered drain names a complete presentation copy and keeps the newest five
+DRAIN COPY: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-phase/tmp/fm-wake-drain-open-decisions-tests.eJc35N/status-symlink/state/.last-drain.1793248072.314412.txt
+ok - the fleet-wide decision scan does not follow status symlinks
+DRAIN COPY: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-phase/tmp/fm-wake-drain-open-decisions-tests.eJc35N/presented-once/state/.last-drain.1793248072.316445.txt
+DRAIN COPY: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-phase/tmp/fm-wake-drain-open-decisions-tests.eJc35N/presented-once/state/.last-drain.1793248072.318325.txt
+DRAIN COPY: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-phase/tmp/fm-wake-drain-open-decisions-tests.eJc35N/presented-once/state/.last-drain.1793248073.319976.txt
+ok - a reader sees each unchanged decision in full once and then only its count
+DRAIN COPY: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-phase/tmp/fm-wake-drain-open-decisions-tests.eJc35N/presented-new/state/.last-drain.1793248073.322673.txt
+DRAIN COPY: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-phase/tmp/fm-wake-drain-open-decisions-tests.eJc35N/presented-new/state/.last-drain.1793248074.325235.txt
+DRAIN COPY: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-phase/tmp/fm-wake-drain-open-decisions-tests.eJc35N/presented-new/state/.last-drain.1793248074.327500.txt
+ok - a newly open decision arrives in full while unchanged rows stay counted
+DRAIN COPY: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-phase/tmp/fm-wake-drain-open-decisions-tests.eJc35N/presented-changed/state/.last-drain.1793248074.329664.txt
+DRAIN COPY: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-phase/tmp/fm-wake-drain-open-decisions-tests.eJc35N/presented-changed/state/.last-drain.1793248075.331689.txt
+ok - a decision whose text changed is not the row that was presented and prints again
+DRAIN COPY: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-phase/tmp/fm-wake-drain-open-decisions-tests.eJc35N/presented-long-changed/state/.last-drain.1793248075.334114.txt
+DRAIN COPY: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-phase/tmp/fm-wake-drain-open-decisions-tests.eJc35N/presented-long-changed/state/.last-drain.1793248076.336315.txt
+DRAIN COPY: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-phase/tmp/fm-wake-drain-open-decisions-tests.eJc35N/presented-long-changed/state/.last-drain.1793248076.338967.txt
+DRAIN COPY: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-phase/tmp/fm-wake-drain-open-decisions-tests.eJc35N/presented-long-changed/state/.last-drain.1793248076.341902.txt
+ok - a decision changed past the display limit is shown again within the same output bound
+DRAIN COPY: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-phase/tmp/fm-wake-drain-open-decisions-tests.eJc35N/presented-reveal/state/.last-drain.1793248077.344127.txt
+DRAIN COPY: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-phase/tmp/fm-wake-drain-open-decisions-tests.eJc35N/presented-reveal/state/.last-drain.1793248077.346157.txt
+DRAIN COPY: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-phase/tmp/fm-wake-drain-open-decisions-tests.eJc35N/presented-reveal/state/.last-drain.1793248078.348309.txt
+DRAIN COPY: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-phase/tmp/fm-wake-drain-open-decisions-tests.eJc35N/presented-reveal/state/.last-drain.1793248078.350164.txt
+ok - the reveal re-presents the full list and the reader stays recorded afterwards
+DRAIN COPY: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-phase/tmp/fm-wake-drain-open-decisions-tests.eJc35N/presented-new-session/state/.last-drain.1793248078.353287.txt
+DRAIN COPY: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-phase/tmp/fm-wake-drain-open-decisions-tests.eJc35N/presented-new-session/state/.last-drain.1793248079.355815.txt
+DRAIN COPY: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-phase/tmp/fm-wake-drain-open-decisions-tests.eJc35N/presented-new-session/state/.last-drain.1793248079.358186.txt
+ok - a new session is shown every open decision in full
+DRAIN COPY: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-phase/tmp/fm-wake-drain-open-decisions-tests.eJc35N/presented-unnamed/state/.last-drain.1793248080.361252.txt
+DRAIN COPY: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-phase/tmp/fm-wake-drain-open-decisions-tests.eJc35N/presented-unnamed/state/.last-drain.1793248080.364505.txt
+ok - an unnamed reader is always shown every open decision in full
+DRAIN COPY: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-phase/tmp/fm-wake-drain-open-decisions-tests.eJc35N/presented-unreadable-record/state/.last-drain.1793248081.367401.txt
+DRAIN COPY: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-phase/tmp/fm-wake-drain-open-decisions-tests.eJc35N/presented-unreadable-record/state/.last-drain.1793248081.369933.txt
+ok - a record path that is not a readable record keeps presenting the full list
+DRAIN COPY: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-phase/tmp/fm-wake-drain-open-decisions-tests.eJc35N/presented-non-reader/state/.last-drain.1793248082.373093.txt
+DRAIN COPY: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-phase/tmp/fm-wake-drain-open-decisions-tests.eJc35N/presented-non-reader/state/.last-drain.1793248082.377909.txt
+ok - a caller whose output no reader sees presents in full and records nothing
+
+exit=0

@@ -1,0 +1,3 @@
+tests/fm-watch-triage-pause.test.sh: line 1510: test_selective_dispatch_propagates_selected_status: command not found
+
+exit=127

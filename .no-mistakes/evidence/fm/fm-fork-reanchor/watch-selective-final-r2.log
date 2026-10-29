@@ -1,0 +1,2 @@
+ok - Main-declared and explicit external pauses absorb stable/churning live panes until the long recheck
+ok - selective dispatch returns the selected command failure status

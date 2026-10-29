@@ -1,0 +1,15 @@
+harness=claude
+model=
+effort=
+code_root=/home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-current/remote/confirmed-root
+window=remote:mate
+endpoint_task_id=mate
+worktree=/home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-current/remote/host
+project=/home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7
+kind=secondmate
+mode=secondmate
+yolo=off
+home=/home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-current/remote/host
+remote_host=local-fixture
+remote_backend=herdr
+remote_target=fm-remote:w1:p1

@@ -1,0 +1,7 @@
+$ TMPDIR=<worktree>/.test-r2/tmp FM_TEST_EVIDENCE=1 bash tests/fm-secondmate-restart.test.sh
+ok - T1 persist is a gate, and asks for open records and task status only
+not ok - a confirmed persist should restart the mate
+unreached: sm1: the restart outcome is unknown: secondmate home cannot be inside the firstmate repo: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r2/tmp/fm-secondmate-restart.fofVfd/order-30494/sm1-home
+summary: 0 of 1 restarted, 0 nudged, 1 unreached: expected exit 0, got 3
+
+exit=1

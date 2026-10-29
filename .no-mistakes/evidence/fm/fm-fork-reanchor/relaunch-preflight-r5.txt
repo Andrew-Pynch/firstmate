@@ -1,0 +1,23 @@
+$ tmux -S .test-r5/p.sock new-session -d -s primary -n fm-mate -c /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7 /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r5/preflight-proof/start.sh
+exit=0
+$ tmux -S .test-r5/p.sock display-message -p -t primary:fm-mate '#{pane_pid}'
+3718908
+exit=0
+$ ps -p 3718908 -o pid=,comm=,args=
+3718908 omp             bun /home/andrew/.bun/bin/omp --cwd /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7 --session-dir /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r5/preflight-proof/sessions --no-extensions --no-tools --no-skills --no-rules --no-title --no-lsp --no-session
+exit=0
+$ tmux -S .test-r5/p.sock display-message -p -t primary:fm-mate '#{socket_path},0,0'
+.test-r5/p.sock,0,0
+exit=0
+$ bash bin/fm-control.sh mate relaunch --harness omp --code-root /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r5/preflight-proof/missing
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r5/preflight-proof/parent
+error: --code-root is not a readable directory: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r5/preflight-proof/missing
+exit=1
+PASS: refused before stopping live OMP; PID survives and endpoint metadata is byte-identical.
+$ bash bin/fm-control.sh mate relaunch --harness claude
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r5/preflight-proof/parent
+error: a claude secondmate cannot launch from a code root: its workspace-trust pre-registration is scoped to the mate home, and Claude Code would wedge on the trust dialog in a directory it has not seen. Launch this mate from its home, or select a harness whose supervision does not need that registration
+exit=1
+PASS: refused before stopping live OMP; PID survives and endpoint metadata is byte-identical.
+$ tmux -S .test-r5/p.sock kill-server
+exit=0

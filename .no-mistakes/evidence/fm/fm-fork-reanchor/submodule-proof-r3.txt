@@ -1,0 +1,15 @@
+warning: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r3/tmp/fm-spawn-pool-base-freshen.M0fdHk/sub-drifted/home/data/pool-sub-drifted-r1/launch-brief.md records no ship branch; defaulting to legacy branch fm/pool-sub-drifted-r1
+warning: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r3/tmp/fm-spawn-pool-base-freshen.M0fdHk/sub-drifted/home/data/pool-sub-drifted-r1/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+spawned pool-sub-drifted-r1 harness=codex kind=ship mode=no-mistakes yolo=off window=firstmate:fm-pool-sub-drifted-r1 worktree=/home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r3/tmp/fm-spawn-pool-base-freshen.M0fdHk/sub-drifted/pool
+exit=0
+expected submodule=655e7e66d4655aae8ff7c75359d469b6d911fe7b
+actual submodule=655e7e66d4655aae8ff7c75359d469b6d911fe7b
+ok - a slot stranded on a pushed submodule pin converges and launches
+warning: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r3/tmp/fm-spawn-pool-base-freshen.M0fdHk/sub-stale-backup/home/data/pool-sub-stale-backup-r8/launch-brief.md records no ship branch; defaulting to legacy branch fm/pool-sub-stale-backup-r8
+warning: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r3/tmp/fm-spawn-pool-base-freshen.M0fdHk/sub-stale-backup/home/data/pool-sub-stale-backup-r8/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+error: submodule 'ui' in pooled worktree '/home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r3/tmp/fm-spawn-pool-base-freshen.M0fdHk/sub-stale-backup/pool' holds a commit a fresh fetch of its origin cannot prove pushed
+error: pooled worktree '/home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r3/tmp/fm-spawn-pool-base-freshen.M0fdHk/sub-stale-backup/pool' is not clean; refusing to discard uncommitted work while refreshing its base
+exit=1
+parent before=a4071ad1bd8e724d498bc11d2a2aaffce58c188d after=a4071ad1bd8e724d498bc11d2a2aaffce58c188d
+submodule before=826c97ca767262c79ba02d955be09d1a85369f42 after=826c97ca767262c79ba02d955be09d1a85369f42
+ok - a stale backup ref cannot authorize submodule convergence

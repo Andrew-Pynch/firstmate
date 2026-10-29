@@ -1,0 +1,1 @@
+Private tmux server and fixture processes ended. Removed .test-current after restoring owner access to generated hook directories. git status --short: empty. No tracked files changed.

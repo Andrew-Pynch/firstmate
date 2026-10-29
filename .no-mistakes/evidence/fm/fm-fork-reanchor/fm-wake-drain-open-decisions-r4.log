@@ -1,0 +1,57 @@
+DRAIN COPY: /tmp/fm-wake-drain-open-decisions-tests.Ie2aXM/buried/state/.last-drain.1793249123.961777.txt
+ok - a needs-decision buried under later routine/other-key lines still reports as open
+DRAIN COPY: /tmp/fm-wake-drain-open-decisions-tests.Ie2aXM/long-note/state/.last-drain.1793249123.964359.txt
+DRAIN COPY: /tmp/fm-wake-drain-open-decisions-tests.Ie2aXM/long-note/state/.last-drain.1793249124.967000.txt
+ok - an over-long open decision is cut to its per-item budget with the shared truncation marker
+DRAIN COPY: /tmp/fm-wake-drain-open-decisions-tests.Ie2aXM/resolved/state/.last-drain.1793249124.969737.txt
+ok - an explicit resolved [key=X] closes the keyed decision
+DRAIN COPY: /tmp/fm-wake-drain-open-decisions-tests.Ie2aXM/unrelated-terminal/state/.last-drain.1793249125.972195.txt
+ok - a later unrelated terminal line never clears an open decision
+DRAIN COPY: /tmp/fm-wake-drain-open-decisions-tests.Ie2aXM/reserved-key/state/.last-drain.1793249125.974061.txt
+DRAIN COPY: /tmp/fm-wake-drain-open-decisions-tests.Ie2aXM/reserved-key/state/.last-drain.1793249125.976594.txt
+ok - a reserved decision key can only be opened or closed by its owning library
+ok - no open decisions across the fleet prints nothing
+DRAIN COPY: /tmp/fm-wake-drain-open-decisions-tests.Ie2aXM/fleet-wide/state/.last-drain.1793249126.981597.txt
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 1 --recovery-generation 981271.1793249126.P5ooJ2
+ok - the open-decision section is fleet-wide, not scoped to this drain's own queued records
+DRAIN COPY: /tmp/fm-wake-drain-open-decisions-tests.Ie2aXM/empty-queue-fast-path/state/.last-drain.1793249127.984281.txt
+ok - a buried open decision surfaces even when the wake queue itself is empty
+ok - a filtered drain names a complete presentation copy and keeps the newest five
+DRAIN COPY: /tmp/fm-wake-drain-open-decisions-tests.Ie2aXM/status-symlink/state/.last-drain.1793249132.1012795.txt
+ok - the fleet-wide decision scan does not follow status symlinks
+DRAIN COPY: /tmp/fm-wake-drain-open-decisions-tests.Ie2aXM/presented-once/state/.last-drain.1793249132.1019078.txt
+DRAIN COPY: /tmp/fm-wake-drain-open-decisions-tests.Ie2aXM/presented-once/state/.last-drain.1793249133.1025915.txt
+DRAIN COPY: /tmp/fm-wake-drain-open-decisions-tests.Ie2aXM/presented-once/state/.last-drain.1793249133.1032134.txt
+ok - a reader sees each unchanged decision in full once and then only its count
+DRAIN COPY: /tmp/fm-wake-drain-open-decisions-tests.Ie2aXM/presented-new/state/.last-drain.1793249134.1035273.txt
+DRAIN COPY: /tmp/fm-wake-drain-open-decisions-tests.Ie2aXM/presented-new/state/.last-drain.1793249134.1037130.txt
+DRAIN COPY: /tmp/fm-wake-drain-open-decisions-tests.Ie2aXM/presented-new/state/.last-drain.1793249135.1039232.txt
+ok - a newly open decision arrives in full while unchanged rows stay counted
+DRAIN COPY: /tmp/fm-wake-drain-open-decisions-tests.Ie2aXM/presented-changed/state/.last-drain.1793249135.1041026.txt
+DRAIN COPY: /tmp/fm-wake-drain-open-decisions-tests.Ie2aXM/presented-changed/state/.last-drain.1793249135.1042963.txt
+ok - a decision whose text changed is not the row that was presented and prints again
+DRAIN COPY: /tmp/fm-wake-drain-open-decisions-tests.Ie2aXM/presented-long-changed/state/.last-drain.1793249136.1045081.txt
+DRAIN COPY: /tmp/fm-wake-drain-open-decisions-tests.Ie2aXM/presented-long-changed/state/.last-drain.1793249136.1047114.txt
+DRAIN COPY: /tmp/fm-wake-drain-open-decisions-tests.Ie2aXM/presented-long-changed/state/.last-drain.1793249137.1048972.txt
+DRAIN COPY: /tmp/fm-wake-drain-open-decisions-tests.Ie2aXM/presented-long-changed/state/.last-drain.1793249137.1051268.txt
+ok - a decision changed past the display limit is shown again within the same output bound
+DRAIN COPY: /tmp/fm-wake-drain-open-decisions-tests.Ie2aXM/presented-reveal/state/.last-drain.1793249137.1053289.txt
+DRAIN COPY: /tmp/fm-wake-drain-open-decisions-tests.Ie2aXM/presented-reveal/state/.last-drain.1793249138.1055766.txt
+DRAIN COPY: /tmp/fm-wake-drain-open-decisions-tests.Ie2aXM/presented-reveal/state/.last-drain.1793249138.1057421.txt
+DRAIN COPY: /tmp/fm-wake-drain-open-decisions-tests.Ie2aXM/presented-reveal/state/.last-drain.1793249138.1059459.txt
+ok - the reveal re-presents the full list and the reader stays recorded afterwards
+DRAIN COPY: /tmp/fm-wake-drain-open-decisions-tests.Ie2aXM/presented-new-session/state/.last-drain.1793249139.1062098.txt
+DRAIN COPY: /tmp/fm-wake-drain-open-decisions-tests.Ie2aXM/presented-new-session/state/.last-drain.1793249139.1064359.txt
+DRAIN COPY: /tmp/fm-wake-drain-open-decisions-tests.Ie2aXM/presented-new-session/state/.last-drain.1793249140.1066117.txt
+ok - a new session is shown every open decision in full
+DRAIN COPY: /tmp/fm-wake-drain-open-decisions-tests.Ie2aXM/presented-unnamed/state/.last-drain.1793249140.1067240.txt
+DRAIN COPY: /tmp/fm-wake-drain-open-decisions-tests.Ie2aXM/presented-unnamed/state/.last-drain.1793249140.1068930.txt
+ok - an unnamed reader is always shown every open decision in full
+DRAIN COPY: /tmp/fm-wake-drain-open-decisions-tests.Ie2aXM/presented-unreadable-record/state/.last-drain.1793249141.1070685.txt
+DRAIN COPY: /tmp/fm-wake-drain-open-decisions-tests.Ie2aXM/presented-unreadable-record/state/.last-drain.1793249141.1072437.txt
+ok - a record path that is not a readable record keeps presenting the full list
+DRAIN COPY: /tmp/fm-wake-drain-open-decisions-tests.Ie2aXM/presented-non-reader/state/.last-drain.1793249142.1074112.txt
+DRAIN COPY: /tmp/fm-wake-drain-open-decisions-tests.Ie2aXM/presented-non-reader/state/.last-drain.1793249142.1075823.txt
+ok - a caller whose output no reader sees presents in full and records nothing
+
+exit=0

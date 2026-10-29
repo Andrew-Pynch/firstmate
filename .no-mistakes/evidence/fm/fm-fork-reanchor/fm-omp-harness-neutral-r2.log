@@ -1,0 +1,4 @@
+$ TMPDIR=<worktree>/.test-r2/tmp FM_TEST_EVIDENCE=1 bash tests/fm-omp-harness-neutral.test.sh
+bash: tests/fm-omp-harness-neutral.test.sh: No such file or directory
+
+exit=127

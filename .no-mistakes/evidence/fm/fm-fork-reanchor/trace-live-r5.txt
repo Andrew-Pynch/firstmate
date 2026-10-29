@@ -1,0 +1,4 @@
+FM_TRACE_CONTEXT=off: no carrier emitted
+FM_TRACE_CONTEXT=on: 00-d4aea4b22e23d161aa3f444eaaff116a-e3ca127b6076d3fb-01
+Recovery reused persisted carrier: 00-d4aea4b22e23d161aa3f444eaaff116a-e3ca127b6076d3fb-01
+Malformed recorded carrier replaced: 00-b576ef51b9f88010b5c6cb34ecab064b-5b69e1bc68689005-01

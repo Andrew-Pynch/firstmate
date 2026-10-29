@@ -1,0 +1,34 @@
+CLI response:
+warning: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r5/tmp/fm-spawn-pool-base-freshen.hwdfXL/sub-reset-moves/home/data/pool-sub-reset-moves-r1/launch-brief.md records no ship branch; defaulting to legacy branch fm/pool-sub-reset-moves-r1
+warning: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r5/tmp/fm-spawn-pool-base-freshen.hwdfXL/sub-reset-moves/home/data/pool-sub-reset-moves-r1/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+spawned pool-sub-reset-moves-r1 harness=codex kind=ship mode=no-mistakes yolo=off window=firstmate:fm-pool-sub-reset-moves-r1 worktree=/home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r5/tmp/fm-spawn-pool-base-freshen.hwdfXL/sub-reset-moves/pool
+exit=0
+parent=381463a42485bc2c3324061403e03d63e228ceab
+submodule=69941eb7c8ae65a5ffd874f02234ce00539b9453
+ok - a spawn whose own base reset moves a submodule pin launches on the new pin
+CLI response:
+warning: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r5/tmp/fm-spawn-pool-base-freshen.hwdfXL/sub-drifted/home/data/pool-sub-drifted-r1/launch-brief.md records no ship branch; defaulting to legacy branch fm/pool-sub-drifted-r1
+warning: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r5/tmp/fm-spawn-pool-base-freshen.hwdfXL/sub-drifted/home/data/pool-sub-drifted-r1/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+spawned pool-sub-drifted-r1 harness=codex kind=ship mode=no-mistakes yolo=off window=firstmate:fm-pool-sub-drifted-r1 worktree=/home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r5/tmp/fm-spawn-pool-base-freshen.hwdfXL/sub-drifted/pool
+exit=0
+parent=2835a9b3e94f102b6020102d9ff37c7ac22fbf2c
+submodule=72e85da9b270c94bc4cf1fb8d650797013c50f54
+ok - a slot stranded on a pushed submodule pin converges and launches
+CLI response:
+warning: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r5/tmp/fm-spawn-pool-base-freshen.hwdfXL/sub-pruned/home/data/pool-sub-pruned-r1/launch-brief.md records no ship branch; defaulting to legacy branch fm/pool-sub-pruned-r1
+warning: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r5/tmp/fm-spawn-pool-base-freshen.hwdfXL/sub-pruned/home/data/pool-sub-pruned-r1/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+error: submodule 'ui' in pooled worktree '/home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r5/tmp/fm-spawn-pool-base-freshen.hwdfXL/sub-pruned/pool' holds a commit a fresh fetch of its origin cannot prove pushed
+error: pooled worktree '/home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r5/tmp/fm-spawn-pool-base-freshen.hwdfXL/sub-pruned/pool' is not clean; refusing to discard uncommitted work while refreshing its base
+exit=1
+parent=d1783e196f5ecbe33d647459fa380c10366d5c17
+submodule=3c8415a8229315f2a46a26feeb376246bc7ef996
+ok - a pruned upstream branch no longer proves containment; the commit is refused and kept
+CLI response:
+warning: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r5/tmp/fm-spawn-pool-base-freshen.hwdfXL/sub-stale-backup/home/data/pool-sub-stale-backup-r8/launch-brief.md records no ship branch; defaulting to legacy branch fm/pool-sub-stale-backup-r8
+warning: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r5/tmp/fm-spawn-pool-base-freshen.hwdfXL/sub-stale-backup/home/data/pool-sub-stale-backup-r8/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+error: submodule 'ui' in pooled worktree '/home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r5/tmp/fm-spawn-pool-base-freshen.hwdfXL/sub-stale-backup/pool' holds a commit a fresh fetch of its origin cannot prove pushed
+error: pooled worktree '/home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r5/tmp/fm-spawn-pool-base-freshen.hwdfXL/sub-stale-backup/pool' is not clean; refusing to discard uncommitted work while refreshing its base
+exit=1
+parent=d00fca1c5efae4a60b3fa15ac9f99072d24b6693
+submodule=6362fed9a891990de23fca081c1b7448e72d9505
+ok - a stale backup ref cannot authorize submodule convergence

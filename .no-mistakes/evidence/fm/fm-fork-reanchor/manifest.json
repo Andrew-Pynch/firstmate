@@ -1,0 +1,29 @@
+{
+ "name": "FM Deck",
+ "short_name": "Deck",
+ "start_url": "current-page-r5.html",
+ "scope": "./",
+ "display": "standalone",
+ "background_color": "#0a0a0f",
+ "theme_color": "#0a0a0f",
+ "icons": [
+  {
+   "src": "apple-touch-icon.png",
+   "sizes": "180x180",
+   "type": "image/png",
+   "purpose": "any"
+  },
+  {
+   "src": "current-icon-192.png",
+   "sizes": "192x192",
+   "type": "image/png",
+   "purpose": "any"
+  },
+  {
+   "src": "current-icon-512.png",
+   "sizes": "512x512",
+   "type": "image/png",
+   "purpose": "any"
+  }
+ ]
+}

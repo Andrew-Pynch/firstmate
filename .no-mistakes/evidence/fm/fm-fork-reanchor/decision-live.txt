@@ -1,0 +1,42 @@
+$ bin/fm-lab-home.sh create /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-phase/manual-home-3
+/home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-phase/manual-home-3
+exit=0
+
+$ bin/fm-wake-drain.sh
+DRAIN COPY: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-phase/manual-home-3/state/.last-drain.1793248146.741570.txt
+OPEN DECISIONS (still open, folded from the durable status logs - not just the latest line):
+reanchor [key=release] needs-decision: Long decision xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx [truncated]
+OPEN DECISIONS: close one by answering it: bin/fm-send.sh <task> --resolve-key <key> '<answer>'
+exit=0
+
+$ bin/fm-wake-drain.sh
+DRAIN COPY: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-phase/manual-home-3/state/.last-drain.1793248147.744795.txt
+OPEN DECISIONS: 1 unchanged since this reader was shown them in full (re-present with FM_OPEN_DECISIONS_REVEAL=1 bin/fm-wake-drain.sh): reanchor[release]
+exit=0
+
+$ bin/fm-wake-drain.sh
+DRAIN COPY: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-phase/manual-home-3/state/.last-drain.1793248147.747458.txt
+OPEN DECISIONS (still open, folded from the durable status logs - not just the latest line):
+reanchor [key=release] needs-decision: Long decision xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx [truncated]
+OPEN DECISIONS: close one by answering it: bin/fm-send.sh <task> --resolve-key <key> '<answer>'
+exit=0
+
+Persisted full decision identity:
+740513
+reanchor	release	needs-decision	Long decision xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx tail=beta
+
+$ bin/fm-wake-drain.sh
+DRAIN COPY: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-phase/manual-home-3/state/.last-drain.1793248148.750314.txt
+OPEN DECISIONS (still open, folded from the durable status logs - not just the latest line):
+reanchor [key=release] needs-decision: Long decision xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx [truncated]
+OPEN DECISIONS: close one by answering it: bin/fm-send.sh <task> --resolve-key <key> '<answer>'
+exit=0
+
+$ bin/fm-current-page.sh render --out /home/andrew/.no-mistakes/evidence/01M62VWHSRWT01MB25T4A9K8M7/current-page.html
+wrote /home/andrew/.no-mistakes/evidence/01M62VWHSRWT01MB25T4A9K8M7/current-page.html: {"needs": 0, "stale_needs": 0, "running": 0, "done_today": 0, "older_calls": 0, "forge": "skipped"}
+exit=0
+
+$ bin/fm-wake-drain.sh
+exit=0
+
+Verified first presentation, repeat suppression, changed long-tail identity, explicit reveal, and explicit resolution.

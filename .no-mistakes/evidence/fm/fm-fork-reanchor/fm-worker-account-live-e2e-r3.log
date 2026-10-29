@@ -1,0 +1,8 @@
+$ bash tests/fm-worker-account-live-e2e.test.sh 
+ok - claude 2.1.312 (Claude Code): the pin check accepts a signed-in root and refuses an empty one despite an ambient API key
+ok - pi 1.4.0: the pin check reads auth check and the model listing, and refuses what only an ambient credential signs in
+skip-runner: pi-signed is not installed, so its pin check was not exercised
+ok - omp 18.11.0: the pin check reads the root's stored logins, and a named profile would replace the pinned root
+# worker account live guard checked: claude pi omp
+
+exit=0

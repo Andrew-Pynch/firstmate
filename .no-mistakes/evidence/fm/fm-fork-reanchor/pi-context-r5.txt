@@ -1,0 +1,38 @@
+$ node /home/andrew/.npm/_npx/99fca8174466655b/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js --mode rpc --session-dir /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r5/pi-context/sessions --no-tools --no-extensions --no-skills --no-context-files --no-mcp -e /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r5/pi-context/probe.ts -e /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.pi/extensions/fm-branch-supervision.ts
+stdin: {"id": "state", "type": "get_state"}
+{"id":"state","type":"response","command":"get_state","success":true,"data":{"model":{"id":"unknown","name":"unknown","api":"unknown","provider":"unknown","baseUrl":"","reasoning":false,"input":[],"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0},"contextWindow":0,"maxTokens":0},"thinkingLevel":"off","isStreaming":false,"isCompacting":false,"steeringMode":"one-at-a-time","followUpMode":"one-at-a-time","sessionFile":"/home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r5/pi-context/sessions/2026-10-29T04-58-12-913Z_01a18605-da30-70db-95ad-9291890de019.jsonl","sessionId":"01a18605-da30-70db-95ad-9291890de019","autoCompactionEnabled":true,"messageCount":0,"pendingMessageCount":0}}
+stdin: {"id": "hook-reload", "type": "prompt", "message": "/validation-hook reload"}
+{"id":"hook-reload","type":"response","command":"prompt","success":true,"data":{"disposition":"handled"}}
+stdin: {"id": "hook-resume", "type": "prompt", "message": "/validation-hook resume"}
+{"id":"hook-resume","type":"response","command":"prompt","success":true,"data":{"disposition":"handled"}}
+PASS: native session-open hook preserves reload and invalidates resume for the real Pi owner.
+stdin: {"id": "probe1", "type": "prompt", "message": "/validation-probe"}
+{"id":"probe1","type":"response","command":"prompt","success":true,"data":{"disposition":"handled"}}
+probe log:
+hook source=reload exit=0 main-record=true
+hook source=resume exit=0 main-record=false
+accepted=true
+settlement=the unread wake queue could not be read safely
+branch pointer exists=True
+/home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r5/pi-context/home/state/branch-session/2026-10-29T04-58-13-355Z_01a18605-dbeb-70db-95ad-92934fa14e1b.jsonl
+stdin: {"id": "effort", "type": "set_thinking_level", "level": "high"}
+{"id":"effort","type":"response","command":"set_thinking_level","success":true}
+stdin: {"id": "probe-reopen", "type": "prompt", "message": "/validation-probe"}
+{"id":"probe-reopen","type":"response","command":"prompt","success":true,"data":{"disposition":"handled"}}
+PASS: same-conversation reopen retained branch pointer and presentation record.
+stdin: {"id": "new", "type": "new_session"}
+{"id":"new","type":"response","command":"new_session","success":true,"data":{"cancelled":false}}
+stdin: {"id": "probe2", "type": "prompt", "message": "/validation-probe"}
+{"id":"probe2","type":"response","command":"prompt","success":true,"data":{"disposition":"handled"}}
+probe log after new_session:
+hook source=reload exit=0 main-record=true
+hook source=resume exit=0 main-record=false
+accepted=true
+settlement=the unread wake queue could not be read safely
+accepted=true
+settlement=the unread wake queue could not be read safely
+accepted=true
+settlement=the unread wake queue could not be read safely
+branch pointer exists=True
+/home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r5/pi-context/home/state/branch-session/2026-10-29T04-58-20-780Z_01a18605-f8ec-70db-95ad-92974177ede4.jsonl
+PASS: new_session replaced branch conversation and cleared the predecessor presentation record.

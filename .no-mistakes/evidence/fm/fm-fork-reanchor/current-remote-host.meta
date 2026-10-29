@@ -1,0 +1,14 @@
+window=fm-remote:w1:p1
+backend=herdr
+herdr_session=fm-remote
+herdr_workspace_id=w1
+herdr_tab_id=w1:t1
+herdr_pane_id=w1:p1
+endpoint_task_id=mate
+worktree=/home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-current/remote/host
+project=/home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7
+kind=secondmate
+harness=claude
+model=
+effort=
+code_root=/home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-current/remote/confirmed-root

@@ -1,0 +1,15 @@
+schema=fm-remote-secondmate-control.v1
+backend=herdr
+target=fm-remote:w1:p1
+herdr_session=fm-remote
+harness=claude
+model=
+effort=
+code_root=/home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-current/remote/confirmed-root
+
+PASS: parent recorded production host route confirmation, not requested or old root
+unreached: mate: the restart outcome is unknown: fixture boundary: next restart request captured; replacement deliberately not executed
+summary: 0 of 1 restarted, 0 nudged, 1 unreached
+
+PASS: production restart selected host-confirmed root after durable correlated acknowledgement
+BOUNDARY: local transport; host confirmation preseeded; no real remote, replacement, or Herdr lifecycle executed

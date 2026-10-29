@@ -1,0 +1,4 @@
+ok - a slot stranded on a pushed submodule pin converges and launches
+ok - a stale backup ref cannot authorize submodule convergence
+
+exit=0

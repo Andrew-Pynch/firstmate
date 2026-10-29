@@ -1,0 +1,136 @@
+$ chrome-devtools-axi resize 1440 900
+resized:
+  width: 1440
+  height: 900
+
+$ chrome-devtools-axi screenshot /home/andrew/.no-mistakes/evidence/01M62VWHSRWT01MB25T4A9K8M7/current-page-desktop-r3.png
+screenshot: /home/andrew/.no-mistakes/evidence/01M62VWHSRWT01MB25T4A9K8M7/current-page-desktop-r3.png
+
+$ chrome-devtools-axi eval () => ({width:innerWidth,scrollWidth:document.documentElement.scrollWidth,title:document.title,body:document.body.innerText.includes("Review the Pi away-mode fixture")})
+result: "{\"width\":1440,\"scrollWidth\":1440,\"title\":\"(1) Deck\",\"body\":true}"
+help[1]:
+  Run `chrome-devtools-axi snapshot` to see current page state
+
+$ chrome-devtools-axi fill @g1:1_53 nonexistent-review-query
+error: "Stale ref @g1:1_53: from snapshot generation 1, current is 18. Re-snapshot to get fresh refs."
+code: STALE_REF
+help[1]: "Run `chrome-devtools-axi snapshot` to capture current refs, then retry the action"
+
+$ chrome-devtools-axi snapshot
+page:
+  title: (1) Deck
+  refs: 72
+snapshot:
+uid=g2:1_0 RootWebArea "(1) Deck" url="http://127.0.0.1:18743/current-page-r3.html"
+  uid=g2:1_1 StaticText "FM//DECK"
+  uid=g2:1_2 StaticText "LIVE"
+  uid=g2:1_3 StaticText " · "
+  uid=g2:1_4 StaticText "just now"
+  uid=g2:1_5 StaticText "NEED"
+  uid=g2:1_6 StaticText "1"
+  uid=g2:1_7 StaticText "RUN"
+  uid=g2:1_8 StaticText "0"
+  uid=g2:1_9 StaticText "DONE"
+  uid=g2:1_10 StaticText "0"
+  uid=g2:1_11 StaticText "HELD"
+  uid=g2:1_12 StaticText "0"
+  uid=g2:1_13 StaticText "LV"
+  uid=g2:1_14 StaticText "1"
+  uid=g2:1_15 StaticText "KEEPER "
+  uid=g2:1_16 StaticText "just now"
+  uid=g2:2_0 StaticText "23:41:14"
+  uid=g2:1_18 StaticText "?"
+  uid=g2:1_19 StaticText "1 Needs you item(s) have no held backlog row, marked UNBACKED: fixture-review."
+  uid=g2:1_20 StaticText "1"
+  uid=g2:1_21 StaticText "NEEDS YOU"
+  uid=g2:1_22 StaticText "1"
+  uid=g2:1_23 StaticText "UNBACKED"
+  uid=g2:1_24 StaticText "Review the Pi away-mode fixture"
+  uid=g2:1_25 StaticText "at an unknown time"
+  uid=g2:1_26 StaticText "2"
+  uid=g2:1_27 StaticText "RUNNING"
+  uid=g2:1_28 StaticText "0"
+  uid=g2:1_29 StaticText "No workers running."
+  uid=g2:1_30 StaticText "3"
+  uid=g2:1_31 StaticText "DONE TODAY"
+  uid=g2:1_32 StaticText "0"
+  uid=g2:1_33 StaticText "Nothing finished yet today."
+  uid=g2:1_34 StaticText "4"
+  uid=g2:1_35 StaticText "HELD CALLS"
+  uid=g2:1_36 StaticText "0"
+  uid=g2:1_37 StaticText "No other open calls."
+  uid=g2:1_38 complementary
+    uid=g2:1_39 StaticText "INSPECT"
+    uid=g2:1_40 StaticText "·"
+    uid=g2:1_41 StaticText "NEEDS YOU"
+    uid=g2:1_42 heading "Review the Pi away-mode fixture" level="2"
+    uid=g2:1_43 StaticText "asked at an unknown time"
+    uid=g2:1_44 StaticText "big-ron"
+    uid=g2:1_45 StaticText "fixture-review"
+    uid=g2:1_46 StaticText "UNBACKED"
+    uid=g2:1_47 StaticText "No held backlog row matches this call, so an answer here has nothing to close."
+    uid=g2:1_48 StaticText "The fixture omits the required objective and blocks validation."
+    uid=g2:1_49 StaticText "Approve fixture correction"
+    uid=g2:1_50 StaticText "Leave unresolved"
+    uid=g2:1_51 StaticText "KEEPER LOG · L FOR ALL"
+  uid=g2:1_52 StaticText "/ "
+  uid=g2:1_53 textbox "filter"
+  uid=g2:1_54 StaticText "j"
+  uid=g2:1_55 StaticText "k"
+  uid=g2:1_56 StaticText " move"
+  uid=g2:1_57 StaticText "h"
+  uid=g2:1_58 StaticText "l"
+  uid=g2:1_59 StaticText " pane"
+  uid=g2:1_60 StaticText "1-4"
+  uid=g2:1_61 StaticText " jump"
+  uid=g2:1_62 StaticText "⏎"
+  uid=g2:1_63 StaticText " open"
+  uid=g2:1_64 StaticText "y"
+  uid=g2:1_65 StaticText " copy"
+  uid=g2:1_66 StaticText "L"
+  uid=g2:1_67 StaticText " log"
+  uid=g2:1_68 StaticText "?"
+  uid=g2:1_69 StaticText " help"
+  uid=g2:1_70 StaticText "CLEARED THIS SESSION "
+  uid=g2:1_71 StaticText "0"
+help[3]:
+  Run `chrome-devtools-axi fill @g2:1_53 "text"` to fill the "filter" field
+  Run `chrome-devtools-axi scroll down` to scroll down
+  Use `chrome-devtools-axi eval <expr>` for JS expressions. For multi-statement code, pass a function: `eval "() => { ...; return result }"`
+
+$ chrome-devtools-axi fill @g2:1_53 nonexistent-review-query
+error: "Stale ref @g2:1_53: from snapshot generation 2, current is 3. Re-snapshot to get fresh refs."
+code: STALE_REF
+help[1]: "Run `chrome-devtools-axi snapshot` to capture current refs, then retry the action"
+
+$ chrome-devtools-axi eval () => { const el=document.querySelector("input"); el.value="nonexistent-review-query"; el.dispatchEvent(new Event("input",{bubbles:true})); return document.body.innerText; }
+result: "\"FM//DECK\\n LIVE · 1m ago\\nNEED1\\nRUN0\\nDONE0\\nHELD0\\nLV\\n1\\nKEEPER 1m ago\\n23:41:35\\n?\\n\\n1 Needs you item(s) have no held backlog row, marked UNBACKED: fixture-review.\\n\\n1\\nNEEDS YOU\\n0 FOUND\\n2\\nRUNNING\\n0 FOUND\\n\\nNo workers running.\\n\\n3\\nDONE TODAY\\n0 FOUND\\n\\nNothing finished yet today.\\n\\n4\\nHELD CALLS\\n0 FOUND\\n\\nNo other open calls.\\n\\nINSPECT\\n·\\nNEEDS YOU\\n\\nNothing here for this filter.\\n\\nKEEPER LOG · L FOR ALL\\n/ \\njk move\\nhl pane\\n1-4 jump\\n⏎ open\\ny copy\\nL log\\n? help\\nCLEARED THIS SESSION 0\""
+help[1]:
+  Run `chrome-devtools-axi snapshot` to see current page state
+
+$ chrome-devtools-axi eval () => { const el=document.querySelector("input"); el.value=""; el.dispatchEvent(new Event("input",{bubbles:true})); return document.body.innerText.includes("Review the Pi away-mode fixture"); }
+result: "true"
+help[1]:
+  Run `chrome-devtools-axi snapshot` to see current page state
+
+$ chrome-devtools-axi resize 390 844
+resized:
+  width: 390
+  height: 844
+
+$ chrome-devtools-axi screenshot /home/andrew/.no-mistakes/evidence/01M62VWHSRWT01MB25T4A9K8M7/current-page-mobile-r3.png
+screenshot: /home/andrew/.no-mistakes/evidence/01M62VWHSRWT01MB25T4A9K8M7/current-page-mobile-r3.png
+
+$ chrome-devtools-axi eval () => ({width:innerWidth,scrollWidth:document.documentElement.scrollWidth})
+result: "{\"width\":390,\"scrollWidth\":390}"
+help[1]:
+  Run `chrome-devtools-axi snapshot` to see current page state
+
+$ chrome-devtools-axi eval () => { document.querySelector(".it").click(); return document.body.innerText; }
+result: "\"FM//DECK\\n LIVE · 1m ago\\nNEED1\\nRUN0\\nDONE0\\nHELD0\\nKEEPER 1m ago\\nLOG\\n\\n1 Needs you item(s) have no held backlog row, marked UNBACKED: fixture-review.\\n\\nNEEDS YOU\\n1\\nUNBACKED\\nReview the Pi away-mode fixture\\nat an unknown time\\nasked at an unknown time\\nbig-ron\\nfixture-review\\nUNBACKEDNo held backlog row matches this call, so an answer here has nothing to close.\\nThe fixture omits the required objective and blocks validation.\\nApprove fixture correction\\nLeave unresolved\\nRUNNING\\n0\\n\\nNo workers running.\\n\\nDONE TODAY\\n0\\nHELD CALLS\\n0\""
+help[1]:
+  Run `chrome-devtools-axi snapshot` to see current page state
+
+$ chrome-devtools-axi screenshot /home/andrew/.no-mistakes/evidence/01M62VWHSRWT01MB25T4A9K8M7/current-page-mobile-detail-r3.png
+screenshot: /home/andrew/.no-mistakes/evidence/01M62VWHSRWT01MB25T4A9K8M7/current-page-mobile-detail-r3.png
+

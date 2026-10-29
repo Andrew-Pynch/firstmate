@@ -1,0 +1,66 @@
+$ TMPDIR=<worktree>/.test-r2/tmp FM_TEST_EVIDENCE=1 bash tests/fm-control-relaunch.test.sh
+ok - fm-spawn --relaunch: tracked opencode wiring is retired as on main
+ok - fm-control removes the dialog file after exit and after relaunch
+ok - fm-control exit removes the dialog file before it releases the control lock
+ok - relaunch leaves Main identified by token without changing the task's work
+ok - relaunch leaves Main identified by caller without changing the task's work
+ok - fm-control relaunch: a same-harness relaunch replaces the agent in the same endpoint and worktree
+ok - fm-control relaunch: pending composer text refuses before the exit command is typed
+ok - fm-control relaunch: an unreadable composer fails safe before the exit command is typed
+# evidence begin: linked-home relaunch
+$ bin/fm-control.sh rl42 relaunch --note "continue from linked home"
+warning: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r2/tmp/fm-control-relaunch.84HJkG/linked-home-26274/home/data/rl42/brief.md records no acceptance record (scaffolded before briefs carried one); relaunching the existing task on its recorded scope - record what the captain will accept, how it will be proved, and what evidence must exist first before any new dispatch of it
+warning: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r2/tmp/fm-control-relaunch.84HJkG/linked-home-26274/home/data/rl42/launch-brief.md records no ship branch; defaulting to legacy branch fm/rl42
+warning: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r2/tmp/fm-control-relaunch.84HJkG/linked-home-26274/home/data/rl42/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+relaunched rl42 harness=claude from=claude model=default effort=default backend=tmux endpoint=fmses:fm-rl42 worktree=/home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r2/tmp/fm-control-relaunch.84HJkG/linked-home-26274/wt
+exit=0
+worker HEAD before=b1663b1bfb53b34903c077e4b9e2a4a1d03822cb after=b1663b1bfb53b34903c077e4b9e2a4a1d03822cb
+saved task metadata:
+window=fmses:fm-rl42
+endpoint_task_id=rl42
+worktree=/home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r2/tmp/fm-control-relaunch.84HJkG/linked-home-26274/wt
+project=/home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r2/tmp/fm-control-relaunch.84HJkG/linked-home-26274/secondmate
+harness=claude
+approval_mode=bypass
+kind=ship
+mode=no-mistakes
+yolo=off
+branch=fm/rl42
+tasktmp=/tmp/fm-rl42
+model=default
+effort=default
+busy_gen=g1793248414.1966439.30994
+spawn_gen=s1793248414.1964191.16387
+control_relaunch_tx=1962678.20261029T043333Z.16015
+worker status:
+ M task.txt
+preserved task.txt:
+committed task work
+unfinished task work
+worker FETCH_HEAD absent
+# evidence end
+ok - fm-control relaunch: a linked spawning home preserves committed and unfinished work in the recorded copy
+ok - fm-control relaunch: durable task metadata survives replacement launch publication
+ok - fm-control relaunch: delivery and concurrent task metadata publication serialize
+ok - fm-control relaunch: disabling tracing clears metadata and pane context
+ok - fm-control relaunch: progress and the Firstmate-worktree worker identity reach the replacement
+ok - fm-control relaunch: the progress note's inbox listing is silent on an empty inbox
+ok - fm-control relaunch: a ship task refuses without the progress note its replacement needs
+ok - fm-control relaunch: switching harness is one ordinary relaunch, and the old wiring goes with the old agent
+ok - fm-control relaunch: a refused relaunch onto polytoken keeps the project's own hook layer and the running agent
+ok - fm-control relaunch: a refused polytoken profile leaves the running agent untouched
+ok - fm-spawn --relaunch: retiring a raw polytoken launch's wiring keeps the project's own layers
+ok - fm-control relaunch: a harness switch resets model and effort unless they are named too
+ok - fm-control relaunch: a prefixed recorded harness can switch adapters transactionally
+ok - fm-control relaunch: a prefixed command requires an explicit replacement harness
+ok - fm-control relaunch: a same-harness relaunch keeps the profile axes it was running with
+ok - native Ultra relaunch preserves its profile and rejects an unsupported model before stopping
+ok - fm-control relaunch: an omp task keeps its service tier and a harness switch drops it
+ok - fm-control relaunch: an omp task keeps its per-spawn account, checks it before stopping, and a switch drops it
+ok - fm-control relaunch: a signed-out worker account pin refuses before the old agent stops
+ok - fm-control relaunch: the replacement follows the home's current worker account pin
+not ok - the secondmate should relaunch on its claude pin: error: secondmate home cannot be inside the firstmate repo: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r2/tmp/fm-control-relaunch.84HJkG/sm-account-claude-15121/wt
+error: the replacement agent for rl-sm-acct could not be launched on claude
+error: rl-sm-acct's agent was stopped but the replacement did not launch; no agent is running, and its work plus the recorded progress note are preserved at /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r2/tmp/fm-control-relaunch.84HJkG/sm-account-claude-15121/wt: expected exit 0, got 1
+
+exit=1

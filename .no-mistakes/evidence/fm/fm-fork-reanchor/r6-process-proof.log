@@ -1,0 +1,15 @@
+warning: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r6/process/home/data/traceproof/launch-brief.md records no ship branch; defaulting to legacy branch fm/traceproof
+warning: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r6/process/home/data/traceproof/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+spawned traceproof harness=claude kind=ship mode=no-mistakes yolo=off window=firstmate:fm-traceproof worktree=/home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r6/process/user/.treehouse/project-d4d1a1/1/project
+
+PASS trace: actual worker process received persisted carrier 00-ee630c85f80eabe56bcbb1ece464895b-f8ad192c3b0f0ecd-01
+warning: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r6/process/home/data/traceproof/launch-brief.md records no ship branch; defaulting to legacy branch fm/traceproof
+warning: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r6/process/home/data/traceproof/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+spawned traceproof harness=claude kind=ship mode=no-mistakes yolo=off window=firstmate:fm-traceproof worktree=/home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r6/process/user/.treehouse/project-d4d1a1/1/project
+
+PASS recovery: replacement worker PID received identical persisted carrier
+PASS malformed carrier: CLI refused before creating another process error: --traceparent is not a valid W3C traceparent
+state: working · source: pane · harness busy (fm-spawn)
+
+PASS pause: real pane remained quiet beyond 1-second wedge threshold
+PASS pause: real elapsed long-cadence recheck after 11.22 seconds: stale: firstmate:fm-traceproof (paused 12s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds)

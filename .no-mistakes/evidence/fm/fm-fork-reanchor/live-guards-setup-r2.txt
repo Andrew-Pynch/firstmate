@@ -1,0 +1,46 @@
+$ bin/fm-lab-home.sh create /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r2/live/parent
+/home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r2/live/parent
+exit=0
+$ bin/fm-lab-home.sh create /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r2/live/mate
+/home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r2/live/mate
+exit=0
+$ bin/fm-wake-drain.sh
+DRAIN COPY: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r2/live/parent/state/.last-drain.1793248441.2131963.txt
+OPEN DECISIONS (still open, folded from the durable status logs - not just the latest line):
+reanchor [key=release] needs-decision: long decision long decision long decision long decision long decision long decision long decision long decision long decision long decision long decision long decision  [truncated]
+OPEN DECISIONS: close one by answering it: bin/fm-send.sh <task> --resolve-key <key> '<answer>'
+exit=0
+$ bin/fm-wake-drain.sh
+DRAIN COPY: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r2/live/parent/state/.last-drain.1793248441.2134782.txt
+OPEN DECISIONS: 1 unchanged since this reader was shown them in full (re-present with FM_OPEN_DECISIONS_REVEAL=1 bin/fm-wake-drain.sh): reanchor[release]
+exit=0
+$ bin/fm-wake-drain.sh
+DRAIN COPY: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r2/live/parent/state/.last-drain.1793248442.2138854.txt
+OPEN DECISIONS (still open, folded from the durable status logs - not just the latest line):
+reanchor [key=release] needs-decision: long decision long decision long decision long decision long decision long decision long decision long decision long decision long decision long decision long decision  [truncated]
+OPEN DECISIONS: close one by answering it: bin/fm-send.sh <task> --resolve-key <key> '<answer>'
+exit=0
+Persisted complete decision identity:
+2131321
+reanchor	release	needs-decision	long decision long decision long decision long decision long decision long decision long decision long decision long decision long decision long decision long decision long decision long decision long decision long decision long decision long decision long decision long decision long decision long decision long decision long decision long decision long decision long decision long decision long decision long decision tail=beta
+$ bin/fm-wake-drain.sh
+DRAIN COPY: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r2/live/parent/state/.last-drain.1793248443.2145499.txt
+OPEN DECISIONS (still open, folded from the durable status logs - not just the latest line):
+reanchor [key=release] needs-decision: long decision long decision long decision long decision long decision long decision long decision long decision long decision long decision long decision long decision  [truncated]
+OPEN DECISIONS: close one by answering it: bin/fm-send.sh <task> --resolve-key <key> '<answer>'
+exit=0
+$ bin/fm-wake-drain.sh
+exit=0
+PASS: first presentation, repeat suppression, long-tail change, reveal, and resolution.
+$ bin/fm-spawn.sh mate /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r2/live/mate --secondmate --harness omp --code-root /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r2/live/parent
+error: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r2/live/parent/config/secondmate-accounts/mate/omp-profile conflicts with /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r2/live/parent/config/omp-account: omp --profile overrides the pinned account directory; configure only one of these pins
+exit=1
+$ /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/bin/fm-herdr-lab.sh name guard-r2
+fm-lab-guard-r2-2160102-32666
+exit=0
+$ /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/bin/fm-herdr-lab.sh prepare fm-lab-guard-r2-2160102-32666
+exit=0
+$ /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/bin/fm-herdr-lab.sh provision fm-lab-guard-r2-2160102-32666
+fm-herdr-lab: tripwire already exists for 'fm-lab-guard-r2-2160102-32666'; refusing ambiguous ownership
+exit=1

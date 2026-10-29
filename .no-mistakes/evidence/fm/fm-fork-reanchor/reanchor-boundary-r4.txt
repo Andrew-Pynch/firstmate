@@ -1,0 +1,15 @@
+$ git rev-parse HEAD
+b6c3dad78168a54c9e6ef8f8a01ef8a92df6905d
+exit=0
+$ git remote -v
+origin	https://github.com/Andrew-Pynch/firstmate.git (fetch)
+origin	https://github.com/Andrew-Pynch/firstmate.git (push)
+exit=0
+$ git merge-base --is-ancestor 0fd56ccd0a890110d80b01cd28ffe167542375ed HEAD
+exit=0
+$ git merge-base --is-ancestor d049700c HEAD
+exit=0
+$ git show --no-patch '--format=%h %s%nparents=%p' f376eb00
+f376eb00 chore(reanchor): bind superseded fork ancestry
+parents=d5236957 0fd56ccd
+exit=0

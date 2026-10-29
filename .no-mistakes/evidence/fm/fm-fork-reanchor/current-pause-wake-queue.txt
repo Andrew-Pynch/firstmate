@@ -1,0 +1,1 @@
+1793250491	1	stale	firstmate:fm-traceproof	stale: firstmate:fm-traceproof (paused 12s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds)

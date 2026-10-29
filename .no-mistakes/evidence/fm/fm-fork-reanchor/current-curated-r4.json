@@ -1,0 +1,1 @@
+{"checked": "2026-10-29T04:45:54.080970+00:00", "needs": [{"key": "fixture-review", "t": "Review the Pi away-mode fixture", "why": "The fixture omits the required objective and blocks validation.", "options": ["Approve fixture correction", "Leave unresolved"]}]}

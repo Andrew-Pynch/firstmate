@@ -1,0 +1,4 @@
+$ bash .test-r3/fm-omp-harness.test.sh 
+not ok - a pinned omp secondmate spawn should succeed under its profile's catalog: error: secondmate home cannot be inside the firstmate repo: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r3/tmp/fm-omp-harness.ZvyrJp/secondmate-omp-profile/sm: expected exit 0, got 1
+
+exit=1

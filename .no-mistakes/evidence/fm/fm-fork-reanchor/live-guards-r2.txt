@@ -1,0 +1,108 @@
+$ bin/fm-lab-home.sh create /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r2/live/parent
+/home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r2/live/parent
+exit=0
+$ bin/fm-lab-home.sh create /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r2/live/mate
+/home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r2/live/mate
+exit=0
+$ git init --quiet /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r2/live/mate
+exit=0
+$ bin/fm-wake-drain.sh
+DRAIN COPY: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r2/live/parent/state/.last-drain.1793248560.2732603.txt
+OPEN DECISIONS (still open, folded from the durable status logs - not just the latest line):
+reanchor [key=release] needs-decision: long decision long decision long decision long decision long decision long decision long decision long decision long decision long decision long decision long decision  [truncated]
+OPEN DECISIONS: close one by answering it: bin/fm-send.sh <task> --resolve-key <key> '<answer>'
+exit=0
+$ bin/fm-wake-drain.sh
+DRAIN COPY: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r2/live/parent/state/.last-drain.1793248560.2736134.txt
+OPEN DECISIONS: 1 unchanged since this reader was shown them in full (re-present with FM_OPEN_DECISIONS_REVEAL=1 bin/fm-wake-drain.sh): reanchor[release]
+exit=0
+$ bin/fm-wake-drain.sh
+DRAIN COPY: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r2/live/parent/state/.last-drain.1793248561.2739645.txt
+OPEN DECISIONS (still open, folded from the durable status logs - not just the latest line):
+reanchor [key=release] needs-decision: long decision long decision long decision long decision long decision long decision long decision long decision long decision long decision long decision long decision  [truncated]
+OPEN DECISIONS: close one by answering it: bin/fm-send.sh <task> --resolve-key <key> '<answer>'
+exit=0
+Persisted complete decision identity:
+2731254
+reanchor	release	needs-decision	long decision long decision long decision long decision long decision long decision long decision long decision long decision long decision long decision long decision long decision long decision long decision long decision long decision long decision long decision long decision long decision long decision long decision long decision long decision long decision long decision long decision long decision long decision tail=beta
+$ bin/fm-wake-drain.sh
+DRAIN COPY: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r2/live/parent/state/.last-drain.1793248561.2743613.txt
+OPEN DECISIONS (still open, folded from the durable status logs - not just the latest line):
+reanchor [key=release] needs-decision: long decision long decision long decision long decision long decision long decision long decision long decision long decision long decision long decision long decision  [truncated]
+OPEN DECISIONS: close one by answering it: bin/fm-send.sh <task> --resolve-key <key> '<answer>'
+exit=0
+$ bin/fm-wake-drain.sh
+exit=0
+PASS: first presentation, repeat suppression, long-tail change, reveal, and resolution.
+$ bin/fm-spawn.sh mate /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r2/live/mate --secondmate --harness omp --code-root /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r2/live/parent
+error: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r2/live/parent/config/secondmate-accounts/mate/omp-profile conflicts with /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r2/live/parent/config/omp-account: omp --profile overrides the pinned account directory; configure only one of these pins
+exit=1
+$ /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/bin/fm-herdr-lab.sh name guard-r2
+fm-lab-guard-r2-2766105-27036
+exit=0
+$ /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/bin/fm-herdr-lab.sh provision fm-lab-guard-r2-2766105-27036
+exit=0
+$ /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/bin/fm-herdr-lab.sh run fm-lab-guard-r2-2766105-27036 workspace create --cwd /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r2/live/mate --label validation-r2 --no-focus
+{"id":"cli:workspace:create","result":{"root_pane":{"agent_status":"unknown","cwd":"/home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r2/live/mate","focused":true,"foreground_cwd":"/home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r2/live/mate","pane_id":"w1:p1","revision":0,"scroll":{"max_offset_from_bottom":0,"offset_from_bottom":0,"viewport_rows":40},"tab_id":"w1:t1","terminal_id":"term_65ef337aadf601","workspace_id":"w1"},"tab":{"agent_status":"unknown","focused":true,"label":"1","number":1,"pane_count":1,"tab_id":"w1:t1","workspace_id":"w1"},"type":"workspace_created","workspace":{"active_tab_id":"w1:t1","agent_status":"unknown","focused":true,"label":"validation-r2","number":1,"pane_count":1,"tab_count":1,"workspace_id":"w1"}}}
+exit=0
+$ /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/bin/fm-herdr-lab.sh run fm-lab-guard-r2-2766105-27036 pane run w1:p1 /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r2/live/start-omp.sh
+exit=0
+Real OMP process:
+2769215 bun /home/andrew/.bun/bin/omp --cwd /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7 --session-dir /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r2/live/sessions --no-extensions --no-tools --no-skills --no-rules --no-title --no-lsp --no-session
+$ /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/bin/fm-herdr-lab.sh run fm-lab-guard-r2-2766105-27036 pane read w1:p1 --source recent --lines 60
+                                                                                                           ✧
+    ✧   ✧                    ·                               ·     ✦✧
+                                                                                                                ✦
+         ·                     ✦                                                                            ✧      ✦
+                                    ·       ·                                                       ·         ·
+                                           ·                       ·           ·✧              ·     ·
+                                               ████████████████████████                                            ✧
+                                               ████████████████████████                      ✦
+                                       ✧             ████    ████
+           ✦                                         ████    ████           ✧
+                ·                                    ████    ████      ✧
+                             ·                 ·     ████    ████                                              ·
+ ✧      ✦                                            ▒▒▒▒    ████        ✧
+                                               ·     ▒▒▒▒    ████                                               ✧
+                ·                                           ·████           ·
+                                                             ████
+                    ░░▒▒▒▒▓▒▒░░░     ░░▒▒▒▒▒▒▓▓▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒░▒░▒▒▒▒▒▓▓▓▓▒▒░░░     ░░░▒▒▒▒▒▒░░░
+                    ░░▒▒▒▒▒▓▒▒░░        ░▒▒▒▓▓▓▓▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒░░░░░░▒▒▒▒▓▓▓▓▓▒▒░░     ░░░▒▒▒▒▒░░░
+                    ░░▒▒▒▒▒▒▒▒▒░        ░░▒▒▓▓█▓█▓▓▒▒▒▒▒▒▒▒▒▒░░░░ ░░░▒▒▓▓▓▓▓▓▒▒▒░░   ░░░░▒░▒░░░░░
+                   ░░▒▒▒▒▒▒▒▒░░░         ░▒▒▓▓█████▓▓▓▒▒▒▒▒▒▒░░ ░░░▒▒▒▓▓▓█▓▓▓▒▒░░    ░░░░░░░░░░░
+                 ░ ░░░░▒▒▒▒▒░░░          ░░▒▓████████▓▒▒▒▒▒▒▒░░░░░▒▒▓▓▓▓██▓▓▒▒░░      ░░░░░░░░  ░  ░
+                 ░░░░░░░▒░░░░░░░          ░▒▓▓███████▓▓▒▒▒▒▒▒▒▒▒▒▒▒▓▓████▓▓▒▒░░          ░░░░░░░░░░  ░
+                  ░░░░░░░░░░░░░           ░░▒▓▓██████▓▓▒▒▒▒▒▒▒▒▒▒▓▓█████▓▓▒░░             ░  ░░░░░░░
+                  ░░░░░░░░░   ░           ░░░▒▒▓▓▓█▓▓▓▓▒▒▒▒▒▒▒▒▒▓▓▓▓██▓▓▒▒░░            ░░░ ░░░░░░░░░
+                     ░░░░░░ ░ ░ ░ ░░░░░░░    ░░░▒▒▒▒▒▒▒▒▒▒░▒▒▒▒▓▓▓▓▓▓▓▓▒░░            ░   ░░░░░░░░░
+                         ░ ░░░░░░░░░░░░░░       ░░░░░░░▒░░░░░▒▒▒▓▓▓▓▒▒▒░             ░ ░░░░░░░░▒░░░
+                          ░░░░░░░░░░▒▒▒░░░            ░░░░░░░▒▒▒▒▒▒▒░░               ░░░░░░▒▒░░░░░
+                          ░░░░░░▒░▒▒▒▒▒░░░░            ░░░░░░▒▒▒▒░░░            ░░░░░░░░░▒▒░▒▒░░
+                          ░░░░▒░▒▒▒▒▒▒▒▒░░░             ░░░░░░▒░░░           ░░░░░░░░░░░▒░▒▒▒░░░
+                         ░░░░▒░▒▒▒▒▒▒▒░▒░░░░           ░░░░▒░▒░░░           ░░░░░░░▒░▒▒▒▒▒░░░
+                           ░░░░░░▒▒▒░░░░░░░░░░        ░░░░▒▒▒░░░        ░░░░░░░░░▒░▒▒░░░▒░░░░
+                            ░░░░░░░░░░░░░░░░░▒░░░░░░░░░▒▒▒▒▒▒▒░░░     ░░░░░░▒░▒▒▒▒░░░▒░░░░
+                             ░░░░░ ░   ░░░░▒░▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒░░  ░░░░░░▒▒▒▒▒▒░░░░░░░░░░
+                                        ░░░░▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒░░░░░░░░▒▒▒▒▒▒▒▒▒░░░░░░░
+                                          ░░░▒▒▒▓▓▒▒▒▒▒▒▒▒▒▒░░░░░░░░▒▒▒▒▒▒▒░░░░░░░ ░
+                  ░                        ░░▒▒▒▒▒▒▒▒▒▒░░░░░░░░░░░░▒░▒░▒░░░░░░░
+                   ░                         ░░░░░░▒▒░░░       ░░░░░░░░░░░
+                   ░                              ░░░           ░░░░░░                            ░░
+                                                                  ░
+                                                    press ⏎ to skip                          ░ ░
+exit=0
+$ bin/fm-control.sh mate relaunch --harness omp --code-root /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r2/live/missing
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r2/live/parent
+error: --code-root is not a readable directory: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r2/live/missing
+exit=1
+$ bin/fm-control.sh mate relaunch --harness claude
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r2/live/parent
+error: a claude secondmate cannot launch from a code root: its workspace-trust pre-registration is scoped to the mate home, and Claude Code would wedge on the trust dialog in a directory it has not seen. Launch this mate from its home, or select a harness whose supervision does not need that registration
+exit=1
+$ /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/bin/fm-herdr-lab.sh run fm-lab-guard-r2-2766105-27036 pane get w1:p1
+{"id":"cli:pane:get","result":{"pane":{"agent":"omp","agent_status":"idle","cwd":"/home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/.test-r2/live/mate","focused":true,"foreground_cwd":"/home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7","pane_id":"w1:p1","revision":4,"scroll":{"max_offset_from_bottom":0,"offset_from_bottom":0,"viewport_rows":40},"tab_id":"w1:t1","terminal_id":"term_65ef337aadf601","terminal_title":"π > 01M62VWHSRWT01MB25T4A9K8M7","terminal_title_stripped":"π > 01M62VWHSRWT01MB25T4A9K8M7","workspace_id":"w1"},"type":"pane_info"}}
+exit=0
+PASS: missing code root and incompatible Claude switch preserve the running process and byte-identical metadata.
+$ /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M62VWHSRWT01MB25T4A9K8M7/bin/fm-herdr-lab.sh teardown fm-lab-guard-r2-2766105-27036
+exit=0

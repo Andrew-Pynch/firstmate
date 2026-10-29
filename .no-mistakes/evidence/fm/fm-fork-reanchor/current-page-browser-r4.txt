@@ -1,0 +1,53 @@
+Desktop render 1440x900 and mobile render 390x844 captured. Filtering unmatched text returned 0 FOUND; clearing restored the row.
+page:
+  title: (1) Deck
+  refs: 37
+snapshot:
+uid=g4:1_0 RootWebArea "(1) Deck" url="http://127.0.0.1:18764/current-page-r4.html"
+  uid=g4:1_1 "FM//DECK"
+  uid=g4:4_0 "LIVE"
+  uid=g4:1_3 " · "
+  uid=g4:4_1 "just now"
+  uid=g4:1_5 "NEED"
+  uid=g4:1_6 "1"
+  uid=g4:1_7 "RUN"
+  uid=g4:1_8 "0"
+  uid=g4:1_9 "DONE"
+  uid=g4:1_10 "0"
+  uid=g4:1_11 "HELD"
+  uid=g4:1_12 "0"
+  uid=g4:1_15 "KEEPER "
+  uid=g4:4_2 "just now"
+  uid=g4:2_3 button "LOG"
+  uid=g4:1_19 "1 Needs you item(s) have no held backlog row, marked UNBACKED: fixture-review."
+  uid=g4:1_21 "NEEDS YOU"
+  uid=g4:2_4 "1"
+  "▾"
+  uid=g4:1_23 "UNBACKED"
+  uid=g4:1_24 "Review the Pi away-mode fixture"
+  uid=g4:1_25 "at an unknown time"
+  uid=g4:4_3 "asked at an unknown time"
+  uid=g4:4_4 "big-ron"
+  uid=g4:4_5 "fixture-review"
+  uid=g4:4_6 "UNBACKED"
+  uid=g4:4_7 "No held backlog row matches this call, so an answer here has nothing to close."
+  uid=g4:4_8 "The fixture omits the required objective and blocks validation."
+  uid=g4:4_9 "Approve fixture correction"
+  uid=g4:4_10 "Leave unresolved"
+  uid=g4:1_27 "RUNNING"
+  uid=g4:2_5 "0"
+  "▾"
+  uid=g4:1_29 "No workers running."
+  uid=g4:1_31 "DONE TODAY"
+  uid=g4:2_6 "0"
+  "▸"
+  uid=g4:1_35 "HELD CALLS"
+  uid=g4:2_7 "0"
+  "▸"
+help[2]:
+  Run `chrome-devtools-axi click @g4:2_3` to click the "LOG" button
+  Use `chrome-devtools-axi eval <expr>` for JS expressions. For multi-statement code, pass a function: `eval "() => { ...; return result }"`
+screenshot: /home/andrew/.no-mistakes/evidence/01M62VWHSRWT01MB25T4A9K8M7/current-page-mobile-detail-r4.png
+result: "{\"width\":390,\"scrollWidth\":390,\"detailsVisible\":true,\"body\":\"FM//DECK\\n LIVE · just now\\nNEED1\\nRUN0\\nDONE0\\nHELD0\\nKEEPER just now\\nLOG\\n\\n1 Needs you item(s) have no held backlog row, marked UNBACKED: fixture-review.\\n\\nNEEDS YOU\\n1\\nUNBACKED\\nReview the Pi away-mode fixture\\nat an unknown time\\nasked at an unknown time\\nbig-ron\\nfixture-review\\nUNBACKEDNo held backlog row matches this call, so an answer here has nothing to close.\\nThe fixture omits the required objective and blocks validation.\\nApprove fixture correction\\nLeave unresolved\\nRUNNING\\n0\\n\\nNo workers running.\\n\\nDONE TODAY\\n0\\nHELD CALLS\\n0\"}"
+help[1]:
+  Run `chrome-devtools-axi snapshot` to see current page state

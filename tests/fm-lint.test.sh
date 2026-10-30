@@ -232,7 +232,7 @@ test_canonical_partitions_preserve_full_lint() {
 }
 
 test_partitions_balance_imported_work() {
-  local tmp repo part selected a_part= c_part= log flags mode
+  local tmp repo part selected a_part='' c_part='' log flags mode
   tmp=$(fm_test_tmproot fm-lint-source-weights)
   repo="$tmp/repo"
   mkdir -p "$repo/tools" "$repo/bin/backends" "$repo/tests" "$repo/deps" "$tmp/fakebin"
@@ -278,6 +278,63 @@ test_partitions_balance_imported_work() {
   [ -n "$a_part" ] && [ -n "$c_part" ] && [ "$a_part" != "$c_part" ] \
     || fail "small roots importing the same large transitive dependency share one partition"
   pass "canonical partitions balance imported work without changing coverage or analysis"
+}
+
+test_partitions_bound_repeated_imports() {
+  local tmp repo part selected a_part='' b_part='' log flags mode level next
+  tmp=$(fm_test_tmproot fm-lint-repeated-imports)
+  repo="$tmp/repo"
+  mkdir -p "$repo/tools" "$repo/bin/backends" "$repo/tests" "$repo/deps" "$tmp/fakebin"
+  cp "$LINT" "$repo/tools/fm-lint.sh"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$repo/tools/fm-lint-workflows.sh"
+  chmod +x "$repo/tools/"*.sh
+  printf '# shellcheck source=deps/0.sh\n. deps/0.sh\n' > "$repo/bin/a.sh"
+  cp "$repo/bin/a.sh" "$repo/bin/b.sh"
+  # This root outweighs the unique dependency bytes, but not their repeated
+  # import cost. Counting each dependency only once would pack a and b together.
+  printf '# %016384d\n' 0 > "$repo/bin/c.sh"
+  printf '# backend\n' > "$repo/bin/backends/d.sh"
+  printf '# test\n' > "$repo/tests/e.sh"
+  for ((level=0; level<24; level++)); do
+    next=$((level + 1))
+    printf '# shellcheck source=deps/%s.sh\n. deps/%s.sh\n# shellcheck source=deps/%s.sh\n. deps/%s.sh\n' \
+      "$next" "$next" "$next" "$next" > "$repo/deps/$level.sh"
+  done
+  printf '# shared leaf\n' > "$repo/deps/24.sh"
+
+  # Only this tiny fixture is executed. Both linters are local stand-ins, and
+  # the existing process-group watchdog bounds even a regressed traversal.
+  # shellcheck source=bin/fm-timeout-lib.sh
+  . "$ROOT/bin/fm-timeout-lib.sh"
+  printf '#!/usr/bin/env bash\nexit 99\n' > "$tmp/fakebin/actionlint"
+  chmod +x "$tmp/fakebin/actionlint"
+  : > "$tmp/union"
+  for part in 1of2 2of2; do
+    log="$tmp/$part.roots"
+    flags="$tmp/$part.flags"
+    mode="$tmp/$part.mode"
+    fm_lint_stub_shellcheck "$tmp/fakebin" "$log"
+    selected=$(fm_exec_timed 5 1 env PATH="$tmp/fakebin:$PATH" FM_LINT_JOBS=1 \
+      "$repo/tools/fm-lint.sh" --partition "$part" --list-files) \
+      || fail "repeated-import partition $part did not finish within its bound"
+    printf '%s\n' "$selected" >> "$tmp/union"
+    if printf '%s\n' "$selected" | grep -qx bin/a.sh; then a_part=$part; fi
+    if printf '%s\n' "$selected" | grep -qx bin/b.sh; then b_part=$part; fi
+    (fm_exec_timed 5 1 env PATH="$tmp/fakebin:$PATH" FM_LINT_JOBS=1 \
+      FM_TEST_FLAG_LOG="$flags" FM_TEST_MODE_LOG="$mode" \
+      "$repo/tools/fm-lint.sh" --partition "$part") > "$tmp/$part.out" 2>&1 \
+      || fail "repeated-import execution $part failed: $(cat "$tmp/$part.out")"
+    [ "$(LC_ALL=C sort "$log")" = "$(printf '%s\n' "$selected" | LC_ALL=C sort)" ] \
+      || fail "repeated imports changed the executed root inventory"
+    [ "$(LC_ALL=C sort -u "$flags")" = "$(printf 'exclude=none\nexternal-sources=yes')" ] \
+      || fail "repeated imports weakened source-aware analysis"
+    [ "$(LC_ALL=C sort -u "$mode")" = on ] || fail "repeated imports disabled extended analysis"
+  done
+  [ "$(LC_ALL=C sort "$tmp/union")" = "$(printf '%s\n' bin/a.sh bin/b.sh bin/backends/d.sh bin/c.sh tests/e.sh)" ] \
+    || fail "repeated imports lost, duplicated, or added a canonical root"
+  [ -n "$a_part" ] && [ -n "$b_part" ] && [ "$a_part" != "$b_part" ] \
+    || fail "repeated import cost was lost or shared across root estimates"
+  pass "nested repeated imports finish within a bound and retain repeated cost and full analysis"
 }
 
 # fm_lint_stub_git <fakebin-dir>: install a git stub for the changed-file mode
@@ -2199,6 +2256,7 @@ SH
 # Bounded scheduler regression: its entire toolchain is local stand-ins.
 if [ "${1:-}" = --partition-scheduling-only ]; then
   test_partitions_balance_imported_work
+  test_partitions_bound_repeated_imports
   exit $?
 fi
 
@@ -2206,6 +2264,7 @@ test_help_reports_the_complete_interface
 test_list_files_reports_the_shell_inventory
 test_canonical_partitions_preserve_full_lint
 test_partitions_balance_imported_work
+test_partitions_bound_repeated_imports
 test_fast_mode_disables_extended_analysis
 test_ci_defaults_to_full_analysis
 test_ci_rejects_explicit_fast_mode

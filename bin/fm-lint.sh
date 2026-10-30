@@ -960,14 +960,17 @@ fm_lint_root_weights() {
     esac
   done
   # Perl is already required by the worker watchdog. Read each file once per
-  # estimate, count repeated imports, and cut cycles at the active path only.
+  # estimate and memoize completed weights per root: repeated imports retain
+  # their cost without revisiting subgraphs. Cut cycles at the active path;
+  # root-local weights keep those cuts from affecting another root's estimate.
   perl -e '
     use strict;
     use warnings;
-    my (%bytes, %sources, %active);
+    my (%bytes, %sources, %active, %weights);
     sub weight {
       my ($path) = @_;
       return 0 if $active{$path};
+      return $weights{$path} if exists $weights{$path};
       if (!exists $bytes{$path}) {
         $bytes{$path} = -f $path ? (-s $path || 0) : 1;
         $sources{$path} = [];
@@ -984,10 +987,11 @@ fm_lint_root_weights() {
       local $active{$path} = 1;
       my $total = $bytes{$path};
       $total += weight($_) for @{$sources{$path}};
-      return $total;
+      return $weights{$path} = $total;
     }
     my $index = 0;
     for my $path (@ARGV) {
+      %weights = ();
       printf "%s\t%s\t%s\n", weight($path), ++$index, $path;
     }
   ' -- "${ROOTS[@]}"

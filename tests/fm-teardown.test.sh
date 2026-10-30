@@ -1855,6 +1855,7 @@ assert_dirty_diagnostic() {
     # Preserve the existing exemptions without counting them as leftovers.
     mkdir "$case_dir/wt/.claude"
     touch "$case_dir/wt/.claude/settings.local.json" "$case_dir/wt/.fm-grok-turnend"
+    printf '%s\n' '.claude/settings.local.json' >> "$(git -C "$case_dir/wt" rev-parse --git-path info/exclude)"
   fi
   before=$(git -C "$case_dir/wt" status --porcelain)
   rc=0

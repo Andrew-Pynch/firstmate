@@ -41,7 +41,13 @@ SH
   cat > "$fb/tmux" <<'SH'
 #!/usr/bin/env bash
 case "${1:-}" in
-  display-message) case "$*" in *dead-*) exit 1 ;; *) printf '%%1\n' ;; esac ;;
+  display-message)
+    case "$*" in
+      *dead-*) exit 1 ;;
+      *'#{pane_current_command}'*) printf 'claude\n' ;;
+      *) printf '%%1\n' ;;
+    esac
+    ;;
   list-windows)
     sed -n 's/^window=[^:]*://p' "${FM_HOME:?}"/state/*.meta 2>/dev/null \
       | grep -v 'dead-' || true

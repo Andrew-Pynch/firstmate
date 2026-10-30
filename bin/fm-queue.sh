@@ -879,7 +879,7 @@ def maintenance_lines:
                  project_status:([ $rows[] | select(.project == $p) | .project_status ] | .[0]),
                  rows:([ $rows[] | select(.project == $p) ] | sort_by((.state | state_rank), .id))} ],
    maintenance:($maintenance | sort_by(.class, .id)),
-   bounds:[ {surface:"row text",
+   bounds:([ {surface:"row text",
              detail:(if $cut_rows > 0
                      then "\($cut_rows) row(s) carry text a secondmate ledger cut (\([$rows[].cut_fields[] | "\(.field)(\(.bound))"] | unique | join(", "))); each such row is marked CUT and names its full-text source"
                      else "none - every row prints its full text" end)},
@@ -902,7 +902,7 @@ def maintenance_lines:
             {surface:"buckets",
              detail:(if ($mate_bounds | length) > 0
                      then "no list built from this home own backlog is capped, and every record it carries is printed; the secondmate home bounds above name what those homes withheld"
-                     else "none - no list below is capped and every row the snapshot carries is printed" end)}] + $mate_bounds} as $m
+                     else "none - no list below is capped and every row the snapshot carries is printed" end)}] + $mate_bounds)} as $m
 
 | if $mode == "json" or $mode == "answer" then $m
   else ( $m

@@ -355,6 +355,8 @@ pass "the remote doctor derives tool readiness from the installed worker"
 DOCTOR_BIN="$TMP_ROOT/doctor-bin"
 DOCTOR_HOME="$TMP_ROOT/doctor-home"
 mkdir -p "$DOCTOR_BIN" "$DOCTOR_HOME"
+DOCTOR_BASE_PATH=$(fm_test_base_path_sans /usr/bin:/bin:/usr/sbin:/sbin \
+  claude codex opencode pi pi-signed grok kimi omp)
 ln -sf "$(command -v bash)" "$DOCTOR_BIN/bash"
 # Report a non-darwin host so this file keeps testing tool resolution alone and
 # never reads or writes the real account's launch agents.
@@ -365,7 +367,7 @@ printf 'Linux\n'
 SH
 chmod +x "$DOCTOR_BIN/uname"
 set +e
-out=$(HOME="$DOCTOR_HOME" PATH="$DOCTOR_BIN:/usr/bin:/bin:/usr/sbin:/sbin" "$ROOT/bin/fm-remote-doctor.sh" 2>&1)
+out=$(HOME="$DOCTOR_HOME" PATH="$DOCTOR_BIN:$DOCTOR_BASE_PATH" "$ROOT/bin/fm-remote-doctor.sh" 2>&1)
 rc=$?
 set -e
 [ "$rc" -ne 0 ] || fail "the remote doctor passed with a missing required tool"

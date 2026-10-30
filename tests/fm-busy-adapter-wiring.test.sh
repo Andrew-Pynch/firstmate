@@ -542,6 +542,9 @@ seed_secondmate_home() { # <home> <id> [home Stop guard]
   printf '# Firstmate\n' > "$home/AGENTS.md"
   printf '%s\n' "$id" > "$home/.fm-secondmate-home"
   printf 'charter\n' > "$home/data/charter.md"
+  mkdir -p "$home/.omp/extensions"
+  cp "$ROOT/.omp/extensions/fm-primary-omp-watch.ts" \
+    "$ROOT/.omp/extensions/fm-primary-turnend-guard.ts" "$home/.omp/extensions/"
   fm_git_init_commit "$home"
 }
 
@@ -552,6 +555,9 @@ spawn_secondmate_harness() { # <case-dir> <id> <harness> [extra fake tools...]
   sm="$case_dir/sm"
   mkdir -p "$case_dir"
   fakebin=$(make_spawn_fakebin "$case_dir/fake" "$harness" "$@")
+  if [ -x "$fakebin/omp" ]; then
+    fm_fake_version_tool "$fakebin" omp FM_FAKE_OMP_VERSION 18.1.11
+  fi
   fm_test_spawn_home "$primary" "$harness"
   seed_secondmate_home "$sm" "$id" "${SECONDMATE_HOME_GUARD:-}"
   if [ -n "${SECONDMATE_LOCAL_SETTINGS:-}" ]; then

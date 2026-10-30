@@ -189,7 +189,7 @@ test_legacy_brief_relaunches_but_never_dispatches_fresh() {
   local rec id out status
   rec=$(make_case legacy)
   read_case "$rec"
-  id=legacy-task
+  id='legacy-task'
   write_brief "$HOME_DIR/data/$id/brief.md"
   fm_write_meta "$HOME_DIR/state/$id.meta" \
     "window=firstmate:fm-$id" "endpoint_task_id=$id" "worktree=$WT_DIR" \
@@ -218,7 +218,7 @@ test_legacy_brief_relaunches_but_never_dispatches_fresh() {
 # must be exactly the ones the validator reads: otherwise the documented fill
 # would produce a brief that can never dispatch.
 test_scaffold_placeholders_match_the_validator() {
-  local home id brief content out kind
+  local home id brief content out kind failure
   home="$TMP_ROOT/scaffold-home"
   mkdir -p "$home/data"
   for kind in ship scout; do
@@ -237,13 +237,13 @@ test_scaffold_placeholders_match_the_validator() {
     content=${content//'{ACCEPT_PROOF}'/"$COMPONENT_PROOF"}
     content=${content//'{ACCEPT_GATE}'/NONE}
     printf '%s\n' "$content" > "$brief"
+    failure="a $kind scaffold filled with its own documented placeholders was not dispatchable"
     out=$(
       # shellcheck source=bin/fm-dod-lib.sh
       . "$ROOT/bin/fm-dod-lib.sh"
       fm_acceptance_record_validate "$brief" && printf 'dispatchable\n'
     ) || true
-    assert_contains "$out" "dispatchable" \
-      "a $kind scaffold filled with its own documented placeholders was not dispatchable"
+    assert_contains "$out" "dispatchable" "$failure"
   done
   pass "fm-brief: the scaffolded record is exactly what the dispatch validator reads"
 }

@@ -54,8 +54,14 @@ intake() { # <home> <args...>
   return 0
 }
 
+# A captain-hold reason is stored encoded (bin/fm-hold-reason-lib.sh), so the
+# field is decoded the way every reader decodes it, which prints it as a JSON
+# string, before it is compared bare.
+# shellcheck source=bin/fm-hold-reason-lib.sh
+. "$ROOT/bin/fm-hold-reason-lib.sh"
 row_field() { # <home> <id> <field>
-  (cd "$1" && tasks-axi show "$2" 2>/dev/null | sed -n "s/^  $3: //p" | head -1)
+  (cd "$1" && tasks-axi show "$2" 2>/dev/null | fm_hold_reason_decode_stream toon \
+    | sed -n "s/^  $3: //p" | head -1 | sed 's/^"\(.*\)"$/\1/')
 }
 
 # The item's note as the backlog reports it. A one-line note arrives bare and a

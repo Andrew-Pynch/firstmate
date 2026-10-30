@@ -33,6 +33,10 @@
 #                           this process still holds the lock (the nudge stays
 #                           silent) and a plain instruction is enough when a new
 #                           process resumed an old session (the nudge fires).
+# Before routing startup/new/clear/compact/resume/fork, a verified lock owner
+# clears main's open-decision presentation record so replaced context sees the
+# decisions again even when the harness PID stays the same. Reload preserves it.
+# bin/fm-classify-lib.sh owns the record's identity and suppression contract.
 #
 # Every ordinary transport path exits 0, exactly like the nudge wrapper: a
 # Claude SessionStart exit 2 blocks session initialization, so a failed session
@@ -42,6 +46,9 @@
 # preflight. A lock another live session holds and a truncated digest are
 # reported inside the digest, while broken GitHub auth arrives through the
 # deferred network result inline or as a wake, for exactly that reason.
+# A fresh clone has no gitignored state dir yet; a root that otherwise
+# qualifies as primary gets one created here before the scope check runs, so
+# the first session takes the helm without a manual `mkdir state`.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -87,6 +94,13 @@ stand_down() {
 # they do not own. Pi's preflight-only status preserves that intentional silence
 # without mistaking it for a failed eligible attempt that needs the manual nudge.
 fm_is_gate_agent "$FM_ROOT" && stand_down
+if [ ! -d "$STATE" ] && fm_primary_root_matches "$FM_ROOT"; then
+  if ! MKDIR_ERR=$(mkdir -p "$STATE" 2>&1); then
+    printf 'fm-sessionstart-run: startup could not create the state directory %s: %s\n' \
+      "$STATE" "${MKDIR_ERR##*: }" >&2
+    stand_down
+  fi
+fi
 fm_primary_scope_matches "$FM_ROOT" "$STATE" || stand_down
 
 session_start_completed() {
@@ -96,7 +110,7 @@ session_start_completed() {
   fm_session_lock_owned_by_self "$STATE" || return 1
   lock_pid=$(cat "$STATE/.lock" 2>/dev/null) || return 1
   completion_pid=$(cat "$COMPLETION_FILE" 2>/dev/null) || return 1
-  case "$lock_pid" in ''|*[!0-9]*) return 1 ;; esac
+  fm_session_pid_valid "$lock_pid" || return 1
   [ "$completion_pid" = "$lock_pid" ]
 }
 
@@ -126,6 +140,14 @@ if [ -z "$SOURCE" ] && [ ! -t 0 ]; then
     $0 == "source" { seen = 1 }
   ')
 fi
+
+case "$SOURCE" in
+  startup|new|clear|compact|resume|fork)
+    if fm_session_lock_owned_by_self "$STATE"; then
+      rm -f -- "$STATE/.open-decisions-presented.main"
+    fi
+    ;;
+esac
 
 case "$SOURCE" in
   resume|reload|fork)

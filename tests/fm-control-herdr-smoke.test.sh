@@ -21,9 +21,10 @@
 # when herdr or jq is missing.
 set -u
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=tests/lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-fail() { printf 'not ok - %s\n' "$1" >&2; cleanup_all; exit 1; }
+fail() { printf 'not ok - %s\n' "$1" >&2; exit 1; }
 pass() { printf 'ok - %s\n' "$1"; }
 
 command -v herdr >/dev/null 2>&1 || { echo "skip: herdr not found"; exit 0; }
@@ -33,15 +34,49 @@ command -v jq >/dev/null 2>&1 || { echo "skip: jq not found (required by the her
 . "$ROOT/tests/herdr-test-safety.sh"
 herdr_forget_inherited_pane
 
+# The agent-named process below is a symlink to fm_agent_standin's stand-in;
+# decide it before any lab session exists so an impossible case skips cleanly.
+STANDIN_DIR=$(fm_test_tmproot fm-control-herdr-standin) || {
+  printf 'not ok - %s\n' "could not create the stand-in directory" >&2
+  exit 1
+}
+STANDIN_BIN=$(fm_agent_standin "$STANDIN_DIR") || {
+  echo "skip: no long-running stand-in binary survives a rename (multicall coreutils, no C compiler)"
+  exit 0
+}
+
 SESSION="fm-lab-control-smoke-$$"
 export HERDR_SESSION="$SESSION"
 SCRATCH=
+LAB_PREPARED=0
 cleanup_all() {
-  [ -n "$SCRATCH" ] && rm -rf "$SCRATCH"
-  herdr_safe_stop_and_delete "$SESSION"
+  local status=$? cleanup_status=0
+  trap - EXIT
+  if [ -n "$SCRATCH" ]; then
+    if [ -d "$SCRATCH/home/state/hsmoke.git-hooks" ]; then
+      chmod u+w "$SCRATCH/home/state/hsmoke.git-hooks" || {
+        echo "not ok - could not restore write permission on test git hooks" >&2
+        cleanup_status=1
+      }
+    fi
+    rm -rf "$SCRATCH" || {
+      echo "not ok - could not remove Herdr smoke scratch tree: $SCRATCH" >&2
+      cleanup_status=1
+    }
+  fi
+  if [ "$LAB_PREPARED" = 1 ]; then
+    herdr_safe_stop_and_delete "$SESSION" || {
+      echo "not ok - could not tear down Herdr smoke lab session: $SESSION" >&2
+      cleanup_status=1
+    }
+  fi
+  fm_test_cleanup
+  [ "$cleanup_status" = 0 ] || status=1
+  exit "$status"
 }
 trap cleanup_all EXIT
 fm_herdr_lab_prepare "$SESSION" || fail "could not prepare isolated Herdr lab session"
+LAB_PREPARED=1
 
 SCRATCH=$(mktemp -d "${TMPDIR:-/tmp}/fm-control-herdr.XXXXXX")
 SCRATCH=$(cd "$SCRATCH" && pwd)
@@ -158,9 +193,44 @@ FAKEBIN="$SCRATCH/fakebin"
 mkdir -p "$FAKEBIN"
 cat > "$FAKEBIN/codex" <<EOF
 #!/usr/bin/env bash
-: > "$SCRATCH/codex-launched"
+pwd -P > "$SCRATCH/codex-launched"
 EOF
 chmod +x "$FAKEBIN/codex"
+
+# A legacy home endpoint must migrate before ordinary endpoint reuse is tested.
+# Use an absolute inert command: the replacement pane cannot inherit the old
+# pane's private PATH, and must not launch a real harness from the server PATH.
+LEGACY_WORKSPACE_ID=$WORKSPACE_ID
+LEGACY_PANE_ID=$PANE_ID
+LEGACY_CWD=$(fm_backend_herdr_current_path "$SESSION:$LEGACY_PANE_ID")
+printf -v INERT_LAUNCH 'bash %q' "$FAKEBIN/codex"
+OUT=$(env FM_HOME="$HOME_DIR" HERDR_SESSION="$SESSION" FM_SPAWN_NO_GUARD=1 \
+  "$ROOT/bin/fm-spawn.sh" hsmoke --relaunch --harness "$INERT_LAUNCH") \
+  || fail "a legacy home endpoint should migrate to an isolated task workspace: $OUT"
+WORKSPACE_ID=$(sed -n 's/^herdr_workspace_id=//p' "$HOME_DIR/state/hsmoke.meta")
+TAB_ID=$(sed -n 's/^herdr_tab_id=//p' "$HOME_DIR/state/hsmoke.meta")
+PANE_ID=$(sed -n 's/^herdr_pane_id=//p' "$HOME_DIR/state/hsmoke.meta")
+[ -n "$PANE_ID" ] && [ "$PANE_ID" != "$LEGACY_PANE_ID" ] \
+  || fail "legacy home relaunch reused the supervisor pane"
+[ "$WORKSPACE_ID" != "$LEGACY_WORKSPACE_ID" ] \
+  || fail "legacy home relaunch reused the supervisor workspace"
+[ "$(herdr workspace get "$WORKSPACE_ID" --session "$SESSION" | jq -r '.result.workspace.label')" = fm-hsmoke ] \
+  || fail "legacy home relaunch did not create the task workspace"
+herdr pane get "$LEGACY_PANE_ID" --session "$SESSION" >/dev/null 2>&1 \
+  || fail "legacy home relaunch removed the supervisor pane"
+[ "$(fm_backend_herdr_current_path "$SESSION:$LEGACY_PANE_ID")" = "$LEGACY_CWD" ] \
+  || fail "legacy home relaunch changed the supervisor pane's working directory"
+for _ in $(seq 1 20); do
+  [ ! -e "$SCRATCH/codex-launched" ] || break
+  sleep 0.1
+done
+[ "$(cat "$SCRATCH/codex-launched" 2>/dev/null)" = "$WT_REAL" ] \
+  || fail "the migrated task did not launch in its recorded worktree"
+[ "$(sed -n 's/^window=//p' "$HOME_DIR/state/hsmoke.meta")" = "$SESSION:$PANE_ID" ] \
+  || fail "legacy home relaunch did not record the replacement endpoint"
+rm -f "$SCRATCH/codex-launched"
+pass "real herdr: legacy home relaunch isolates the task and preserves the supervisor pane"
+
 printf -v FAKEBIN_Q '%q' "$FAKEBIN"
 printf -v PROJ_Q '%q' "$PROJ"
 fm_backend_herdr_send_text_line "$SESSION:$PANE_ID" "export PATH=$FAKEBIN_Q:\$PATH" \
@@ -207,13 +277,12 @@ pass "real herdr: interrupt refuses when herdr's own agent registry reports no a
 # A registration alone no longer proves an agent (issue #4115): the adapter
 # verifies the pane's processes through the real `pane process-info` view. So
 # the registered agent is backed by a real agent-named foreground process - a
-# symlink to a long-running system binary named `claude`, the same construction
-# tests/fm-tmux-agent-liveness.test.sh uses (a copied platform binary fails code
-# signing on macOS arm64; the symlink name is what the kernel records as argv[0]).
+# symlink named `claude` to the fm_agent_standin stand-in decided above, the same
+# construction tests/fm-tmux-agent-liveness.test.sh uses (the symlink name is
+# what the kernel records as argv[0]; tests/lib.sh owns why it is never a copy).
 AGENT_BIN="$SCRATCH/agentbin"
 mkdir -p "$AGENT_BIN"
-SLEEP_BIN=$(command -v sleep) || fail "sleep not found"
-ln -s "$SLEEP_BIN" "$AGENT_BIN/claude"
+ln -s "$STANDIN_BIN" "$AGENT_BIN/claude"
 printf -v AGENT_Q '%q' "$AGENT_BIN/claude"
 
 wait_process_state() {  # <expected> <tries>
@@ -307,7 +376,7 @@ awk -F= '$1 == "harness" {$0="harness=claude"} {print}' "$HOME_DIR/state/hsmoke.
 mv "$HOME_DIR/state/hsmoke.meta.tmp" "$HOME_DIR/state/hsmoke.meta"
 pass "real herdr: a stale registration no longer blocks relaunch, and the endpoint and local copy survive"
 
-# Last: the foreground process is a plain `sleep`, so the pane never draws any
+# Last: the foreground process is the sleeping stand-in, so the pane never draws any
 # recognized composer chrome. exit's composer-empty guard (bin/fm-control.sh)
 # therefore refuses before ever typing the exit command, rather than typing it
 # into a live agent that ignores it and reporting a stop that did not happen.
@@ -319,9 +388,16 @@ if OUT=$(run_control hsmoke exit 2>&1); then
   fail "exit should fail closed when the agent's composer is not proven empty: $OUT"
 fi
 case "$OUT" in
-  *"not proven empty"*) : ;;
-  *) fail "the exit failure should say the composer is not proven empty, got: $OUT" ;;
+  *"composer visibly holds pending text; refusing to type the /exit exit command"*|*"not proven empty; refusing to type the /exit exit command"*) : ;;
+  *) fail "the exit failure should refuse to type the /exit command for an unproven or pending composer, got: $OUT" ;;
 esac
-pass "real herdr: an agent behind an unproven composer fails closed instead of typing an exit command into it"
+[ "$(fm_backend_agent_state herdr "$SESSION:$PANE_ID")" = alive ] \
+  || fail "the exit refusal did not preserve the fake foreground agent"
+SCREEN_AFTER=$(fm_backend_herdr_visible_capture "$SESSION:$PANE_ID") \
+  || fail "could not read the pane after the exit refusal"
+case "$SCREEN_AFTER" in
+  *'/exit'*) fail "the refused /exit command appeared on the agent pane" ;;
+esac
+pass "real herdr: exit refuses an unproven or pending composer without typing an exit command"
 
 fm_backend_herdr_kill "$SESSION:$PANE_ID" 2>/dev/null || true

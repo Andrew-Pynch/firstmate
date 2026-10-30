@@ -35,6 +35,37 @@ queueing half is `bin/fm-inbox.sh note`, the same surface the captain's own
 out-of-band capture already uses, rather than a second queue.
 `bin/fm-inbox.sh` remains the single owner of that queue, including request-id deduplication, receipts JSON, and the primary reply record.
 
+## Telegram text channel
+
+`bin/fm-telegram-bridge.ts` connects a Telegram bot directly to the same inbox without a model or the voice relay.
+It needs Bun, `FM_TELEGRAM_BOT_TOKEN`, and `FM_TELEGRAM_CHAT_ID`.
+Keep credentials in the operational home's gitignored `.env`, readable only by its owner, and set `FM_HOME` explicitly when the code and operational home differ.
+Stop any other poller using that bot before starting the bridge.
+Run it as a user service with the code root as its working directory, the home's `.env` as its environment file, and automatic restart.
+Keep the service's code directory available until its unit is updated to a replacement.
+
+Only text from the configured chat becomes an inbox note.
+The immediate receipt intentionally includes the inbox note ID and confirms capture, not completion of the requested work.
+Actual replies contain the answer text only, without a receipt prefix.
+Firstmate answers through `bin/fm-inbox.sh reply`; the bridge delivers those answers even after a note has been acknowledged.
+For file-backed answers, use `bin/fm-inbox.sh reply <id> --body-file <path>`; only the file contents become reply text.
+The inbox command rejects option-looking positional text instead of publishing flags as an answer.
+For a message that is not an inbox reply, use `FM_HOME=<home> bin/fm-telegram-send.sh '<text>'`.
+Messages use plain text, split to fit Telegram's limit.
+Empty and option-only legacy replies are withheld and reported to the supervisor, including options with punctuation in their names; meaningful prose that mentions flags or paths is unchanged.
+The same content check applies to manual resends and direct messages.
+
+The bridge preserves its receive offset and delivery markers across restarts.
+Telegram cannot guarantee exactly-once sends after an interrupted network request.
+Definite API rejections get a bounded retry with backoff that survives restarts.
+To prevent duplicates, the bridge never retries an uncertain send automatically.
+An uncertain send or exhausted retry creates a supervisor inbox note naming the affected reply, request, and chunk, with an exact manual resend command.
+Check the chat before using that command; it resends only the affected chunk and refuses chunks already recorded as delivered.
+The script header owns retry limits, marker paths, and the loopback-only sandbox setting.
+`bash bin/fm-test-run.sh tests/fm-telegram-bridge.test.sh` verifies the transport against a loopback server, including a real request timeout and restart.
+Non-text updates are ignored.
+
+
 ## What it costs in time
 
 Measured on 2026-08-21 against the reviewed relay code, `amazon.nova-2-sonic-v1:0` in `eu-north-1`, on a spoken question that makes the agent read the records before it can answer, which is the slowest ordinary case.

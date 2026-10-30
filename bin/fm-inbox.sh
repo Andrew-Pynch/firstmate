@@ -34,7 +34,7 @@
 #   fm-inbox.sh note [--request-id <id>] [--json] [--] <text>...
 #   fm-inbox.sh note [--request-id <id>] [--json] -   (body from stdin)
 #   fm-inbox.sh announce [--json] <id>
-#   fm-inbox.sh reply [--json] <id> <text>... | reply [--json] <id> -
+#   fm-inbox.sh reply [--json] <id> <text>... | <id> - | <id> --body-file <path>
 #   fm-inbox.sh receipts [--after <cursor>] [--all-pending] [--all-handled] [--all-replies]
 #   fm-inbox.sh ready
 #   fm-inbox.sh say  [--text <text>... | <file.wav>] (default: stdin)
@@ -74,6 +74,9 @@
 # Each reply is stamped with a durable per-home sequence, so the receipts cursor
 # is a strict total order and two replies recorded in the same second are both
 # readable. One reply per note: a second one is refused.
+# `reply` treats --body-file as a file input, not reply text. Other positional
+# arguments starting with -- (including a standalone --) are refused as usage
+# errors. Use stdin or --body-file to send prose that starts with option syntax.
 # `ready` is the read-only primary-readiness projection (lock, wake-consumer
 # health, away posture, observation time). It never acquires the session lock
 # and never infers liveness from a lock file, a session, or a pane.
@@ -608,23 +611,32 @@ next_reply_seq() {
 }
 
 cmd_reply() {
-  local json=0 id body path staging seq
+  local json=0 id body path staging seq arg
+  local usage="usage: fm-inbox.sh reply [--json] <id> <text>... | <id> - | <id> --body-file <path>"
   if [ "${1:-}" = "--json" ]; then
     json=1
     shift
   fi
   id=${1:-}
-  [ -n "$id" ] || die "usage: fm-inbox.sh reply [--json] <id> <text>... (or: reply [--json] <id> -)"
+  [ -n "$id" ] || die "$usage"
   shift
   valid_note_id "$id" || die "invalid note id"
   path=$(note_path "$id") || die "no such note: $id"
   if [ "$#" -eq 0 ]; then
-    die "usage: fm-inbox.sh reply [--json] <id> <text>... (or: reply [--json] <id> -)"
+    die "$usage"
   elif [ "$1" = "-" ]; then
-    [ "$#" -eq 1 ] || die "usage: fm-inbox.sh reply [--json] <id> -"
-    body=$(cat; printf .)
+    [ "$#" -eq 1 ] || die "$usage"
+    body=$(cat && printf .) || die "could not read reply body from stdin"
+    body=${body%.}
+  elif [ "$1" = "--body-file" ]; then
+    [ "$#" -eq 2 ] || die "$usage"
+    [ -f "$2" ] && [ -r "$2" ] || die "could not read reply body file: $2"
+    body=$(cat -- "$2" && printf .) || die "could not read reply body file: $2"
     body=${body%.}
   else
+    for arg in "$@"; do
+      case "$arg" in --*) die "$usage" ;; esac
+    done
     body="$*"
   fi
   [ -n "${body//[[:space:]]/}" ] || die "refusing to record an empty reply"

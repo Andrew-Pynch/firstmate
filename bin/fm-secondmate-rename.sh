@@ -548,6 +548,9 @@ reply_source_arm() {
   return 0
 }
 
+# The one record the old id is meant to keep: the reply source's retirement
+# count, which bin/fm-procevent-remote-reply.sh `retire` writes for the old id
+# so a late capture from the retired source is refused rather than ingested.
 verify_no_survivors() {
   local dir path base planned survived=0
   local -a survivors=()
@@ -555,6 +558,7 @@ verify_no_survivors() {
     [ -d "$dir" ] || continue
     for path in "$dir"/* "$dir"/.[!.]* "$dir"/..?*; do
       [ -e "$path" ] || [ -L "$path" ] || continue
+      [ "$path" != "$STATE/remote-replies/$OLD.retirements" ] || continue
       base=$(basename "$path")
       planned=$(fm_secondmate_rename_replace_bounded "$base" "$OLD" "$NEW")
       [ "$planned" != "$base" ] || continue

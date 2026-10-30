@@ -19,7 +19,9 @@
 #     Canonical tasks-axi rows are structured; free-form non-empty lines in
 #     those sections are preserved as unstructured records.
 #     Structured rows preserve captain-hold metadata such as hold_kind,
-#     hold_reason, and hold_until when tasks-axi emits it. They also carry
+#     hold_reason, hold_until, and the explicit hold_credential and
+#     hold_discard markers.
+#     They also carry
 #     normalized current_role, requires_child_metadata, blocked_by_ids,
 #     unresolved_blocker_ids, captain_actionable, hold_set, hold_age_days,
 #     and hold_bucket fields.
@@ -222,20 +224,20 @@ esac
 # shellcheck source=bin/fm-backend.sh
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/fm-backend.sh"
+# The classifier also loads fm_run_timed; reuse that bounded-execution owner.
 # shellcheck source=bin/fm-classify-lib.sh
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/fm-classify-lib.sh"
 # shellcheck source=bin/fm-ff-lib.sh
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/fm-ff-lib.sh"  # validate_secondmate_home: shared seeded-home boundary checks
-# shellcheck source=bin/fm-timeout-lib.sh
-# shellcheck disable=SC1091
-. "$SCRIPT_DIR/fm-timeout-lib.sh"  # fm_run_timed: the shared hard bound
 # shellcheck source=bin/fm-landed-lib.sh
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/fm-landed-lib.sh"  # FM_LANDED_JQ_DEFS: the shared landed selector
 # shellcheck source=bin/fm-merge-authority-lib.sh
 . "$SCRIPT_DIR/fm-merge-authority-lib.sh"
+# shellcheck source=bin/fm-hold-reason-lib.sh
+. "$SCRIPT_DIR/fm-hold-reason-lib.sh"
 # shellcheck source=bin/fm-project-lib.sh
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/fm-project-lib.sh"  # FM_PROJECT_JQ_DEFS: the shared project resolver
@@ -401,13 +403,15 @@ first_pr_url_in_file() {  # <file>
   grep -Eo 'https?://[^[:space:])"]+/pull/[0-9]+' "$1" 2>/dev/null | head -1
 }
 
-backlog_json() {  # [<backlog-path>] - defaults to this home's $BACKLOG
+# Isolate this read-only projection from the fleet collector's shell state.
+backlog_json() (  # [<backlog-path>] - defaults to this home's $BACKLOG
   local backlog=${1:-$BACKLOG}
   if [ ! -f "$backlog" ]; then
     jq -n --arg path "$backlog" '{path:$path,present:false,records:[]}'
     return 0
   fi
 
+  set -o pipefail
   # shellcheck disable=SC2094
   jq -Rn --arg path "$backlog" --arg today "$SNAPSHOT_TODAY" --arg now "$SNAPSHOT_NOW" \
     --argjson age_days "$FM_SNAPSHOT_UNDATED_HOLD_AGE_DAYS" \
@@ -520,6 +524,8 @@ backlog_json() {  # [<backlog-path>] - defaults to this home's $BACKLOG
              hold_kind:metadata($rest; "hold-kind"),
              hold_until:metadata($rest; "hold-until"),
              hold_set:null,
+             hold_credential:false,
+             hold_discard:false,
              blocked_by:cap($rest; ".*blocked-by:[[:space:]]*(?<v>[^[:space:])]+).*"),
              blocked_by_ids:blocked_by_ids($rest),
              blocked_reason:blocked_reason($rest),
@@ -555,7 +561,9 @@ backlog_json() {  # [<backlog-path>] - defaults to this home's $BACKLOG
        end)
     | .records |= map(
         if (.body_lines | length) > 0 then
-          .hold_set = cap(.body_lines[0]; "^Captain hold set:[[:space:]]*(?<v>[0-9]{4}-[0-9]{2}-[0-9]{2}(?:T[0-9]{2}:[0-9]{2}:[0-9]{2}Z)?)$")
+          .hold_set = cap(.body_lines[0]; "^Captain hold set:[[:space:]]*(?<v>[0-9]{4}-[0-9]{2}-[0-9]{2}(?:T[0-9]{2}:[0-9]{2}:[0-9]{2}Z)?)(?:; credential=yes)?(?:; discard=yes)?$")
+          | .hold_credential = (.hold_set != null and (.body_lines[0] | test("; credential=yes(; discard=yes)?$")))
+          | .hold_discard = (.hold_set != null and (.body_lines[0] | test("; discard=yes$")))
           | .local_note = (.local_note
               // (if any(.body_lines[];
                     test("^Resolution recorded by fm-(captain|decision)-hold\\.$"))
@@ -594,8 +602,8 @@ backlog_json() {  # [<backlog-path>] - defaults to this home's $BACKLOG
           | .project_resolution = fm_project_resolve($record.repo; null; $projectmap)
         else . end)
     | del(.section,.order)
-  ' < "$backlog"
-}
+  ' < "$backlog" | fm_hold_reason_decode_stream json
+)
 
 SNAPSHOT_TASK_DIR=
 SNAPSHOT_TASK_METAS=()
@@ -786,6 +794,7 @@ task_json_lines() {
     home=$(meta_value "$meta" home)
     projects=$(meta_value "$meta" projects)
     spawn_gen=$(meta_value "$meta" spawn_gen)
+    branch=$(meta_value "$meta" branch)
     remote_host=$(meta_value "$meta" remote_host)
     remote_root=$(meta_value "$meta" remote_root)
     if [ -n "$remote_host" ]; then
@@ -882,6 +891,7 @@ task_json_lines() {
       --arg harness "$harness" \
       --arg mode "$mode" \
       --arg yolo "$yolo" \
+      --arg branch "$branch" \
       --arg project "$project" \
       --arg project_token "$project_token" \
       --arg worktree "$worktree" \
@@ -916,6 +926,7 @@ task_json_lines() {
         harness:($harness // ""),
         mode:($mode // ""),
         yolo:($yolo // ""),
+        branch:($branch | if . == "" then null else . end),
         project:($project // ""),
         project_resolution:(fm_project_resolve(
           (if $kind == "secondmate" and ($projects | length) > 0
@@ -1035,6 +1046,8 @@ secondmate_home_summary_json() {  # <backlog-json-file> <tasks-json-file>
          | {id,key:.id,verb:"captain-hold",summary:(.title | trunc(160)),
             reason:(.hold_reason | trunc(160)),
             hold_until:(.hold_until // null),
+            hold_credential:(.hold_credential // false),
+            hold_discard:(.hold_discard // false),
             hold_bucket:(.hold_bucket // null),
             hold_age_days:(.hold_age_days // null),source:"backlog"} ]) as $captain_holds_all
     | ([ $backlog.records[]? | select(landed_record)
@@ -1148,6 +1161,8 @@ secondmate_home_summary_json() {  # <backlog-json-file> <tasks-json-file>
           hold_reason:((.hold_reason // null) | if . == null then null else trunc(160) end),
           hold_kind:((.hold_kind // null) | if . == null then null else trunc(40) end),
           hold_until:((.hold_until // null) | if . == null then null else trunc(40) end),
+          hold_credential:(.hold_credential // false),
+          hold_discard:(.hold_discard // false),
           hold_bucket:(.hold_bucket // null),
           hold_age_days:(.hold_age_days // null),
           captain_actionable:(.captain_actionable // false),
@@ -2019,10 +2034,15 @@ contribution_tasks_json() {
 
 if [ "$OUTPUT_MODE" = contribution-input ]; then
   # Reuse the canonical backlog parser, without observing workers or other homes.
+  # The backlog JSON can exceed Linux MAX_ARG_STRLEN (128 KiB) as one --argjson
+  # argument, so both documents ride temp files via --slurpfile instead of argv.
   contribution_tasks=$(contribution_tasks_json) || { echo "fm-fleet-snapshot: contribution task read failed" >&2; exit 1; }
-  # Stream both documents through stdin: 80+ task records overflow ARG_MAX as --argjson.
-  { printf '%s\n' "$BACKLOG_JSON"; printf '%s\n' "$contribution_tasks"; } \
-    | jq -s '{backlog:.[0],tasks:.[1]}'
+  contribution_input_dir=$(mktemp -d "${TMPDIR:-/tmp}/fm-fleet-snapshot.contrib.XXXXXX") || { echo "fm-fleet-snapshot: contribution temp dir failed" >&2; exit 1; }
+  # shellcheck disable=SC2064  # The trap resolves this invocation's directory at exit.
+  trap 'rm -rf -- "$contribution_input_dir"' EXIT
+  printf '%s' "$BACKLOG_JSON" > "$contribution_input_dir/backlog.json" || { echo "fm-fleet-snapshot: contribution backlog write failed" >&2; exit 1; }
+  printf '%s' "$contribution_tasks" > "$contribution_input_dir/tasks.json" || { echo "fm-fleet-snapshot: contribution tasks write failed" >&2; exit 1; }
+  jq -n --slurpfile backlog "$contribution_input_dir/backlog.json" --slurpfile tasks "$contribution_input_dir/tasks.json" '{backlog:$backlog[0],tasks:$tasks[0]}' || { echo "fm-fleet-snapshot: contribution input assembly failed" >&2; exit 1; }
   exit 0
 fi
 prefetch_task_current_states || { echo "fm-fleet-snapshot: task observation failed" >&2; exit 1; }

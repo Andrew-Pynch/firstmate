@@ -5,8 +5,8 @@
 # sources) against a fake herdr CLI, a fake lsof that names a real holder
 # process as the session-socket owner, and real holder processes whose
 # environment and ancestry carry the birth markers the guard reads. It pins
-# the decision table: no server -> start; an Aqua-born owner -> leave it; an
-# SSH-born or unprovable owner -> stop it, wait for the socket, start. Nothing
+# the decision table: no server -> start; a supervised GUI child -> leave it;
+# an unsupervised or unprovable owner -> stop it, wait for the socket, start. Nothing
 # here touches the runner's own herdr servers, launch agents, or login
 # session, and no live harness guard applies: the verdict comes from process
 # environment and ancestry, which are kernel facts rather than vendor output.
@@ -198,7 +198,7 @@ case "$probe_env" in
 esac
 pass "holder processes expose their environment to the owner library"
 
-# --- no server: the guard becomes the server ---------------------------------
+# --- no server: the guard starts a supervised server -------------------------
 
 new_case stopped
 guard
@@ -208,7 +208,7 @@ assert_not_contains "$(herdr_calls)" 'server stop' "the guard stopped something 
 assert_contains "$GUARD_OUT" "no server owns session $SESSION" "the guard did not report the empty session"
 pass "an empty session is started inside the launch agent"
 
-# --- an Aqua-born owner is left alone ----------------------------------------
+# --- only a supervised owner is left alone -----------------------------------
 
 hold XPC_SERVICE_NAME=dev.firstmate.herdr.fm-remote
 LAUNCHD_PID=$HOLDER_PID
@@ -233,21 +233,32 @@ printf '%s\n' "$LAUNCHD_PID" > "$CASE_OWNER"
 load_job gui dev.firstmate.herdr.fm-remote "$LAUNCHD_PID"
 guard
 expect_code 0 "$GUARD_RC" "the guard did not exit 0 for a gui-domain launchd owner"
-assert_not_started "the guard started a second server over a gui-domain launchd owner"
-assert_not_contains "$(herdr_calls)" 'server stop' "the guard stopped a gui-domain launchd owner"
+assert_stop_before_start
 assert_contains "$GUARD_OUT" "pid $LAUNCHD_PID born in the Aqua login session (launchd)" \
   "the guard did not name the launchd owner"
 
 new_case running
 printf '%s\n' "$WORKER_PID" > "$CASE_OWNER"
-load_job gui dev.firstmate.remote-job
+load_job gui dev.firstmate.remote-job "$WORKER_PID"
 guard
 expect_code 0 "$GUARD_RC" "the guard did not exit 0 for the gui-domain worker owner"
-assert_not_started "the guard started a second server over a gui-domain worker owner"
-assert_not_contains "$(herdr_calls)" 'server stop' "the guard stopped a gui-domain worker owner"
+assert_stop_before_start
 assert_contains "$GUARD_OUT" "pid $WORKER_PID born in the Aqua login session (worker)" \
   "the guard did not name the worker owner"
-pass "launchd and worker markers require gui-domain launchctl proof"
+pass "unsupervised launchd and worker owners are replaced"
+
+hold_under firstmate-supervisor
+SUPERVISED_PID=$HOLDER_PID
+SUPERVISOR_PID=$(ps -o ppid= -p "$SUPERVISED_PID" | tr -d ' ')
+new_case running
+printf '%s\n' "$SUPERVISED_PID" > "$CASE_OWNER"
+load_job gui dev.firstmate.herdr.fm-remote "$SUPERVISOR_PID"
+guard
+expect_code 0 "$GUARD_RC" "the guard refused a supervised GUI child"
+assert_not_started "the guard replaced a supervised GUI child"
+assert_not_contains "$(herdr_calls)" 'server stop' "the guard stopped a supervised GUI child"
+assert_contains "$GUARD_OUT" "own supervised session-leader child" "the guard did not recognize GUI ancestry"
+pass "a server supervised by the GUI launch agent is left alone"
 
 # --- a foreign owner is stopped, then the guard becomes the server -----------
 

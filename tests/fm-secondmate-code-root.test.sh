@@ -43,6 +43,10 @@ setup() {
   # file, and the operational directories a spawn validates.
   printf 'mate\n' > "$MATE/.fm-secondmate-home"
   printf 'mate home\n' > "$MATE/AGENTS.md"
+  # Upstream (#5695) installs the AI-trailer strip hooks into every launched
+  # home, so a seeded home is a git worktree with the operational dirs ignored.
+  printf '%s\n' 'projects/' 'state/' 'data/' 'config/' '.no-mistakes/' > "$MATE/.gitignore"
+  git -C "$MATE" init -q -b main
   # A checkout that carries the mate's own entry point, which is the minimum a
   # code root must provide.
   fm_git_init_commit "$CODE"
@@ -59,6 +63,9 @@ setup() {
 
 spawn_mate() {  # <extra arguments...>
   : > "$LOG"
+  # Each case is a fresh launch of the same mate: upstream's fake tmux (#7409)
+  # now remembers created windows, so forget the previous case's window.
+  rm -f "$FAKEBIN/.spawn-windows"
   PATH="$FAKEBIN:$PATH" FM_HOME="$MAIN" FM_FAKE_TMUX_LOG="$LOG" \
     FM_FAKE_TMUX_CAPTURE="$PANE" \
     "$ROOT/bin/fm-spawn.sh" mate "$MATE" codex --secondmate "$@" 2>&1

@@ -5,9 +5,9 @@
 # a private HOME, a fake launchctl backed by state files, a fake herdr CLI, a
 # fake lsof that names a real holder process as the fm-remote socket owner, and
 # a fake uname that selects the platform under test. The holders are real
-# non-platform processes (jq blocked on a fifo) whose environment carries the
-# birth markers bin/fm-remote-herdr-owner-lib.sh reads, so the Aqua-versus-SSH
-# verdict is exercised for real. Nothing here touches the runner's own launch
+# non-platform processes (jq blocked on a fifo) whose ancestry and environment
+# exercise bin/fm-remote-herdr-owner-lib.sh's supervised-versus-SSH birth verdict.
+# Nothing here touches the runner's own launch
 # agents, login session, or herdr server.
 set -u
 
@@ -35,7 +35,8 @@ TOOLS="$TMP_ROOT/tools"
 mkdir -p "$TOOLS"
 ln -sf "$(command -v git)" "$TOOLS/git"
 ln -sf "$(command -v jq)" "$TOOLS/jq"
-BASE_PATH="$TOOLS:/usr/bin:/bin:/usr/sbin:/sbin"
+BASE_PATH="$TOOLS:$(fm_test_base_path_sans /usr/bin:/bin:/usr/sbin:/sbin \
+  herdr tasks-axi treehouse claude codex opencode pi pi-signed grok kimi omp)"
 
 # Real socket-owner holders for the Darwin birth check: jq blocked on a fifo
 # this test keeps open, with exactly the marker environment each birth needs.
@@ -50,8 +51,26 @@ hold() { # <marker-env...> -> HOLDER_PID
   eval "exec ${HOLDER_FD}>\"\$fifo\""
   HOLDER_FD=$((HOLDER_FD + 1))
 }
-hold XPC_SERVICE_NAME=dev.firstmate.herdr.fm-remote
-AQUA_HOLDER_PID=$HOLDER_PID
+# A healthy server is a child of the GUI job, rather than the historical
+# direct exec of the job itself. Keep both real processes alive for ancestry.
+mkfifo "$TMP_ROOT/supervised.fifo"
+exec 9<>"$TMP_ROOT/supervised.fifo"
+# shellcheck disable=SC2016 # The child expands the holder environment and records its own child PID.
+env FM_HOLDER_JQ="$JQ" FM_HOLDER_FIFO="$TMP_ROOT/supervised.fifo" \
+  FM_HOLDER_PIDFILE="$TMP_ROOT/supervised.pid" bash -c '
+  env -i "$FM_HOLDER_JQ" . "$FM_HOLDER_FIFO" &
+  printf "%s\n" "$!" > "$FM_HOLDER_PIDFILE"
+  wait
+' &
+AQUA_SUPERVISOR_PID=$!
+HOLDER_PIDS+=("$AQUA_SUPERVISOR_PID")
+for _ in {1..100}; do
+  [ ! -s "$TMP_ROOT/supervised.pid" ] || break
+  sleep 0.01
+done
+[ -s "$TMP_ROOT/supervised.pid" ] || fail "supervised holder did not start"
+AQUA_HOLDER_PID=$(cat "$TMP_ROOT/supervised.pid")
+HOLDER_PIDS+=("$AQUA_HOLDER_PID")
 hold XPC_SERVICE_NAME=dev.firstmate.herdr.fm-remote
 BACKGROUND_HOLDER_PID=$HOLDER_PID
 hold XPC_SERVICE_NAME=0
@@ -69,6 +88,7 @@ SSH_HOLDER_PID=$HOLDER_PID
 # fixture is portable to hosts without /bin/zsh).
 new_case() {
   local platform=$1 want_herdr=${2:-with-herdr} want_gui=${3:-gui}
+  CASE_PLATFORM=$platform
   unset CASE_REMOTE_JOB_ACTIVE
   unset CASE_PLATFORM_OVERRIDE
   unset CASE_DSCL_FAIL
@@ -148,6 +168,7 @@ case "${1:-}" in
     case "$label" in
       dev.firstmate.remote-job)
         cat > "$loaded" <<EOF
+pid = $FM_FAKE_WORKER_PID
 path = $FM_FAKE_JOB_PLIST
 program = $FM_FAKE_JOB_WORKER
 properties = keepalive | runatload | inferred program
@@ -155,6 +176,7 @@ EOF
         ;;
       *)
         cat > "$loaded" <<EOF
+pid = $FM_FAKE_AQUA_SUPERVISOR_PID
 path = $FM_FAKE_PLIST
 program = $FM_FAKE_LOGIN_SHELL
 arguments = {
@@ -184,7 +206,7 @@ EOF
       dev.firstmate.remote-job) : ;;
       *)
         # The real job execs the guard, which stops a foreign server and
-        # becomes the Aqua-born owner; the fixture models that outcome.
+        # starts a supervised Aqua-born child; the fixture models that outcome.
         printf '%s\n' "$FM_FAKE_AQUA_PID" > "$FM_FAKE_STATE/socket-owner"
         if [ -f "$FM_FAKE_STATE/kickstart-delay" ]; then
           cp "$FM_FAKE_STATE/kickstart-delay" "$FM_FAKE_STATE/herdr-delay"
@@ -263,7 +285,9 @@ case "${1:-} ${2:-}" in
     printf '{"client":{"version":"0.7.5","protocol":16},"server":{"running":%s,"socket":"%s"}}\n' "$running" "$FM_FAKE_HERDR_SOCKET"
     ;;
   "server "*|"server ")
+    printf '%s\n' "$$" > "$FM_FAKE_STATE/socket-owner"
     printf 'true\n' > "$FM_FAKE_HERDR_RUNNING"
+    exec sleep 600
     ;;
 esac
 exit 0
@@ -287,11 +311,6 @@ SH
 exit 0
 SH
   chmod +x "$CASE_BIN/uname" "$CASE_BIN/launchctl" "$CASE_BIN/dscl" "$CASE_BIN/tasks-axi" "$CASE_BIN/treehouse" "$CASE_BIN/claude"
-  cat > "$CASE_BIN/sleep" <<'SH'
-#!/usr/bin/env bash
-exit 0
-SH
-  chmod +x "$CASE_BIN/sleep"
 }
 
 # doctor [args...] -> runs the real doctor against the current fixture,
@@ -309,7 +328,9 @@ doctor() {
     FM_FAKE_HERDR_BIN="$CASE_BIN/herdr" \
     FM_FAKE_HERDR_SOCKET="$CASE_STATE/herdr.sock" \
     FM_FAKE_GUARD="$GUARD" \
+    FM_FAKE_WORKER_PID="$WORKER_HOLDER_PID" \
     FM_FAKE_AQUA_PID="$AQUA_HOLDER_PID" \
+    FM_FAKE_AQUA_SUPERVISOR_PID="$AQUA_SUPERVISOR_PID" \
     FM_FAKE_PLIST="$CASE_PLIST" \
     FM_FAKE_JOB_PLIST="$CASE_JOB_PLIST" \
     FM_FAKE_JOB_WORKER="$ROOT/bin/fm-remote-job-worker.sh" \
@@ -325,6 +346,9 @@ doctor() {
     "$ROOT/bin/fm-remote-doctor.sh" "$@" 2>&1
   )
   DOCTOR_RC=$?
+  if [ "$CASE_PLATFORM" = Linux ] && [ -s "$CASE_STATE/socket-owner" ]; then
+    HOLDER_PIDS+=("$(cat "$CASE_STATE/socket-owner")")
+  fi
   set -e
 }
 
@@ -332,6 +356,7 @@ write_loaded_contract() { # <herdr-path> [properties] [exec-command]
   local herdr_bin=$1 properties=${2:-'runatload | inferred program'} exec_cmd
   exec_cmd=${3:-"exec '$GUARD' '$herdr_bin' 'fm-remote'"}
   cat > "$CASE_STATE/loaded-$LABEL" <<EOF
+pid = $AQUA_SUPERVISOR_PID
 path = $CASE_PLIST
 program = $CASE_LOGIN_SHELL
 arguments = {
@@ -614,7 +639,7 @@ pass "launchd failures are reported and delayed server readiness is awaited"
 new_case Darwin with-herdr gui
 doctor --fix
 expect_code 0 "$DOCTOR_RC" "the Aqua-owner fixture could not be initialized"
-assert_contains "$DOCTOR_OUT" "check herdr-server=ok: session fm-remote is running in the Aqua login session (pid $AQUA_HOLDER_PID, launchd)" \
+assert_contains "$DOCTOR_OUT" "check herdr-server=ok: session fm-remote is running as the launch agent's supervised session-leader server (pid $AQUA_HOLDER_PID)" \
   "a launchd-born owner was not reported with its pid and birth"
 
 printf '%s\n' "$BACKGROUND_HOLDER_PID" > "$CASE_STATE/socket-owner"
@@ -633,8 +658,8 @@ assert_contains "$DOCTOR_OUT" "check herdr-server=fixable: session fm-remote is 
 
 printf '%s\n' "$WORKER_HOLDER_PID" > "$CASE_STATE/socket-owner"
 doctor
-expect_code 0 "$DOCTOR_RC" "the gui-only remote-job worker owner was not reported ready"
-assert_contains "$DOCTOR_OUT" "check herdr-server=ok: session fm-remote is running in the Aqua login session (pid $WORKER_HOLDER_PID, worker)" \
+expect_code 1 "$DOCTOR_RC" "the unsupervised remote-job worker owner was reported ready"
+assert_contains "$DOCTOR_OUT" "check herdr-server=fixable: session fm-remote is served by Aqua-born pid $WORKER_HOLDER_PID (worker)" \
   "the gui-only worker was not recognized"
 
 printf '%s\n' "$SSH_HOLDER_PID" > "$CASE_STATE/socket-owner"
@@ -652,7 +677,7 @@ doctor --fix
 expect_code 0 "$DOCTOR_RC" "--fix did not hand the session back to the launch agent"
 assert_contains "$DOCTOR_OUT" 'fix herdr-server=applied:' "--fix did not report the takeover through the launch agent"
 assert_grep "kickstart -k gui/$(id -u)/$LABEL" "$CASE_LAUNCHCTL_LOG" "the takeover did not go through launchd"
-assert_contains "$DOCTOR_OUT" "check herdr-server=ok: session fm-remote is running in the Aqua login session (pid $AQUA_HOLDER_PID, launchd)" \
+assert_contains "$DOCTOR_OUT" "check herdr-server=ok: session fm-remote is running as the launch agent's supervised session-leader server (pid $AQUA_HOLDER_PID)" \
   "the launch-agent-owned server was not confirmed after the takeover"
 assert_no_dangerous_calls "the takeover reached for auto-login, FileVault, or the keychain"
 
@@ -773,7 +798,7 @@ assert_contains "$DOCTOR_OUT" 'check launchagent=skip:' "launch agents were chec
 assert_contains "$DOCTOR_OUT" 'check gui-session=skip:' "an Aqua login session was required on linux"
 assert_contains "$DOCTOR_OUT" 'check herdr-server=fixable:' "a stopped linux herdr server was not tagged fixable"
 doctor --fix
-expect_code 0 "$DOCTOR_RC" "--fix did not start the herdr server on linux"
+expect_code 0 "$DOCTOR_RC" "--fix did not start the herdr server on linux: $DOCTOR_OUT"
 assert_contains "$DOCTOR_OUT" 'fix herdr-server=applied:' "--fix did not report starting the server"
 assert_contains "$DOCTOR_OUT" 'check herdr-server=ok:' "the started server was not confirmed by the re-check"
 [ ! -s "$CASE_LAUNCHCTL_LOG" ] || fail "the linux path invoked launchctl"

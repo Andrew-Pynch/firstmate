@@ -274,6 +274,38 @@ test_run_clear_and_compact_reemit() {
   pass "run wrapper: clear and compact re-emit the digest without repeating startup sweeps"
 }
 
+test_run_rebuild_forgets_presented_decisions_in_same_process() {
+  local root="$TMP_ROOT/rebuild-decisions" source out
+  make_run_primary "$root"
+  mkdir -p "$root/runtime"
+  ln -s /bin/bash "$root/runtime/pi"
+  for source in clear resume; do
+    # shellcheck disable=SC2016 # The child Bash expands positional parameters, variables, and $$.
+    out=$(env -u CLAUDECODE -u GROK_AGENT PI_CODING_AGENT=true FM_PI_HARNESS=pi \
+      FM_GATE_REFUSE_BYPASS=0 FM_ROOT_OVERRIDE="$root" FM_HOME="$root" PATH="$RUN_PATH" \
+      "$root/runtime/pi" -c '
+        set -eu
+        root=$1; runner=$2; drain=$3; source=$4
+        printf "%s\n" "$$" > "$root/state/.lock"
+        printf "%s\n" "$$" > "$root/state/.session-start-complete"
+        printf "needs-decision [key=rebuild]: choose deployment target\n" > "$root/state/t1.status"
+        FM_STATE_OVERRIDE="$root/state" "$drain" > "$root/first.out"
+        FM_STATE_OVERRIDE="$root/state" "$drain" > "$root/counted.out"
+        grep -F "unchanged" "$root/counted.out" >/dev/null
+        "$runner" --source "$source" </dev/null > "$root/rebuild.out"
+        if [ "$source" = clear ]; then
+          grep -F "t1 [key=rebuild] needs-decision: choose deployment target" "$root/rebuild.out"
+        else
+          FM_STATE_OVERRIDE="$root/state" "$drain" > "$root/after.out"
+          grep -F "t1 [key=rebuild] needs-decision: choose deployment target" "$root/after.out"
+        fi
+        [ "$(cat "$root/state/.lock")" = "$$" ]
+      ' _ "$root" "$RUN" "$ROOT/bin/fm-wake-drain.sh" "$source" 2>&1) \
+      || fail "same-process $source hid a decision: $out"
+  done
+  pass 'clear and resume present decisions again without changing the harness PID'
+}
+
 test_run_rebuild_forwards_source_to_drifted_instruction_refresh() {
   local root="$TMP_ROOT/run-instruction-refresh" baseline compact_out clear_out resume_out
   make_run_primary "$root"
@@ -1037,6 +1069,52 @@ test_run_gate_and_scope_are_silent() {
   pass "run wrapper: ordinary ineligible opens stay silent-zero and Pi preflight gets an explicit silent stand-down"
 }
 
+test_run_creates_missing_state_on_a_fresh_primary() {
+  local root="$TMP_ROOT/run-fresh-primary" base="$TMP_ROOT/run-fresh-linked-base"
+  local linked="$TMP_ROOT/run-fresh-linked" out status=0
+  make_run_primary "$root"
+  rmdir "$root/state"
+  assert_absent "$root/state" "the fixture still had a state dir before the assertion began"
+
+  out=$(run_hook "$root" --source startup </dev/null) || status=$?
+  expect_code 0 "$status" "run wrapper startup on a fresh primary with no state dir"
+  assert_present "$root/state" "a fresh primary root did not get its state dir created"
+  assert_contains "$out" "$FULL_BANNER$root" \
+    "creating the state dir did not let a fresh primary's session start run"
+  assert_contains "$out" "lock acquired: harness pid" \
+    "creating the state dir did not let a fresh primary take the fleet lock"
+  assert_not_contains "$out" "$REEMIT_BANNER" \
+    "a fresh primary's first session was misrouted to a context re-emit"
+  assert_contains "$out" "NEXT STEP" "a fresh primary did not receive the complete digest"
+
+  # An unmarked linked task worktree stays ineligible: it must not have a state
+  # dir manufactured for it, so the existing scope refusal is unchanged.
+  fm_git_worktree "$base" "$linked" fm/run-fresh-linked
+  mkdir -p "$linked/bin"
+  : > "$linked/AGENTS.md"
+  assert_absent "$linked/state" "the linked fixture already had a state dir before the assertion began"
+  expect_silent_zero "linked worktree fresh state run" run_hook "$linked" --source startup
+  assert_absent "$linked/state" "an unmarked linked task worktree got a state dir created for it"
+  pass "run wrapper: a fresh primary checkout gets its missing state dir created, a linked worktree still does not"
+}
+
+test_run_reports_a_state_dir_it_cannot_create() {
+  local root="$TMP_ROOT/run-fresh-readonly" out err_file="$TMP_ROOT/run-fresh-readonly.err" status=0
+  make_run_primary "$root"
+  rmdir "$root/state"
+  chmod 0500 "$root"
+  out=$(run_hook "$root" --source startup </dev/null 2>"$err_file") || status=$?
+  chmod 0700 "$root"
+  expect_code 0 "$status" "run wrapper on a fresh primary whose state dir cannot be created"
+  [ -z "$out" ] || fail "a failed state dir creation must still stand down without a digest, got: $out"
+  assert_absent "$root/state" "a read-only fresh primary somehow got a state dir"
+  [ "$(wc -l <"$err_file")" -eq 1 ] || fail "expected exactly one stderr line, got: $(cat "$err_file")"
+  assert_contains "$(cat "$err_file")" \
+    "startup could not create the state directory $root/state: Permission denied" \
+    "a failed state dir creation did not say what failed and why"
+  pass "run wrapper: a fresh primary that cannot create its state dir says so on stderr, then stands down"
+}
+
 test_run_reports_a_failed_session_start_as_digest_text() {
   local root="$TMP_ROOT/run-unwritable" out status=0
   make_run_primary "$root"
@@ -1059,6 +1137,7 @@ test_namespace_pid1_lock_holder_is_silent
 test_opencode_plugin_delivers_exact_nudge_once
 test_run_startup_runs_the_full_digest
 test_run_clear_and_compact_reemit
+test_run_rebuild_forgets_presented_decisions_in_same_process
 test_run_rebuild_forwards_source_to_drifted_instruction_refresh
 test_run_compact_without_completion_refreshes_before_finishing_startup
 test_run_clear_without_completion_finishes_startup
@@ -1067,6 +1146,8 @@ test_run_resume_delegates_to_the_nudge
 test_run_reads_source_from_the_hook_payload
 test_run_unknown_source_takes_the_helm
 test_run_gate_and_scope_are_silent
+test_run_creates_missing_state_on_a_fresh_primary
+test_run_reports_a_state_dir_it_cannot_create
 test_run_reports_a_failed_session_start_as_digest_text
 test_pi_startup_classifies_cli_continuations
 test_pi_sessionstart_generation_prerequisite

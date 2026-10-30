@@ -217,6 +217,48 @@ test_acknowledgement_reported() {
   pass 'an owner acknowledgement is reported'
 }
 
+test_acknowledgement_during_record_lookup() {
+  local phase dir out rc real_awk
+  real_awk=$(command -v awk)
+  for phase in before-read after-header; do
+    dir=$(setup_case "ack-$phase")
+    # Move the public inbox record at either boundary of its header read.
+    # This makes the owner acknowledgement race deterministic without sleeps.
+    cat > "$dir/fakebin/awk" <<'SH'
+#!/usr/bin/env bash
+for arg in "$@"; do
+  if [ "$arg" = "$FM_HOME/state/t_aff.inbox/001.msg" ]; then
+    if [ "$ACK_PHASE" = before-read ]; then
+      mv "$arg" "${arg%/*}/handled/"
+      exec "$REAL_ACK_AWK" "$@"
+    fi
+    "$REAL_ACK_AWK" "$@"
+    rc=$?
+    mv "$arg" "${arg%/*}/handled/"
+    exit "$rc"
+  fi
+done
+exec "$REAL_ACK_AWK" "$@"
+SH
+    chmod +x "$dir/fakebin/awk"
+    REAL_ACK_AWK="$real_awk" ACK_PHASE="$phase" \
+      run_amend "$dir" "$dir/out" --wait 8 --authority "$CAPTAIN_WORDS" t_aff
+    rc=$?
+    out=$(cat "$dir/out")
+    expect_code 0 "$rc" "acknowledgement $phase must not fail propagation: $out"
+    assert_contains "$out" 'intent=amended steer=enqueued' 'the amendment still propagates'
+    assert_contains "$out" 'ack=acknowledged' 'the moved record is acknowledged'
+    assert_contains "$(intent_body "$(brief_path "$dir" t_aff)")" "$CAPTAIN_WORDS" \
+      'the acknowledged authority also reaches the brief'
+    assert_equals 0 "$(record_count "$dir" t_aff)" 'no pending record remains'
+    assert_equals 1 "$(handled_count "$dir" t_aff)" 'exactly one record was acknowledged'
+    assert_equals "$CAPTAIN_WORDS" \
+      "$(fm_task_inbox_body "$dir/home/state/t_aff.inbox/handled/001.msg")" \
+      'the acknowledgement preserves the exact authority body'
+  done
+  pass 'an acknowledgement racing record lookup preserves propagation'
+}
+
 test_refusal_boundaries() {
   local dir rc before
   dir=$(setup_case refusals)
@@ -303,6 +345,7 @@ test_amends_named_task_only
 test_repeated_amendment_one_block_each
 test_secret_body_refused
 test_acknowledgement_reported
+test_acknowledgement_during_record_lookup
 test_refusal_boundaries
 test_without_live_owner_and_charter_brief
 test_repeated_id_applies_once

@@ -26,6 +26,19 @@
 //     hooks exist.
 //   - The arming tool is fm_watch_arm_omp and its human fallback
 //     /fm-watch-arm-omp; the loaded-build marker is state/.omp-watch-extension-loaded.
+//   - Supervision host: a home opted in with config/supervision-host
+//     (docs/configuration.md "Supervision host" owns the gate, which
+//     bin/fm-supervision-engine-lib.sh enabled answers; config/supervision-host-off opts out) spawns
+//     bin/fm-supervision-host.sh park --restart in the arm's place, which
+//     takes away-posture wakes itself and closes only when main is needed; its
+//     header owns the output read here. A "supervision-host:" line is
+//     actionable like a wake line, and the message delivered at the host's
+//     close carries every such line in order while wake lines keep an
+//     eight-line cap. The host
+//     prints the first cycle's status line as soon as it is verified, so
+//     readiness and the handling handoff work as they do for the arm, with a
+//     longer readiness budget for the host's own startup. On a home that does
+//     not run the host nothing below changes.
 //
 // Session-generation ownership (stated once here):
 // Verified on omp 18.2.10: session_shutdown is emitted only when a session is
@@ -62,9 +75,25 @@
 // before_agent_start; a streaming main consumes at the custom message_start
 // carrying the exact wake text; either event finishes the pending record, and
 // a still-unconsumed record rides the replacement handoff.
+//
+// Stalled alarms (stated once here):
+// The watcher's `check: main wake-loop stalled:` close carries the drain record
+// it read at emission, but omp holds a follow-up until main's current run ends,
+// and a run blocked in one long tool call (an `ask` waiting on the captain) can
+// hold it for hours. Two rules keep a held alarm from reaching main stale:
+//   - While this generation holds any unconsumed wake, a clean stalled close is
+//     retired without injecting: main has not read the earlier follow-up, which
+//     already sends it to the same drain, so another one only queues behind it.
+//   - At the first model request that carries a bare alarm, the `context` hook
+//     asks bin/fm-wake-notify.sh's `replay` whether it is still owed; when a
+//     later successful drain has replaced the record it names, the model reads
+//     a short superseded notice in its place. The decision is made in the
+//     context hook, not at message_start, because omp dispatches extension
+//     message_start asynchronously and the request can be built first (live,
+//     omp 18.6.1). Each text is judged once, so the model never sees it change.
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 // typebox resolves inside omp's extension loader (verified, omp 18.1.11); the
@@ -149,6 +178,7 @@ const fmRoot = process.env.FM_ROOT_OVERRIDE || root;
 const state = process.env.FM_STATE_OVERRIDE || `${fmHome}/state`;
 const config = process.env.FM_CONFIG_OVERRIDE || `${fmHome}/config`;
 const armScript = `${fmRoot}/bin/fm-watch-arm.sh`;
+const hostScript = `${fmRoot}/bin/fm-supervision-host.sh`;
 const notifyScript = `${fmRoot}/bin/fm-wake-notify.sh`;
 const marker = `${state}/.omp-watch-extension-loaded`;
 const handoffDir = `${state}/extensions/omp-primary-watch`;
@@ -164,10 +194,14 @@ const armReadyTimeoutMs = positiveInteger(
   "FM_OMP_ARM_READY_TIMEOUT_MS",
   process.platform === "win32" ? 35000 : 12000,
 );
+const hostReadyTimeoutMs = Math.max(armReadyTimeoutMs, 30000);
 const armRetireTimeoutMs = positiveInteger("FM_WATCH_ARM_RETIRE_TIMEOUT_MS", 1000);
 const repairOnlyHint = "call fm_watch_arm_omp again only after a later notification says the cycle is missing, failed, or unhealthy";
 const shuttingDownMessage = "watcher: not armed - omp session is shutting down";
 const watcherWakeCustomType = "firstmate-primary-omp-watcher-wake";
+const mainStallPrefix = "check: main wake-loop stalled: ";
+const wakeLead = "FIRSTMATE WATCHER WAKE: ";
+const wakeDrainHint = "\n\nRun bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.";
 
 let nextHandoffId = 0;
 let replacementHandoff: PendingActionableClose[] | null = null;
@@ -185,6 +219,9 @@ type ReplacementCoordinator = {
   // the counter naming generations; see "Session-generation ownership" above.
   activeGeneration?: SessionGeneration | null;
   nextGenerationId?: number;
+  // Watcher-wake texts already judged at a model request, mapped to the text
+  // the model reads instead, or null to keep the original; see "Stalled alarms".
+  stallDecisions?: Map<string, string | null>;
 };
 type ReplacementCoordinatorGlobal = typeof globalThis & {
   __firstmateOmpWatchReplacements?: Map<string, ReplacementCoordinator>;
@@ -211,6 +248,7 @@ const armClose = new WeakMap<ChildProcess, Promise<void>>();
 const armRetired = new WeakSet<ChildProcess>();
 const armRecovery = new WeakMap<ChildProcess, { generation: string; watcherPid: string }>();
 const armPendingActionable = new WeakMap<ChildProcess, PendingActionableClose>();
+const armHostMode = new WeakMap<ChildProcess, boolean>();
 
 function positiveInteger(name: string, fallback: number): number {
   const value = Number(process.env[name]);
@@ -296,6 +334,45 @@ function completedActionableLine(output: string): string {
   return newline < 0 ? "" : actionableLine(output.slice(0, newline + 1));
 }
 
+// An away record, never quiet mode's (bin/fm-afk-contract.sh mode owns that
+// reading): a record whose mode cannot be read as quiet reads as away.
+function awayRecordPresent(): boolean {
+  if (!existsSync(`${state}/.afk-contract`)) return false;
+  const result = spawnSync("bash", [`${fmRoot}/bin/fm-afk-contract.sh`, "mode"], {
+    encoding: "utf8",
+    env: { ...process.env, FM_STATE_OVERRIDE: state },
+  });
+  return String(result.stdout || "").trim() !== "quiet";
+}
+
+// Whether this home runs the supervision host for an omp primary; the gate's
+// owner answers, and a query that cannot run reads as no host.
+function hostModeEnabled(): boolean {
+  const result = spawnSync("bash", [`${fmRoot}/bin/fm-supervision-engine-lib.sh`, "enabled", config, "omp"], {
+    stdio: "ignore",
+  });
+  return result.status === 0;
+}
+
+// The host-mode wake message: every "supervision-host:" line in order, wake
+// lines capped at eight, and the away note while an away record exists.
+function hostWakeMessage(output: string): string {
+  let shown = 0;
+  const lines = output.split(/\r?\n/).filter((line) => {
+    if (/^supervision-host:/.test(line)) return true;
+    if (/^(signal:|stale:|check:|heartbeat($|:))/.test(line) && shown < 8) {
+      shown += 1;
+      return true;
+    }
+    return false;
+  });
+  if (lines.length === 0) return "";
+  if (awayRecordPresent()) {
+    lines.push("This wake comes from automatic supervision under the away-posture record, not from the captain: it is not a return, so handle it under the away posture.");
+  }
+  return lines.join("\n");
+}
+
 function nodeErrorCode(error: unknown): string {
   return typeof error === "object" && error !== null && "code" in error
     ? String((error as { code?: unknown }).code ?? "")
@@ -318,7 +395,8 @@ function validatePendingActionable(value: unknown): PendingActionableClose {
     typeof (value as { token?: unknown }).token !== "string" ||
     !/^[0-9]+-[0-9]+-[0-9]+$/.test((value as { token: string }).token) ||
     typeof (value as { message?: unknown }).message !== "string" ||
-    !actionableLine((value as { message: string }).message) ||
+    (!actionableLine((value as { message: string }).message) &&
+      !/^supervision-host:/m.test((value as { message: string }).message)) ||
     typeof (value as { predecessorArmPid?: unknown }).predecessorArmPid !== "string" ||
     !/^[0-9]*$/.test((value as { predecessorArmPid: string }).predecessorArmPid) ||
     ((value as { delivered?: unknown }).delivered !== undefined &&
@@ -437,8 +515,47 @@ function owedReplay(pending: PendingActionableClose): PendingActionableClose | n
   return message === pending.message ? pending : { ...pending, message };
 }
 
-function classifyClose(stdout: string, stderr: string, code: number | null, signal: NodeJS.Signals | null): CloseClassification {
+// See "Stalled alarms" above. Returns the superseded notice for a bare stalled
+// alarm that a later successful drain made stale, or null to keep <content>.
+// Only the exact text sendWake builds for a bare alarm qualifies: an appended
+// restoration or handshake failure must reach main unchanged. Any inability to
+// decide or to encode the notice keeps the original alarm.
+function stallDecision(content: string): string | null {
+  const start = content.indexOf(`${wakeLead}${mainStallPrefix}`);
+  if (start < 0 || !content.endsWith(wakeDrainHint)) return null;
+  const decisions = (replacementCoordinator.stallDecisions ??= new Map());
+  const known = decisions.get(content);
+  if (known !== undefined) return known;
+  const reason = content.slice(start + wakeLead.length, content.length - wakeDrainHint.length);
+  let notice: string | null = null;
+  if (!reason.includes("\n") && owedReplay({ version: 1, token: "context", message: reason, predecessorArmPid: "" }) === null) {
+    try {
+      notice = encodeFirstmateOperationalInput(
+        "watcher",
+        `FIRSTMATE WATCHER WAKE superseded: a successful drain acknowledged the queue after this alarm was raised, so it needs no action. Original alarm: ${reason}`,
+      );
+    } catch {
+      notice = null;
+    }
+  }
+  decisions.set(content, notice);
+  return notice;
+}
+
+function classifyClose(
+  hostMode: boolean,
+  stdout: string,
+  stderr: string,
+  code: number | null,
+  signal: NodeJS.Signals | null,
+): CloseClassification {
   const combined = `${stdout}\n${stderr}`.trim();
+  if (hostMode) {
+    const message = hostWakeMessage(combined);
+    if (message) return { kind: "actionable", message };
+    const stoodDown = combined.split(/\r?\n/).find((line) => /^supervision-host stood down:/.test(line));
+    if (stoodDown) return { kind: "failure", message: `watcher: FAILED - ${stoodDown}` };
+  }
   const reason = actionableLine(combined);
   if (reason) return { kind: "actionable", message: reason };
   const healthy = combined.split(/\r?\n/).find((line) => /^watcher: healthy\b/.test(line));
@@ -457,9 +574,10 @@ function classifyClose(stdout: string, stderr: string, code: number | null, sign
     };
   }
   if (code && code !== 0) {
+    const script = hostMode ? "fm-supervision-host.sh" : "fm-watch-arm.sh";
     return {
       kind: "failure",
-      message: `watcher: FAILED - fm-watch-arm.sh exited ${code}${combined ? `\n${combined}` : ""}`,
+      message: `watcher: FAILED - ${script} exited ${code}${combined ? `\n${combined}` : ""}`,
     };
   }
   return {
@@ -573,10 +691,7 @@ export default function (pi: ExtensionAPI) {
     pending?: PendingActionableClose,
   ): Promise<boolean> {
     if (!generationIsLive(owner)) return false;
-    const content = encodeFirstmateOperationalInput(
-      "watcher",
-      `FIRSTMATE WATCHER WAKE: ${message}\n\nRun bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.`,
-    );
+    const content = encodeFirstmateOperationalInput("watcher", `${wakeLead}${message}${wakeDrainHint}`);
     if (pending) owner.unconsumedWakes.set(pending.token, { content, pending });
     try {
       await pi.sendMessage(
@@ -610,6 +725,7 @@ export default function (pi: ExtensionAPI) {
       return;
     }
   }
+
 
   function confirmHandlingDelivery(recovery: { generation: string; watcherPid: string }): {
     ok: boolean;
@@ -677,8 +793,10 @@ export default function (pi: ExtensionAPI) {
     // pipeline retires it instead of replaying it: its rows are durable and the
     // outstanding notification already sends main to the same drain. Any
     // inability to decide delivers, because a missed wake is worse than a
-    // duplicate one.
+    // duplicate one. A stalled alarm is also retired while main has not yet
+    // consumed an earlier follow-up (see "Stalled alarms" above).
     if (coalescible) {
+      if (message.startsWith(mainStallPrefix) && owner.unconsumedWakes.size > 0) return true;
       let claim = "";
       try {
         claim = (spawnSync("bash", [notifyScript, "claim"], {
@@ -885,8 +1003,9 @@ export default function (pi: ExtensionAPI) {
   function waitForReadiness(armChild: ChildProcess): Promise<boolean> {
     const readiness = armReadiness.get(armChild);
     if (!readiness) return Promise.resolve(false);
+    const timeout = armHostMode.get(armChild) ? hostReadyTimeoutMs : armReadyTimeoutMs;
     return new Promise((resolveReady) => {
-      const timer = setTimeout(() => resolveReady(false), armReadyTimeoutMs);
+      const timer = setTimeout(() => resolveReady(false), timeout);
       timer.unref();
       void readiness.then((ready) => {
         clearTimeout(timer);
@@ -990,19 +1109,23 @@ export default function (pi: ExtensionAPI) {
       };
     }
     const id = ++owner.seq;
-    const env = {
+    const hostMode = hostModeEnabled();
+    const env: NodeJS.ProcessEnv = {
       ...process.env,
       FM_HOME: fmHome,
       FM_ROOT_OVERRIDE: fmRoot,
       FM_CONFIG_OVERRIDE: config,
-      FM_WATCH_ARM_SCRIPT: armScript,
+      FM_WATCH_ARM_SCRIPT: hostMode ? hostScript : armScript,
       FM_WATCH_PREDECESSOR_ARM_PID: predecessorArmPid,
     };
-    const armChild = spawn("bash", ["-lc", "config_dir=\"${FM_CONFIG_OVERRIDE:-$FM_HOME/config}\"; [ -f \"$config_dir/x-mode.env\" ] && . \"$config_dir/x-mode.env\"; exec \"$FM_WATCH_ARM_SCRIPT\" --restart"], {
+    if (hostMode) env.FM_SUPERVISION_HOST_PRIMARY = "omp";
+    const command = hostMode ? "exec \"$FM_WATCH_ARM_SCRIPT\" park --restart" : "exec \"$FM_WATCH_ARM_SCRIPT\" --restart";
+    const armChild = spawn("bash", ["-lc", `config_dir="\${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"; [ -f "$config_dir/x-mode.env" ] && . "$config_dir/x-mode.env"; ${command}`], {
       cwd: fmRoot,
       env,
       stdio: ["ignore", "pipe", "pipe"],
     });
+    armHostMode.set(armChild, hostMode);
     owner.child = armChild;
     let stdout = "";
     let stderr = "";
@@ -1032,6 +1155,7 @@ export default function (pi: ExtensionAPI) {
       if (/^watcher: (?:started|attached)\b/m.test(combined)) {
         settleReadiness(true);
       }
+      if (hostMode) return;
       const reason = completedActionableLine(stdout) || completedActionableLine(stderr);
       if (reason && !armPendingActionable.has(armChild)) {
         const pending = createPendingActionable(reason, String(armChild.pid ?? ""));
@@ -1056,7 +1180,7 @@ export default function (pi: ExtensionAPI) {
       resolveClosed();
       settleReadiness(false);
       releaseChild();
-      const classification = classifyClose(stdout, stderr, code, signal);
+      const classification = classifyClose(hostMode, stdout, stderr, code, signal);
       const predecessor = String(armChild.pid ?? "");
       if (classification.kind === "actionable") {
         const pending = armPendingActionable.get(armChild) ?? createPendingActionable(classification.message, predecessor);
@@ -1205,6 +1329,25 @@ export default function (pi: ExtensionAPI) {
       typeof message.content !== "string"
     ) return;
     consumeWake(generation, message.content);
+  });
+  // See "Stalled alarms" above. Only watcher wakes are inspected, and each text
+  // is judged once, so a later request never shows the model a different text.
+  pi.on?.("context", (event) => {
+    const messages: unknown = event?.messages;
+    if (!Array.isArray(messages)) return undefined;
+    let changed = false;
+    const next = messages.map((message) => {
+      if (
+        message?.role !== "custom" ||
+        message.customType !== watcherWakeCustomType ||
+        typeof message.content !== "string"
+      ) return message;
+      const notice = stallDecision(message.content);
+      if (notice === null) return message;
+      changed = true;
+      return { ...message, content: notice };
+    });
+    return changed ? { messages: next } : undefined;
   });
 
   pi.on?.("session_start", async () => {

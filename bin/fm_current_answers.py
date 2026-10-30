@@ -22,6 +22,8 @@ import threading
 import time
 import urllib.parse
 
+import fm_share   # bin/fm-share.sh's header owns share links; the Deck's share buttons call it here
+
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 CODE_ROOT = os.path.dirname(SCRIPT_DIR)
 HOME = os.environ.get("FM_HOME") or CODE_ROOT
@@ -31,6 +33,7 @@ SECRET = PRIVATE + "/answer-secret"
 DECISIONS = os.path.join(PRIVATE, "decisions.json")
 LEDGER = os.path.join(PRIVATE, "answers.jsonl")
 THREAD = os.path.join(PRIVATE, "thread.jsonl")   # the Deck inbox panel's own notes, for its thread view
+SHAREABLES = os.path.join(PRIVATE, "shareables.json")   # the artifacts the latest render offers a share button on
 INBOX = os.path.join(SCRIPT_DIR, "fm-inbox.sh")
 
 TOKEN_MAX_AGE = 24 * 3600   # the page re-renders at least every idle period, so a live tab always holds a fresh one
@@ -101,6 +104,15 @@ def write_decisions(decisions, now):
     with open(tmp, "w", encoding="utf-8") as fh:
         json.dump({"rendered": int(now), "decisions": decisions}, fh, ensure_ascii=False)
     os.replace(tmp, DECISIONS)
+
+
+def write_shareables(items, now, slots=None):
+    """Publish what one render offers to share: artifacts {artifact: {path, label}}, Pilot slots {slot: [paths]}."""
+    os.makedirs(PRIVATE, exist_ok=True)
+    tmp = SHAREABLES + f".tmp{os.getpid()}"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump({"rendered": int(now), "items": items, "slots": slots or {}}, fh, ensure_ascii=False)
+    os.replace(tmp, SHAREABLES)
 
 
 # ---------- server ----------
@@ -226,6 +238,14 @@ def read_decisions():
             data = json.load(fh)
         return data.get("decisions") or {}
     except (OSError, ValueError):
+        return None
+
+
+def read_shareables(key="items"):
+    try:
+        with open(SHAREABLES, encoding="utf-8") as fh:
+            return json.load(fh).get(key) or {}
+    except (OSError, ValueError, AttributeError):
         return None
 
 
@@ -406,7 +426,66 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self.post_answer()
         if route == "/note":
             return self.post_note()
+        if route == "/share":
+            return self.post_share()
+        if route == "/share/revoke":
+            return self.post_revoke()
+        if route == "/share/slot":
+            return self.post_share_slot()
         return self.send(404, {"error": "not found"})
+
+    def post_share(self):
+        """Share one artifact the latest render offered a button on; a retried tap returns the same link."""
+        req, _ = self.read_post("shares")
+        if req is None:
+            return
+        if not fm_share.origin():
+            return self.send(503, {"error": "share", "detail": "no share_origin configured"})
+        items = read_shareables()
+        if items is None:
+            return self.send(503, {"error": "shareables", "detail": "the page has not published its artifacts"})
+        item = items.get(str(req.get("artifact") or ""))
+        if not isinstance(item, dict) or not item.get("path"):
+            return self.send(409, {"error": "gone", "detail": "that artifact is no longer on the page; refreshing"})
+        try:
+            rec = fm_share.add(item["path"], item.get("label", ""), rid="deck-" + str(req["rid"]))
+        except (fm_share.ShareError, OSError) as exc:
+            return self.send(409, {"error": "share", "detail": str(exc)[:200]})
+        self.send(200, {"state": "shared", "token": rec["token"], "url": rec["url"], "label": rec.get("label", "")})
+
+    def post_revoke(self):
+        req, _ = self.read_post("revokes")
+        if req is None:
+            return
+        token = str(req.get("token") or "")
+        if not fm_share.TOKEN_RE.fullmatch(token):
+            return self.send(400, {"error": "token"})
+        try:
+            found = fm_share.revoke(token)
+        except OSError as exc:
+            return self.send(500, {"error": "revoke", "detail": str(exc)[:200]})
+        self.send(200 if found else 404, {"state": "revoked" if found else "unknown", "token": token})
+
+    def post_share_slot(self):
+        """Serve one Pilot slot a card on the latest render offered for one account; answer with the grant to paste."""
+        req, _ = self.read_post("slot shares")
+        if req is None:
+            return
+        offered = read_shareables("slots")
+        if offered is None:
+            return self.send(503, {"error": "shareables", "detail": "the page has not published its Pilot slots"})
+        slot, path = req.get("slot"), str(req.get("path") or "")
+        if not isinstance(slot, int) or isinstance(slot, bool) or path not in (offered.get(str(slot)) or []):
+            return self.send(409, {"error": "gone", "detail": "that Pilot link is no longer on the page; refreshing"})
+        if not fm_share.ACCOUNT_RE.fullmatch(str(req.get("to") or "").strip()):
+            return self.send(400, {"error": "account", "detail": "one tailnet account, like name@github"})
+        try:
+            res = fm_share.share_slot(slot, str(req["to"]), path)
+        except fm_share.SlotError as exc:
+            return self.send(502, {"error": "slot", "detail": str(exc)[:300]})
+        except fm_share.ShareError as exc:
+            return self.send(400, {"error": "slot", "detail": str(exc)[:300]})
+        self.send(200, {"state": "served", **res})
 
     def post_note(self):
         req, _ = self.read_post("notes")

@@ -83,7 +83,13 @@
 #     (default 2), plus captain calls Main held within that window that no need
 #     covers yet. A need tied to a backlog row ("task") leaves the page the moment
 #     that row stops being an open captain hold (answered, released, done, or
-#     deferred). Raw status lines never reach this pane.
+#     deferred). A need with no "task" whose "key" names a backlog row is tied
+#     to that row the same way. Any other need is marked UNBACKED, on its row
+#     and in a banner, because an answer to it has no held row to close. Raw
+#     status lines never reach this pane; the one structured exception is a worker's open
+#     human-step decision (fm_human_step_url in bin/fm-classify-lib.sh), shown
+#     as the step's link, its URL as a copy block, and a Done answer, until Main
+#     closes that decision or a curated need about the same worker replaces it.
 #   2 Running: workers whose recorded local endpoint is present now and whose last
 #     status is not paused, done, or failed, each with its PR link and the
 #     curated plain line (used only while re-checked within the window and newer
@@ -96,6 +102,27 @@
 #   4 Held calls: needs not re-checked within the window, older captain calls, and
 #     calls deferred to a later date.
 #
+# Share links: with answers_origin and share_origin both set (bin/fm-share.sh's
+# header), every artifact the page links inside its own folder - each task
+# document and each Wins card whose link opens a file, or a folder with an
+# index.html, under answers_origin - carries a share button. Like an answer, a
+# first tap arms it and a second publishes a snapshot through bin/fm-share.sh
+# (POST /share on the answer endpoint) and copies the link; an artifact already
+# shared shows a SHARED badge with its link instead. A Shared strip under Wins
+# lists every live share, including token folders made by hand, each with copy
+# and revoke. Each render publishes the artifacts it offered to
+# state/.current-page/shareables.json, and the endpoint shares nothing else.
+#
+# Share a Pilot slot: with answers_origin set, every card that names a link to a
+# local Pilot slot's web port on this machine (5173+100N on loopback or this host's
+# name; bin/fm-share.sh's share-slot owns the mapping) carries a "share slot"
+# control with an account field (suggesting the tailnet's other accounts). A first
+# tap arms it and a second runs share-slot through POST /share/slot: the slot's web
+# and Convex are served on the tailnet, and the control shows the grant and policy
+# test to paste and the link to send, each with a copy button. The control says on
+# the page that the paste stays a human step, because there is no tailnet policy
+# API. The same shareables.json lists the slots and paths each render offered.
+#
 # Keeper contract: exactly one keeper (an Opus worker) edits only the curated file
 # and the notes file, re-checking every need at least every FM_CURRENT_PAGE_CONFIRM_HOURS.
 #
@@ -104,9 +131,11 @@
 #   needs  [{"t", "why", "task", "key", "link", "link_label", "do", "message", "to",
 #            "options", "rec", "asked", "checked", "who", "machine"}]
 #          "t": one-line title; "why": one line on why it matters.
-#          "task": the backlog id this need answers; omit only for asks that
-#                have no backlog row. "key": the row's stable id, shown in its
-#                detail (default: "task"), so a resolver can name the row.
+#          "task": the held backlog id this need answers. Back a new ask before
+#                adding it: `bin/fm-captain-hold.sh hold <id> --title <t> --reason
+#                <one line>` creates the row and holds it in one step. "key": the
+#                row's stable id, shown in its detail (default: "task"), so a
+#                resolver can name the row.
 #          "link": the direct URL to act on; "link_label" overrides its short
 #                label. "do": optional exact action; wrap each command in single
 #                backticks for monospace text and its Copy button.
@@ -156,8 +185,8 @@
 # The notes format is owned by fm-current-page.py's header; bin/fm_md.py renders all Markdown.
 #
 # Trigger. `watch` stays in the foreground and renders on every change to a
-# state/*.status or state/*.meta file, data/backlog.md, the notes file, or the
-# curated file, with
+# state/*.status or state/*.meta file, data/backlog.md, the notes file, the
+# curated file, or (with share links on) a share record, with
 # at most one render per FM_CURRENT_PAGE_DEBOUNCE_SECS (default 10; a quiet
 # change renders at once, a burst coalesces), plus an idle refresh every
 # FM_CURRENT_PAGE_IDLE_SECS (default 300). It uses inotifywait when installed

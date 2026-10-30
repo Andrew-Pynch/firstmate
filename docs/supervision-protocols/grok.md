@@ -3,11 +3,12 @@ Mode: Grok background-notify supervision.
 When this session owns supervision and away mode is not active:
 1. Drain first with `bin/fm-wake-drain.sh`.
    After handling all emitted wakes and reconciling open decisions and unread status lines, run the exact `--ack-through` command printed as `WAKE_ACK_REQUIRED`; until then the work remains durable for idempotent re-handling after interruption.
+   A drain marks what it prints as read, so capture its output to a file or read the copy named on its first `DRAIN COPY:` line before acknowledging whenever you filter or truncate it.
 2. Source `__FM_X_MODE_ENV__` first when Relay is active.
 3. First cycle: arm with Grok's tracked background tool, as its own call:
 
    `run_terminal_command` with `background: true` on:
-   `[ -f __FM_X_MODE_ENV_SH__ ] && . __FM_X_MODE_ENV_SH__; exec bin/fm-watch-arm.sh`
+   `[ -f __FM_X_MODE_ENV_SH__ ] && . __FM_X_MODE_ENV_SH__; exec __FM_GROK_ARM__`
 
 4. Trust only the arm's one-line status.
 5. `watcher: started ...` or `watcher: attached ...` means a live cycle exists.
@@ -25,7 +26,7 @@ When you see a background-task-completed system reminder for the arm:
 1. Run `bin/fm-wake-drain.sh` first.
 2. Optionally fetch arm output with `get_command_or_subagent_output(<task_id>)` for the reason line.
 3. Handle `signal`, `stale`, `check`, or `heartbeat` using the harness-neutral contract in `AGENTS.md`.
-4. Ordinary wake: re-arm the next cycle with the same background `bin/fm-watch-arm.sh` call if the home still needs supervision, as `bin/fm-supervision-lib.sh` defines it.
+4. Ordinary wake: re-arm the next cycle with the same background `__FM_GROK_ARM__` call if the home still needs supervision, as `bin/fm-supervision-lib.sh` defines it.
 5. Do not invent a wake from an attach-status line alone.
    Drain the queue and act only on real wake records, the drain's `OPEN DECISIONS` and `UNREAD STATUS` entries, or a real watcher reason line.
    Re-arm attaches to an existing healthy cycle when one is already present and follows its verified successor chain.
@@ -35,5 +36,5 @@ The primary project Stop hook runs `bin/fm-turnend-guard-grok.sh` as a backstop,
 [`turnend-guard.md`](../turnend-guard.md) owns its running-payload capability selection between native same-process blocking and the pre-native bounded resume fallback.
 After any forced continuation, arm the watcher with the background protocol above.
 
-Interactive TUI primary sessions are the supported supervision host.
+Interactive TUI sessions are the supported Grok primary surface.
 Headless `grok -p` may wait for background process exit but does not reliably surface full auto-wake model output; do not run the primary firstmate as a one-shot headless process.

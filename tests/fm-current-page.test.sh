@@ -12,17 +12,30 @@ KEEP="$HOME_DIR/data/keeper/curated.json"
 mkdir -p "$STATE" "$HOME_DIR/data/page" "$HOME_DIR/data/keeper" "$HOME_DIR/config"
 export FM_HOME="$HOME_DIR" FM_CURRENT_PAGE_NO_FORGE=1 FM_CURRENT_PAGE_HOST=ron-test
 
-# A tmux stand-in that answers only the endpoint-presence read: a target listed
-# in $FAKE_TMUX_LIVE exists, every other target does not.
+# A tmux stand-in that answers only the endpoint-presence reads: a target listed
+# in $FAKE_TMUX_LIVE ("session:window") exists, every other target does not.
+# The backend resolves a window through `list-windows -t =<session>`, so that
+# read lists the session's live windows as id|index|name rows.
 FAKEBIN=$(fm_fakebin "$TMP_ROOT")
 export PATH="$FAKEBIN:$PATH" FAKE_TMUX_LIVE="$TMP_ROOT/live-targets"
 cat > "$FAKEBIN/tmux" <<'SH'
 #!/usr/bin/env bash
-[ "${1:-}" = display-message ] || exit 1
+cmd=${1:-}
+target=
 while [ "$#" -gt 0 ]; do
-  if [ "$1" = -t ]; then grep -qxF -- "$2" "$FAKE_TMUX_LIVE"; exit; fi
+  if [ "$1" = -t ]; then target=$2; break; fi
   shift
 done
+[ -n "$target" ] || exit 1
+case "$cmd" in
+  display-message) grep -qxF -- "$target" "$FAKE_TMUX_LIVE"; exit ;;
+  list-windows)
+    session=${target#=}
+    rows=$(sed -n "s/^$session:\(.*\)$/\1/p" "$FAKE_TMUX_LIVE")
+    [ -n "$rows" ] || { echo "can't find session: $session" >&2; exit 1; }
+    printf '%s\n' "$rows" | while IFS= read -r w; do printf '@%s|%s|%s\n' "$w" "$w" "$w"; done
+    exit 0 ;;
+esac
 exit 1
 SH
 chmod +x "$FAKEBIN/tmux"
@@ -84,8 +97,11 @@ printf '# current-notes\n\nContext line for the captain.\n' > "$HOME_DIR/data/pa
 "$ROOT/bin/fm-captain-hold.sh" hold call-new --title "Pick the banner color" \
   --reason "Red or blue? https://linear.app/x/issue/STA-1 see data/x/report.md" >/dev/null
 "$ROOT/bin/fm-captain-hold.sh" hold call-later --title "Later call" --reason "revisit after launch" --until 2099-01-01 >/dev/null
+"$ROOT/bin/fm-captain-hold.sh" hold call-keyed --title "Keyed call" --reason "a call the keeper names only by key" >/dev/null
 "$ROOT/bin/fm-tasks-axi.sh" add call-old "Old call" --kind captain --body "Captain hold set: 2026-01-01T00:00:00Z" >/dev/null
 "$ROOT/bin/fm-tasks-axi.sh" hold call-old --reason "an old open question" --kind captain >/dev/null
+"$ROOT/bin/fm-tasks-axi.sh" add call-old-marked "Old credential call" --kind captain --body "Captain hold set: 2026-01-01T00:00:00Z; credential=yes" >/dev/null
+"$ROOT/bin/fm-tasks-axi.sh" hold call-old-marked --reason "an old login question" --kind captain >/dev/null
 
 "$ROOT/bin/fm-current-page.sh" >/dev/null
 page=$(cat "$PAGE")
@@ -98,6 +114,7 @@ assert_not_contains "$page" 'data/x' "home data paths stay off the page"
 assert_not_contains "$needs" 'choose red or blue' "raw status lines never fill Needs you"
 assert_not_contains "$needs" 'call-old' "a call older than the window stays out of Needs you"
 assert_contains "$(page_part held-older)" 'task=call-old' "an older call is held in its own pane group"
+assert_contains "$(page_part held-older)" 'task=call-old-marked' "a marked hold-set stamp still dates the call by its hold time"
 assert_contains "$(page_part held-deferred)" 'task=call-later' "a deferred call is held separately"
 pass "without a curated file, Needs you holds only calls Main just opened"
 
@@ -109,7 +126,10 @@ json.dump({"checked": now,
                       "link": "https://linear.app/x/issue/STA-1", "who": "alpha-fix"},
                      {"t": "Ask TJ to upgrade", "why": "His updater is old.", "checked": now - 3 * 3600},
                      {"t": "Answered already", "why": "Its row is gone.", "task": "call-gone"},
-                     {"t": "Deferred one", "why": "Its row waits for a date.", "task": "call-later"}],
+                     {"t": "Deferred one", "why": "Its row waits for a date.", "task": "call-later"},
+                     {"t": "Keyed need", "why": "Its key is a held row.", "key": "call-keyed"},
+                     {"t": "Routed color call", "why": "A keyed decision in a status log.", "key": "pick-color"},
+                     {"t": "Restart window", "why": "Nothing in the backlog backs it.", "key": "restart-window"}],
            "why": {"alpha-fix": "Alpha banner gets a color"},
            "plain": {"alpha-fix": {"text": "Painting the banner.", "at": now - 120},
                      "beta-scan": {"text": "an old keeper line", "at": now - 5 * 3600}},
@@ -128,6 +148,12 @@ assert_not_contains "$needs" 'Ask TJ to upgrade' "a need not re-checked in 2 h l
 assert_contains "$(page_part held-stale)" 'Ask TJ to upgrade' "a need not re-checked in 2 h is held as stale"
 assert_contains "$(page_part held-stale)" 'checked 3h ago' "a stale need says when it was last checked"
 assert_not_contains "$page" 'page keeper last checked' "a fresh keeper check raises no banner"
+assert_contains "$needs" 'task=call-keyed' "a need whose key is a held row is tied to that row"
+assert_contains "$needs" 'UNBACKEDRestart window' "a need with no held row is marked unbacked"
+assert_not_contains "$needs" 'UNBACKEDKeyed need' "a need whose key is a held row is backed"
+assert_contains "$needs" 'UNBACKEDRouted color call' "a need keyed only by a status-log decision has no held row, so it is unbacked"
+assert_not_contains "$needs" 'UNBACKEDPick the banner color' "a need tied to a held task is backed"
+assert_contains "$page" 'marked UNBACKED: Ask TJ to upgrade, pick-color, restart-window.' "the banner names every unbacked need"
 pass "Needs you now holds only current, linked, aged needs"
 
 running=$(page_part running-now)
@@ -142,6 +168,27 @@ assert_contains "$(page_part parked)" 'kept alive for review' "a live paused wor
 assert_contains "$(page_part second-mates)" 'the far box needs a <b>disk</b> decision' "second mates show their routed status"
 assert_not_contains "$page" '<b>disk</b>' "status text is escaped"
 pass "Running shows live workers in plain words with their PR"
+
+# A worker parked on a sign-in: its open human-step decision is the one status
+# record that reaches Needs you, as the step's link plus its URL in a copy block,
+# and it leaves the moment Main closes that decision.
+STEP_URL='https://vigil.example.com/login?next=/sweep'
+fm_write_meta "$STATE/delta-login.meta" "kind=ship" "backend=tmux" "window=fm-delta:0" "project=$HOME_DIR/projects/alpha"
+printf '%s\n' \
+  "needs-decision [key=human-step-vigil] [at=$((now - 120))]: sign in to Vigil prod at $STEP_URL" \
+  "paused [key=human-step-vigil] [at=$((now - 110))]: waiting on that human step" > "$STATE/delta-login.status"
+"$ROOT/bin/fm-current-page.sh" >/dev/null
+needs=$(page_part needs-now)
+assert_contains "$needs" 'Human step for delta-login' "a human step is a Needs you card"
+assert_contains "$needs" "href=$STEP_URL" "the card links straight to the step"
+assert_contains "$(cat "$PAGE")" "<code>$STEP_URL</code><button type=\"button\" class=\"copy-command\">Copy</button>" \
+  "the exact URL sits in a copy block"
+assert_contains "$needs" 'sign in to Vigil prod at' "the card says what the step is"
+printf 'resolved [key=human-step-vigil] [at=%s]: captain signed in\n' "$now" >> "$STATE/delta-login.status"
+"$ROOT/bin/fm-current-page.sh" >/dev/null
+assert_not_contains "$(page_part needs-now)" 'Human step for delta-login' "a closed human step leaves Needs you"
+rm -f "$STATE/delta-login.meta" "$STATE/delta-login.status"
+pass "a worker's open human step shows in Needs you with its URL to copy until Main closes it"
 
 # Task documents: a worker's own report and plan, a doc its status names, never its brief or a secret-shaped file.
 mkdir -p "$HOME_DIR/data/alpha-fix" "$HOME_DIR/data/shared-notes"
@@ -194,6 +241,10 @@ assert_contains "$band" 'href=https://linear.app/x/issue/STA-9' "a factory row w
 assert_not_contains "$(cat "$PAGE")" 'Pick the banner color' "an answered call leaves the page on the next render"
 assert_not_contains "$(page_part factory)" 'task=call-new' "a factory row leaves the band when its hold closes"
 assert_contains "$(page_part factory)" 'Confirm four prod checks' "an untied factory row stays until the keeper removes it"
+printf 'go\n' > "$TMP_ROOT/keyed-answer.txt"
+"$ROOT/bin/fm-captain-hold.sh" answer call-keyed --decision-file "$TMP_ROOT/keyed-answer.txt" >/dev/null
+"$ROOT/bin/fm-current-page.sh" >/dev/null
+assert_not_contains "$(cat "$PAGE")" 'Keyed need' "a need backed by its key leaves the page once that row is answered"
 pass "releasing the backlog row removes its need and its factory row"
 
 python3 - "$KEEP" <<'PY'

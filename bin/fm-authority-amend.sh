@@ -174,10 +174,14 @@ fm_authority_find_record() {  # <state-dir> <task-id> <min-seq> <text>
   local state=$1 task=$2 min=$3 text=$4 dir f n body
   dir=$(fm_task_inbox_dir "$state" "$task")
   for f in "$dir"/*.msg "$dir"/handled/*.msg; do
-    [ -e "$f" ] || continue
     n=$(fm_task_inbox_seq_of "${f##*/}") || continue
     [ "$n" -ge "$min" ] || continue
-    body=$(fm_task_inbox_body "$f") || continue
+    # The owner may acknowledge between glob expansion and any body read.
+    # Follow that same record into handled/ before declaring it missing.
+    if ! body=$(fm_task_inbox_body "$f" 2>/dev/null); then
+      f="$dir/handled/${f##*/}"
+      body=$(fm_task_inbox_body "$f") || continue
+    fi
     case "$body" in
       *"$text") ;;
       *) continue ;;
@@ -379,7 +383,7 @@ for i in "${!P_TASKS[@]}"; do
     enqueued)
       if fm_authority_record_acknowledged "${R_RECORDS[$i]}"; then ack=acknowledged; else ack=pending; fi
       ;;
-    remote) ack=owner-status-reply ;;
+    remote) ack='owner-status-reply' ;;
     failed) ack=not-applicable ;;
   esac
   case "${R_INTENT[$i]}" in

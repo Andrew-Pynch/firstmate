@@ -231,6 +231,55 @@ test_canonical_partitions_preserve_full_lint() {
   pass "two canonical lint partitions preserve complete source-aware coverage and reject weakened modes"
 }
 
+test_partitions_balance_imported_work() {
+  local tmp repo part selected a_part= c_part= log flags mode
+  tmp=$(fm_test_tmproot fm-lint-source-weights)
+  repo="$tmp/repo"
+  mkdir -p "$repo/tools" "$repo/bin/backends" "$repo/tests" "$repo/deps" "$tmp/fakebin"
+  # Keep the owner outside the fixture's canonical inventory. Only its four
+  # small roots and a backend are scheduled; the dependency is not a root.
+  cp "$LINT" "$repo/tools/fm-lint.sh"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$repo/tools/fm-lint-workflows.sh"
+  chmod +x "$repo/tools/"*.sh
+  printf '# shellcheck source=deps/bridge.sh\n. deps/bridge.sh\n# %060d\n' 0 > "$repo/bin/a.sh"
+  printf '# %0180d\n' 0 > "$repo/bin/b.sh"
+  printf '# shellcheck source=deps/bridge.sh\n. deps/bridge.sh\n# %030d\n' 0 > "$repo/bin/c.sh"
+  printf '# %070d\n' 0 > "$repo/tests/d.sh"
+  printf '# backend\n' > "$repo/bin/backends/e.sh"
+  printf '# shellcheck source=deps/payload.sh\n. deps/payload.sh\n' > "$repo/deps/bridge.sh"
+  # A source cycle must terminate in the scheduling estimate, and an absent
+  # literal target must remain the linter's concern rather than lose a root.
+  printf '# shellcheck source=deps/bridge.sh\n. deps/bridge.sh\n# shellcheck source=deps/absent.sh\n. deps/absent.sh\n# %08000d\n' 0 \
+    > "$repo/deps/payload.sh"
+  : > "$tmp/union"
+  for part in 1of2 2of2; do
+    selected=$(FM_LINT_JOBS=1 "$repo/tools/fm-lint.sh" --partition "$part" --list-files) \
+      || fail "source-weighted partition $part failed"
+    [ "$selected" = "$(FM_LINT_JOBS=1 "$repo/tools/fm-lint.sh" --partition "$part" --list-files)" ] \
+      || fail "source-weighted partition $part is not deterministic"
+    printf '%s\n' "$selected" >> "$tmp/union"
+    if printf '%s\n' "$selected" | grep -qx bin/a.sh; then a_part=$part; fi
+    if printf '%s\n' "$selected" | grep -qx bin/c.sh; then c_part=$part; fi
+    log="$tmp/$part.roots"
+    flags="$tmp/$part.flags"
+    mode="$tmp/$part.mode"
+    fm_lint_stub_shellcheck "$tmp/fakebin" "$log"
+    PATH="$tmp/fakebin:$PATH" FM_LINT_JOBS=1 FM_TEST_FLAG_LOG="$flags" FM_TEST_MODE_LOG="$mode" \
+      "$repo/tools/fm-lint.sh" --partition "$part" > "$tmp/$part.out" 2>&1 \
+      || fail "source-weighted partition $part execution failed: $(cat "$tmp/$part.out")"
+    [ "$(LC_ALL=C sort "$log")" = "$(printf '%s\n' "$selected" | LC_ALL=C sort)" ] \
+      || fail "source weighting changed the roots actually executed"
+    [ "$(LC_ALL=C sort -u "$flags")" = "$(printf 'exclude=none\nexternal-sources=yes')" ] \
+      || fail "source weighting weakened analysis flags"
+    [ "$(LC_ALL=C sort -u "$mode")" = on ] || fail "source weighting disabled extended analysis"
+  done
+  [ "$(LC_ALL=C sort "$tmp/union")" = "$(printf '%s\n' bin/a.sh bin/b.sh bin/backends/e.sh bin/c.sh tests/d.sh)" ] \
+    || fail "source weighting lost, duplicated, or added a canonical root"
+  [ -n "$a_part" ] && [ -n "$c_part" ] && [ "$a_part" != "$c_part" ] \
+    || fail "small roots importing the same large transitive dependency share one partition"
+  pass "canonical partitions balance imported work without changing coverage or analysis"
+}
+
 # fm_lint_stub_git <fakebin-dir>: install a git stub for the changed-file mode
 # tests below. Its answers are driven by env vars the caller sets before
 # invoking fm-lint.sh, so those tests can steer git state without depending on
@@ -2147,9 +2196,16 @@ SH
   pass "seeded dispatcher, adapter, production-owner, and test-local diagnostics preserve parity"
 }
 
+# Bounded scheduler regression: its entire toolchain is local stand-ins.
+if [ "${1:-}" = --partition-scheduling-only ]; then
+  test_partitions_balance_imported_work
+  exit $?
+fi
+
 test_help_reports_the_complete_interface
 test_list_files_reports_the_shell_inventory
 test_canonical_partitions_preserve_full_lint
+test_partitions_balance_imported_work
 test_fast_mode_disables_extended_analysis
 test_ci_defaults_to_full_analysis
 test_ci_rejects_explicit_fast_mode

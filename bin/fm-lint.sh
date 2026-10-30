@@ -63,8 +63,8 @@
 # default of two.
 # --partition 1of2/2of2 splits the entire canonical inventory across
 # two CI runners, each with those same concurrency-limited workers.
-# Partitions are complete, disjoint, and byte-weight balanced; --list-files
-# exposes their actual roots.
+# Partitions are complete, disjoint, and balanced by root bytes plus literal
+# source-directive dependencies; --list-files exposes their actual roots.
 # Partition mode starts with full source-aware analysis, never changed-only
 # or --fast, and does not accept explicit paths. Each partition also runs
 # workflow lint and backend-purity checks, keeping either invocation
@@ -944,10 +944,13 @@ if [ "$CHANGED_MODE" -eq 1 ] && [ "$FAST" -eq 0 ]; then
   ANALYSIS_MODE=local
 fi
 # Stable largest-first packing is shared by cross-runner partition selection
-# and the two local workers. Weights are a scheduling proxy, never a skip rule.
+# and the two local workers. Include literal source-directive dependencies:
+# small callers can import much more analysis work than their own file size.
+# This is only a scheduling estimate, not a ShellCheck source resolver. Missing
+# or dynamic targets stay ShellCheck's concern; no analysis flags change.
 TAB=$(printf '\t')
 fm_lint_root_weights() {
-  local index=1 path weight
+  local path
   for path in "${ROOTS[@]}"; do
     case "$path" in
       *"$TAB"*|*$'\n'*)
@@ -955,14 +958,39 @@ fm_lint_root_weights() {
         return 2
         ;;
     esac
-    weight=1
-    if [ -f "$path" ]; then
-      weight=$(wc -c < "$path" 2>/dev/null | tr -d '[:space:]')
-    fi
-    case "$weight" in ''|*[!0-9]*) weight=1 ;; esac
-    printf '%s\t%s\t%s\n' "$weight" "$index" "$path"
-    index=$((index + 1))
   done
+  # Perl is already required by the worker watchdog. Read each file once per
+  # estimate, count repeated imports, and cut cycles at the active path only.
+  perl -e '
+    use strict;
+    use warnings;
+    my (%bytes, %sources, %active);
+    sub weight {
+      my ($path) = @_;
+      return 0 if $active{$path};
+      if (!exists $bytes{$path}) {
+        $bytes{$path} = -f $path ? (-s $path || 0) : 1;
+        $sources{$path} = [];
+        if (-f $path && open my $fh, "<", $path) {
+          while (my $line = <$fh>) {
+            if ($line =~ /^\s*#\s*shellcheck\s+source=(\S+)/) {
+              my $source = $1;
+              push @{$sources{$path}}, $source if -f $source;
+            }
+          }
+          close $fh;
+        }
+      }
+      local $active{$path} = 1;
+      my $total = $bytes{$path};
+      $total += weight($_) for @{$sources{$path}};
+      return $total;
+    }
+    my $index = 0;
+    for my $path (@ARGV) {
+      printf "%s\t%s\t%s\n", weight($path), ++$index, $path;
+    }
+  ' -- "${ROOTS[@]}"
 }
 
 if [ -n "$PARTITION" ]; then
@@ -1183,8 +1211,8 @@ done
 fm_lint_root_weights > "$WEIGHTS" || exit $?
 
 # Largest-first deterministic greedy assignment balances the two worker
-# queues without affecting replay order. Direct bytes are a stable portable
-# proxy after the expensive dynamic adapter source fan-out is cut.
+# queues without affecting replay order. The same source-aware byte estimate
+# is used for CI partition selection above and these local queues.
 WORKER_LOADS=(0 0)
 LC_ALL=C sort -t "$TAB" -k1,1nr -k2,2n "$WEIGHTS" > "$WEIGHTS.sorted"
 while IFS="$TAB" read -r weight index path; do

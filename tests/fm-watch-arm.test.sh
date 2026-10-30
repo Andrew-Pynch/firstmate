@@ -820,7 +820,8 @@ test_markerless_legacy_queue_is_recovered_on_arm() {
   state="$dir/state"
   fakebin="$dir/fakebin"
   mkdir -p "$home/data"
-  row=$(printf '1700000000\t7\tcheck\tlegacy-process-event\tcheck: legacy process-event')
+  # Exercise markerless recovery without first triggering the stale-queue alarm.
+  row=$(printf '%s\t7\tcheck\tlegacy-process-event\tcheck: legacy process-event' "$(date +%s)")
   printf '%s\n' "$row" > "$state/.wake-queue"
 
   start_rearm_arm "$home" "$state" "$fakebin" "$dir/arm.out"

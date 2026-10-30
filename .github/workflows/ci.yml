@@ -423,7 +423,7 @@ jobs:
 
   macos-stock-bash:
     name: Stock macOS Bash snapshot compatibility
-    runs-on: macos-latest
+    runs-on: macos-26-intel
     if: ${{ !(github.event_name == 'push' && vars.FM_CI_SKIP_PUSH == '1') && vars.FM_CI_SKIP_MACOS != '1' }}
     # Normal tier (see the timeout policy above).
     timeout-minutes: 30

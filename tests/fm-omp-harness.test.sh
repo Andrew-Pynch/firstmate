@@ -1460,7 +1460,6 @@ if (failing !== undefined && failing.messages?.[0]?.content !== sent[2].m.conten
   throw new Error(`an alarm the model already read changed text after a later drain: ${JSON.stringify(failing)}`);
 if (failing !== undefined && failing.messages?.[1]?.content !== sent[3].m.content)
   throw new Error(`a failure-bearing alarm was superseded: ${JSON.stringify(failing)}`);
-// The replay decision owns the rule for a restart's replay too.
 const alarm = (value) => `check: main wake-loop stalled: last_successful_drain=${value} oldest_queued_wake_age=9s; drain and handle the durable queue`;
 if (replay(alarm(1000)) !== "skip\n") throw new Error("a replayed alarm older than the latest drain was owed");
 if (replay(alarm(3000)) !== `deliver\n${alarm(3000)}\n`) throw new Error("a replayed alarm naming the current drain was dropped");

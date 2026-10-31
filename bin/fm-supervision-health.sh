@@ -29,19 +29,12 @@ if [[ ! $FM_POLL =~ ^0*[1-9][0-9]*$ ]]; then
   exit 2
 fi
 case "${1:-}" in
-  _live)
-    # shellcheck source=bin/fm-backend.sh
+  _probe)
     . "$SCRIPT_DIR/fm-backend.sh"
-    for meta in "$FM_STATE_OVERRIDE"/*.meta; do
-      [ -f "$meta" ] && [ ! -L "$meta" ] || continue
-      target=$(fm_backend_target_of_meta "$meta") || continue
-      [ -n "$target" ] || continue
-      backend=$(fm_backend_of_meta "$meta")
-      if fm_backend_target_exists "${backend:-tmux}" "$target" "fm-$(basename "$meta" .meta)"; then
-        exit 0
-      fi
-    done
-    exit 1
+    fm_backend_recorded_target_exists "$2"
+    ;;
+  _live)
+    exec python3 "$SCRIPT_DIR/fm-supervision-health.py" live
     ;;
   _incident|_clear)
     # shellcheck source=bin/fm-wake-lib.sh

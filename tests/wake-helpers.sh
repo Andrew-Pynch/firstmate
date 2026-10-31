@@ -395,3 +395,24 @@ dead_pid() {
   done
   printf '%s\n' "$p"
 }
+
+make_remote_liveness_fixture() {
+  local dir=$1 verdict=$2
+  mkdir -p "$dir/data" "$dir/fakebin" "$dir/remote-home"
+  rm -f "$dir/state/live.meta"
+  printf 'kind=secondmate\nwindow=remote:mate\nremote_host=fixture-host\nremote_backend=herdr\n' > "$dir/state/mate.meta"
+  printf '%s\n' "$verdict" > "$dir/remote-state"
+  printf '%s\n' "- mate - Fixture (host: fixture-host; root: $ROOT; home: $dir/remote-home; scope: fixture; projects: test; added 2026-10-31)" > "$dir/data/secondmates.md"
+  touch "$dir/state/.secondmate-liveness-tick"
+  cat > "$dir/fakebin/ssh" <<'SSH'
+#!/usr/bin/env bash
+python3 - "${!#}" <<'PY'
+import base64, sys
+assert base64.b64decode(sys.argv[1]) == b'fm-remote-secondmate-control.sh\0state\0mate\0'
+PY
+[ "$?" -eq 0 ] || exit 1
+printf 'state mate\n' >> "$FM_HOME/remote-probes.log"
+cat "$FM_HOME/remote-state"
+SSH
+  chmod +x "$dir/fakebin/ssh"
+}

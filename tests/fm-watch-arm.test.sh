@@ -1983,6 +1983,9 @@ SH
   chmod +x "$dir/bin/fm-telegram-send.sh"
   printf 'window=fixture:0\nbackend=tmux\n' > "$state/live.meta"
   [ "$mode" != empty ] || rm "$state/live.meta"
+  case "$mode" in
+    remote-*) make_remote_liveness_fixture "$dir" "${mode#remote-}" ;;
+  esac
   ln -s /bin/sleep "$dir/omp"
   "$dir/omp" 60 &
   primary=$!
@@ -2011,7 +2014,7 @@ SH
     mkfifo "$input"
     exec 9<> "$input"
   fi
-  PATH="$fakebin:$PATH" FM_HOME="$dir" FM_STATE_OVERRIDE="$state" \
+  PATH="$fakebin:$PATH" FM_HOME="$dir" FM_ROOT_OVERRIDE="$ROOT" FM_STATE_OVERRIDE="$state" \
     FM_WATCH_PRIMARY_PID="$primary" FM_POLL="$poll" FM_SIGNAL_GRACE="$grace" \
     FM_FAKE_TMUX_WINDOW='fixture:fixture' \
     FM_TEST_TELEGRAM_LOG="$send_log" FM_TEST_TELEGRAM_FAIL="$([ "$mode" = send-failure ] && echo 1 || echo 0)" \
@@ -2162,7 +2165,7 @@ PYTEST
       "$dir/bin/fm-watch-arm.sh" --restart > "$dir/replacement.out" 2>&1 &
     replacement=$!
   fi
-  if [ "$mode" = empty ] || [ "$mode" = handoff ] || [ "$mode" = handoff-new ]; then
+  if [ "$mode" = empty ] || [ "$mode" = remote-dead ] || [ "$mode" = remote-missing ] || [ "$mode" = remote-stopped ] || [ "$mode" = handoff ] || [ "$mode" = handoff-new ]; then
     wait_for_exit "$ARM_PID" 100
     ! grep -q 'primary-supervision-lost' "$state/.wake-queue" 2>/dev/null \
       || fail "a $mode shutdown incorrectly alarmed"
@@ -2270,6 +2273,10 @@ test_primary_exit_alerts_with_live_work orphaned
 test_primary_exit_alerts_with_live_work send-failure
 test_primary_exit_alerts_with_live_work crash
 test_primary_exit_alerts_with_live_work empty
+test_primary_exit_alerts_with_live_work remote-alive
+test_primary_exit_alerts_with_live_work remote-dead
+test_primary_exit_alerts_with_live_work remote-missing
+test_primary_exit_alerts_with_live_work remote-stopped
 test_primary_exit_alerts_with_live_work handoff
 test_primary_exit_alerts_with_live_work attached
 test_primary_identity_failure_is_named_without_an_outage_alert

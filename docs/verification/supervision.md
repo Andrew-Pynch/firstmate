@@ -597,6 +597,10 @@ The queue-lock regressions hold the real queue lock through the initial send att
 The real-watcher recovery case starts a twenty-second fake secondmate relaunch with `FM_POLL=2` and an ordinary check timeout of two seconds, observes healthy suppression during recovery, then kills the watcher and requires the durable alert and sender invocation within two seconds.
 These tests use isolated metadata and fake backend/launch commands, without a live secondmate lifecycle.
 Focused existing liveness cases also pass for multiple recoveries before one wake, a failed relaunch, and a per-mate ledger error that retains stderr and does not prevent later recovery.
+The health suite also exercises a real twenty-second process-event launch-confirmation window, a slow first T3 endpoint beside a live local endpoint, and remote-only work through a fake scoped SSH transport.
+It requires healthy suppression during confirmation and an alert within a two-second poll after watcher death.
+The remote cases require an alert only for `alive`, with `dead`, `missing`, and `stopped` remaining quiet; focused arm tests cover the same states through the shared endpoint predicate.
+All remote and T3 transport in these cases is fake, with no server or remote mutation.
 
 Other harnesses retain their existing arm lifetime because they do not set the omp primary PID.
 

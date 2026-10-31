@@ -106,6 +106,19 @@ SH
     printf 'kind=secondmate\nharness=codex\nbackend=tmux\nwindow=fixture:missing\n' > "$dir/state/mate.meta"
     check_timeout=2
   fi
+  if [ "$mode" = procevent ]; then
+    fm_test_track_procevent_home "$dir"
+    FM_HOME="$dir" FM_ROOT_OVERRIDE="$ROOT" FM_PROCEVENT_CLAIM_ROOT="$dir/claims" \
+      bash "$ROOT/bin/fm-procevent.sh" register lavish pending -- /bin/true >/dev/null || fail 'could not register process-event fixture'
+    python3 - "$dir/state/procevent/pending.source" <<'PY'
+from pathlib import Path
+import sys
+path=Path(sys.argv[1]); content=path.read_text()
+path.write_text(content.split('argv:\n')[0]+'argv:\n')
+PY
+    rm -f "$dir/state/procevent/.owner-lease"
+    check_timeout=2
+  fi
   if [ "$mode" = slow ]; then
     cat > "$dir/state/slow.check.sh" <<'SH'
 #!/usr/bin/env bash
@@ -120,6 +133,7 @@ SH
   fi
   FM_HOME="$dir" FM_ROOT_OVERRIDE="$code" FM_STATE_OVERRIDE="$dir/state" FM_POLL=2 FM_SIGNAL_GRACE=0 \
     FM_CHECK_INTERVAL=999999 FM_CHECK_TIMEOUT="$check_timeout" FM_HEARTBEAT=999999 \
+    FM_PROCEVENT_CLAIM_ROOT="$dir/claims" FM_PROCEVENT_LAUNCH_CONFIRM_SECONDS=20 \
     FM_STALE_SECS=999999 FM_FAKE_TMUX_WINDOW=fixture:fixture PATH="$dir/fakebin:$PATH" \
     bash "$ROOT/bin/fm-watch.sh" > "$dir/watcher.log" 2>&1 &
   watcher=$!
@@ -136,6 +150,10 @@ SH
     for i in $(seq 1 100); do [ -e "$dir/relaunch-started" ] && break; sleep 0.05; done
     [ -e "$dir/relaunch-started" ] || fail "secondmate relaunch never started: $(cat "$dir/watcher.log")"
   fi
+  if [ "$mode" = procevent ]; then
+    for i in $(seq 1 100); do [ -e "$dir/state/procevent/.owner-lease" ] && break; sleep 0.05; done
+    [ -e "$dir/state/procevent/.owner-lease" ] || fail 'process-event reconciliation did not start'
+  fi
   (
     for i in $(seq 1 6); do
       HEALTH_TEST_POLL=2 health_run "$dir" run || exit 1
@@ -150,7 +168,7 @@ SH
   fi
   python3 - "$watcher" "$dir" <<'PYTEST' || fail "real $mode watcher death missed its poll deadline"
 from pathlib import Path
-import os, signal, sys, time
+import os, signal, subprocess, sys, time
 pid=int(sys.argv[1]); home=Path(sys.argv[2]); beat=home/'state/.last-watcher-beat'
 previous=beat.stat().st_mtime_ns
 limit=time.monotonic()+3
@@ -158,12 +176,22 @@ while beat.stat().st_mtime_ns == previous:
     if time.monotonic()>limit: raise SystemExit('real watcher stopped publishing heartbeats')
     time.sleep(0.01)
 time.sleep(0.2)
+groups=[]
+for row in subprocess.check_output(['ps','-eo','pid=,ppid=,pgid='],text=True).splitlines():
+    child,parent,group=map(int,row.split())
+    if parent==pid and child==group: groups.append(group)
 started=time.monotonic(); os.kill(pid,signal.SIGKILL)
-while time.monotonic()-started < 2:
-    paths=(home/'telegram.log',home/'state/.wake-queue')
-    if all(p.exists() and 'primary-supervision-lost' in p.read_text() for p in paths): break
-    time.sleep(0.01)
-else: raise SystemExit('no durable and external alert within FM_POLL=2')
+try:
+    while time.monotonic()-started < 2:
+        paths=(home/'telegram.log',home/'state/.wake-queue')
+        if all(p.exists() and 'primary-supervision-lost' in p.read_text() for p in paths): break
+        time.sleep(0.01)
+    else: raise SystemExit('no durable and external alert within FM_POLL=2')
+finally:
+    for group in groups:
+        try: os.killpg(group,signal.SIGTERM)
+        except ProcessLookupError: pass
+
 PYTEST
   wait "$watcher" 2>/dev/null || true
   if [ "$mode" = relaunch ]; then
@@ -287,6 +315,52 @@ PYTEST
   pass "supervision-health: queue contention retries durable $mode outage without resending Telegram"
 }
 
+test_health_remote_work() {
+  local verdict dir
+  for verdict in alive dead missing stopped; do
+    dir=$(health_fixture "remote-$verdict")
+    make_remote_liveness_fixture "$dir" "$verdict"
+    health_run "$dir" check >/dev/null || fail "remote $verdict probe failed"
+    [ -s "$dir/remote-probes.log" ] || fail 'recorded remote endpoint was probed locally'
+    if [ "$verdict" = alive ]; then
+      [ "$(grep -c primary-supervision-lost "$dir/state/.wake-queue")" -eq 1 ] || fail 'remote-only live work did not queue its outage'
+      [ "$(wc -l < "$dir/telegram.log")" -eq 1 ] || fail 'remote-only live work did not alert'
+    else
+      [ ! -e "$dir/telegram.log" ] || fail "remote $verdict endpoint raised an outage"
+    fi
+  done
+  pass 'supervision-health: remote-only live work alerts; dead, missing and stopped endpoints stay quiet'
+}
+
+test_health_slow_endpoint() {
+  local dir checker
+  dir=$(health_fixture slow-endpoint)
+  mv "$dir/state/live.meta" "$dir/state/z-live.meta"
+  printf 'backend=t3code\nwindow=unavailable-thread\n' > "$dir/state/a-slow.meta"
+  mv "$dir/fakebin/tmux" "$dir/fakebin/tmux-base"
+  cat > "$dir/fakebin/tmux" <<'SH'
+#!/usr/bin/env bash
+sleep 0.2
+exec "$FM_HOME/fakebin/tmux-base" "$@"
+SH
+  cat > "$dir/fakebin/node" <<'SH'
+#!/usr/bin/env bash
+case "$*" in
+  *fm-t3-mcp.mjs*) touch "$FM_HOME/slow-probe-started"; sleep 20; exit 1 ;;
+esac
+exec "$FM_REAL_NODE" "$@"
+SH
+  chmod +x "$dir/fakebin/node" "$dir/fakebin/tmux"
+  FM_REAL_NODE=$(command -v node) HEALTH_TEST_POLL=3 health_run "$dir" run > "$dir/health.log" 2>&1 &
+  checker=$!
+  for _ in $(seq 1 100); do [ -e "$dir/telegram.log" ] && break; sleep 0.02; done
+  [ -e "$dir/slow-probe-started" ] || fail 'slow backend fixture did not run'
+  [ -e "$dir/telegram.log" ] || fail "slow first endpoint starved later live work: $(cat "$dir/health.log")"
+  wait "$checker" || fail 'slow-endpoint check failed'
+  [ "$(grep -c primary-supervision-lost "$dir/state/.wake-queue")" -eq 1 ] || fail 'slow-endpoint outage not queued once'
+  pass 'supervision-health: slow first endpoint cannot starve a later live endpoint'
+}
+
 test_health_bootstrap_default_home() {
   local dir rc
   dir=$(health_fixture default-home)
@@ -318,6 +392,9 @@ test_health_incidents
 test_health_real_watcher ordinary
 test_health_real_watcher slow
 test_health_real_watcher relaunch
+test_health_real_watcher procevent
+test_health_slow_endpoint
+test_health_remote_work
 test_health_queue_retry missing
 test_health_queue_retry hang
 test_health_failed_delivery missing

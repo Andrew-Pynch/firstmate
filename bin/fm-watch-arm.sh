@@ -250,7 +250,7 @@ primary_send_alert() {
 # Only recorded endpoints in this home count. The backend owner keeps this
 # passive and scoped on every supported backend; no shared inventory scan.
 primary_loss_alert() {
-  local meta target backend label reason alert_locked=0 sender_pid sender_status=0 queue_status=0
+  local meta reason alert_locked=0 sender_pid sender_status=0 queue_status=0
   [ "$PRIMARY_ALERTED" -eq 0 ] || return 0
   if healthy_watcher && replacement_primary_alive; then return 0; fi
   if [ "$PRIMARY_BACKEND_LOADED" -eq 0 ]; then
@@ -260,11 +260,7 @@ primary_loss_alert() {
   fi
   for meta in "$STATE"/*.meta; do
     [ -f "$meta" ] || continue
-    target=$(fm_backend_target_of_meta "$meta")
-    [ -n "$target" ] || continue
-    backend=$(fm_backend_of_meta "$meta")
-    label="fm-$(basename "$meta" .meta)"
-    fm_backend_target_exists "${backend:-tmux}" "$target" "$label" || continue
+    fm_backend_recorded_target_exists "$meta" || continue
     reason="check: primary-supervision-lost: primary supervision stopped without a healthy replacement while work is still live; restart firstmate to resume supervision"
     if fm_lock_acquire_wait_max "$PRIMARY_ALERT_LOCK" 1; then
       if [ -s "$PRIMARY_ALERT_MARKER" ]; then

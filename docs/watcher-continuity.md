@@ -86,12 +86,14 @@ The command header owns its flags, unit paths, and cadence configuration.
 Bootstrap reports missing, inactive, failed, or outdated units; the Linux remote doctor includes the same check and its `--fix` installs the units.
 
 The check uses the newest existing watcher heartbeat or successful drain timestamp, rather than the primary PID or extension ownership.
-The watcher refreshes its beacon during owned bounded checks and waits, including its poll sleep and each secondmate probe/relaunch, so supported slow checks do not look like lost supervision.
+The watcher refreshes its beacon during owned bounded checks and waits, including its poll sleep, each secondmate probe/relaunch, process-event confirmation, inactive reconciliation, backend reads, and external guards, so supported slow checks do not look like lost supervision.
 A wait stops refreshing after its configured work budget; a stopped or dead watcher cannot keep the beacon fresh.
 The freshness deadline reserves half of `FM_POLL` for endpoint proof and alert publication.
 With a recorded live task endpoint and an expired freshness deadline, it queues `primary-supervision-lost` and invokes the existing Telegram sender once per incident.
 A fresh check-in clears the incident, permitting another alert after a later outage.
 The incident marker is shared with the arm's fast-path alert to avoid duplicate notifications.
+Recorded remote secondmates use the existing scoped remote state command; only its `alive` verdict counts as live work.
+Endpoint probes run independently within a shared poll budget, so an unavailable backend cannot prevent another recorded endpoint from triggering the alert.
 No live endpoints means no alert.
 
 Each oneshot watches the freshness deadline for one poll interval, with separately bounded endpoint and notification I/O; the timer starts the next window after it exits.

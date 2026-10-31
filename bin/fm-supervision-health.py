@@ -31,6 +31,41 @@ def command(args, timeout=5):
     return process.returncode, out.strip(), err.strip()
 
 
+def live_work():
+    probes = []
+    try:
+        for meta in sorted(STATE.glob('*.meta')):
+            if meta.is_file() and not meta.is_symlink():
+                process = subprocess.Popen([str(SCRIPT), '_probe', str(meta)],
+                                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                           start_new_session=True)
+                probes.append((process, time.monotonic() + min(POLL / 3, 5)))
+        while probes:
+            for process, deadline in probes[:]:
+                status = process.poll()
+                if status == 0:
+                    return True
+                if status is not None:
+                    probes.remove((process, deadline))
+                elif time.monotonic() >= deadline:
+                    try:
+                        os.killpg(process.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    process.wait()
+                    probes.remove((process, deadline))
+            if probes:
+                time.sleep(0.01)
+        return False
+    finally:
+        for process, _ in probes:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            process.wait()
+
+
 def freshness():
     stamps = []
     for name in ('.last-watcher-beat', '.last-successful-drain'):
@@ -67,10 +102,7 @@ def check_window(wait, deadline):
                 if rc:
                     raise RuntimeError(err or 'could not clear recovered incident')
         else:
-            rc, _, err = command([str(SCRIPT), '_live'], timeout=min(POLL, 5))
-            if rc not in (0, 1):
-                raise RuntimeError(err or 'endpoint check failed')
-            if rc == 0:
+            if live_work():
                 if freshness() + CHECK_IN_GRACE > time.time():
                     continue
                 rc, out, err = command([str(SCRIPT), '_incident'], timeout=POLL + 5)
@@ -166,6 +198,8 @@ def manage(install):
 
 
 try:
+    if sys.argv[1] == 'live':
+        sys.exit(0 if live_work() else 1)
     if sys.argv[1] == 'delivery':
         problem = delivery_problem()
         if problem:

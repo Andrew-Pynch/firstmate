@@ -15,6 +15,8 @@ SCRIPT = Path(__file__).with_suffix('.sh')
 HEALTH_HOME = Path(os.environ['FM_HOME'])
 STATE = Path(os.environ['FM_STATE_OVERRIDE'])
 POLL = int(os.environ['FM_POLL'])
+CADENCED_FAILURE = 75
+CHECK_IN_GRACE = POLL / 2
 
 
 def command(args, timeout=5):
@@ -38,24 +40,36 @@ def freshness():
     return max(stamps, default=0)
 
 
-def check(wait):
-    deadline = time.monotonic() + (POLL if wait else 0)
+def delivery_problem():
+    marker = STATE / '.primary-loss-alert'
+    if not marker.is_file():
+        return ''
+    lines = marker.read_text().splitlines()
+    if lines and lines[0].startswith('listener-health:') and lines[1:] != ['delivery-sent']:
+        return 'Telegram delivery failed or remains uncertain; automatic resend is suppressed'
+    return ''
+
+
+def check_window(wait, deadline):
     while True:
         fresh = freshness()
         if fresh > time.time() + 1:
             raise RuntimeError('supervision timestamp is in the future')
-        remaining = fresh + POLL - time.time()
+        remaining = fresh + CHECK_IN_GRACE - time.time()
         if remaining > 0:
             if (STATE / '.primary-loss-alert').exists():
                 rc, _, err = command([str(SCRIPT), '_clear'])
                 if rc:
                     raise RuntimeError(err or 'could not clear recovered incident')
         else:
+            problem = delivery_problem()
+            if problem:
+                raise RuntimeError(problem)
             rc, _, err = command([str(SCRIPT), '_live'], timeout=min(POLL, 5))
             if rc not in (0, 1):
                 raise RuntimeError(err or 'endpoint check failed')
             if rc == 0:
-                if freshness() + POLL > time.time():
+                if freshness() + CHECK_IN_GRACE > time.time():
                     continue
                 rc, out, err = command([str(SCRIPT), '_incident'], timeout=POLL + 5)
                 if out:
@@ -65,14 +79,21 @@ def check(wait):
                 print('supervision-health: primary-supervision-lost')
             else:
                 print('supervision-health: no live work')
-            if wait:
-                time.sleep(max(0, deadline - time.monotonic()))
             return
         budget = deadline - time.monotonic()
         if not wait or budget <= 0:
             print('supervision-health: healthy')
             return
         time.sleep(min(remaining, budget, 0.2))
+
+
+def check(wait):
+    deadline = time.monotonic() + (POLL if wait else 0)
+    try:
+        check_window(wait, deadline)
+    finally:
+        if wait:
+            time.sleep(max(0, deadline - time.monotonic()))
 
 
 def quote(value):
@@ -85,11 +106,14 @@ def units():
                      str(Path(os.environ.get('XDG_CONFIG_HOME', str(Path.home() / '.config'))) / 'systemd/user')))
     env = {key: os.environ[key] for key in ('FM_HOME', 'FM_ROOT_OVERRIDE', 'FM_STATE_OVERRIDE',
            'FM_CONFIG_OVERRIDE', 'FM_POLL', 'PATH')}
-    service = '[Unit]\nDescription=Firstmate independent supervision health\nStartLimitIntervalSec=0\n\n[Service]\nType=oneshot\n'
+    env['PATH'] = os.pathsep.join(dict.fromkeys(env['PATH'].split(os.pathsep)))
+    service = '[Unit]\nDescription=Firstmate independent supervision health\nStartLimitIntervalSec=0\n\n[Service]\nType=oneshot\nRestart=on-failure\n'
+    service += f'RestartPreventExitStatus={CADENCED_FAILURE}\n'
     service += ''.join(f'Environment={quote(key + "=" + value)}\n' for key, value in env.items())
     bash = shutil.which('bash')
     if not bash:
         raise RuntimeError('bash is required')
+    service += f'RestartSec={POLL}s\n'
     service += f'ExecStart={quote(bash)} {quote(SCRIPT)} run\nTimeoutStartSec={POLL + 10}\n'
     timer = ('[Unit]\nDescription=Firstmate independent supervision health cadence\n\n[Timer]\n'
              f'OnActiveSec=1ms\nOnUnitActiveSec={POLL}s\nOnUnitInactiveSec=1ms\nAccuracySec=1ms\n'
@@ -130,6 +154,9 @@ def manage(install):
         raise RuntimeError('timer is not enabled')
     if systemctl('is-active', name + '.timer') != 'active':
         raise RuntimeError('timer is not active')
+    problem = delivery_problem()
+    if problem:
+        raise RuntimeError(problem)
     result = systemctl('show', name + '.service', '--property=Result', '--value')
     if result not in ('', 'success'):
         raise RuntimeError(f'last oneshot failed: {result}')
@@ -137,12 +164,17 @@ def manage(install):
 
 
 try:
+    if sys.argv[1] == 'delivery':
+        problem = delivery_problem()
+        if problem:
+            raise RuntimeError(problem)
+        sys.exit(0)
     if sys.argv[1] == 'fresh':
-        sys.exit(0 if freshness() + POLL > time.time() else 1)
+        sys.exit(0 if freshness() + CHECK_IN_GRACE > time.time() else 1)
     if sys.argv[1] in ('check', 'run'):
         check(sys.argv[1] == 'run')
     else:
         manage(sys.argv[1] == 'install')
 except (OSError, RuntimeError, ValueError) as error:
     print(f'supervision-health: {error}', file=sys.stderr)
-    sys.exit(1)
+    sys.exit(CADENCED_FAILURE if sys.argv[1] == 'run' else 1)

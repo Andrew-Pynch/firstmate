@@ -305,12 +305,8 @@ fi
 # turn-ended signature, annotation staleness checks, and guarded bookkeeping writes.
 
 POLL=${FM_POLL:-15}                   # seconds between cycles
-# The liveness beacon is touched once per cycle, immediately before the
-# terminal wait below (event_wait_or_sleep) as well as at the top of the next
-# one, so a healthy cycle's beacon can legitimately age up to POLL seconds
-# between touches. fm_poll_derived_grace (bin/fm-wake-lib.sh, already sourced
-# transitively above) is the single owner of the max(300, poll+60)
-# derivation - see docs/turnend-guard.md "Guard grace and the poll cadence".
+# The cycle and its owned bounded waits refresh the liveness beacon.
+# fm_poll_derived_grace remains the owner of the broader guard grace.
 # This recomputes the library default above now that the real configured
 # POLL is known.
 WATCHER_STALE_GRACE=${FM_WATCHER_STALE_GRACE:-${FM_GUARD_GRACE:-$(fm_poll_derived_grace "$POLL")}}
@@ -3069,6 +3065,28 @@ watcher_stop_signals() {
   trap 'exit 1' INT
 }
 
+watcher_heartbeat() {
+  [ -n "${WATCHER_PID:-}" ] || return 0
+  [ "$(cat "$WATCH_LOCK/pid" 2>/dev/null || true)" = "$WATCHER_PID" ] || return 1
+  touch "$STATE/.last-watcher-beat"
+}
+
+watcher_wait() {
+  local pid=$1 ticks=0 budget=$CHECK_TIMEOUT until
+  [ "$budget" -ge "$POLL" ] || budget=$POLL
+  [ "$budget" -ge "$SIGNAL_GRACE" ] || budget=$SIGNAL_GRACE
+  until=$((SECONDS + budget + 1))
+  while kill -0 "$pid" 2>/dev/null; do
+    if [ "$ticks" -eq 0 ] && [ "$SECONDS" -lt "$until" ]; then
+      watcher_heartbeat || true
+    fi
+    ticks=$(((ticks + 1) % 2))
+    sleep 0.1 &
+    wait "$!" || true
+  done
+  wait "$pid"
+}
+
 run_check_capture() {
   local pgid
   fm_check_output_cleanup
@@ -3093,7 +3111,7 @@ run_check_capture() {
     fm_check_output_cleanup
     return 1
   fi
-  wait "$FM_ACTIVE_CHECK_PID" 2>/dev/null || true
+  watcher_wait "$FM_ACTIVE_CHECK_PID" 2>/dev/null || true
   FM_ACTIVE_CHECK_PID=
   fm_active_check_stop || return 1
   FM_CHECK_RESULT=$(cat "$FM_CHECK_OUTPUT" 2>/dev/null || true)
@@ -3138,7 +3156,7 @@ watcher_waited() {  # <command...>
     fm_capture_output_cleanup
     return 2
   fi
-  wait "$FM_ACTIVE_CHECK_PID"
+  watcher_wait "$FM_ACTIVE_CHECK_PID"
   rc=$?
   FM_ACTIVE_CHECK_PID=
   fm_active_check_stop || { fm_capture_output_cleanup; return 2; }
@@ -3316,7 +3334,7 @@ event_wait_or_sleep() {
   fi
 
   if [ "${#windows[@]}" -eq 0 ]; then
-    sleep "$POLL"
+    watcher_waited sleep "$POLL"
     return
   fi
 
@@ -3332,7 +3350,7 @@ event_wait_or_sleep() {
     _event_cap_fails=0
   fi
   if [ "$_event_cap_ok" != 1 ]; then
-    sleep "$POLL"
+    watcher_waited sleep "$POLL"
     return
   fi
 
@@ -3356,7 +3374,7 @@ event_wait_or_sleep() {
       # pure polling for the rest of this watcher process.
       _event_cap_fails=$((_event_cap_fails + 1))
       [ "$_event_cap_fails" -ge "$EVENT_CAP_FAIL_MAX" ] && _event_cap_ok=0
-      sleep "$POLL"
+      watcher_waited sleep "$POLL"
       ;;
     *)
       # 1: a clean full-budget wait with no actionable edge - the reader already
@@ -3936,7 +3954,7 @@ EOF
   # signature for an already-pending file (last write wins below).
   pending=$(scan_signals)
   if [ -n "$pending" ]; then
-    sleep "$SIGNAL_GRACE"
+    watcher_waited sleep "$SIGNAL_GRACE"
     pending=$(printf '%s\n%s' "$pending" "$(scan_signals)")
     # The final coalesced signal set is the watcher-carried status-change
     # trigger for this home's published summary. Start it before either
@@ -4357,5 +4375,6 @@ EOF
 
   # Terminal wait: a bounded native-event wait for push-capable homes (herdr, rex),
   # else the blind poll sleep. See event_wait_or_sleep.
+  watcher_heartbeat || true
   event_wait_or_sleep
 done

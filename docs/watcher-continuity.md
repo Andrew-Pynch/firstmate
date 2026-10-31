@@ -86,7 +86,10 @@ The command header owns its flags, unit paths, and cadence configuration.
 Bootstrap reports missing, inactive, failed, or outdated units; the Linux remote doctor includes the same check and its `--fix` installs the units.
 
 The check uses the newest existing watcher heartbeat or successful drain timestamp, rather than the primary PID or extension ownership.
-With a recorded live task endpoint and no check-in for `FM_POLL` seconds, it queues `primary-supervision-lost` and invokes the existing Telegram sender once per incident.
+The watcher refreshes its beacon during owned bounded checks and waits, including its poll sleep, so supported slow checks do not look like lost supervision.
+A wait stops refreshing after its configured work budget; a stopped or dead watcher cannot keep the beacon fresh.
+The freshness deadline reserves half of `FM_POLL` for endpoint proof and alert publication.
+With a recorded live task endpoint and an expired freshness deadline, it queues `primary-supervision-lost` and invokes the existing Telegram sender once per incident.
 A fresh check-in clears the incident, permitting another alert after a later outage.
 The incident marker is shared with the arm's fast-path alert to avoid duplicate notifications.
 No live endpoints means no alert.
@@ -94,7 +97,9 @@ No live endpoints means no alert.
 Each oneshot watches the freshness deadline for one poll interval, with separately bounded endpoint and notification I/O; the timer starts the next window after it exits.
 This avoids adding a full timer interval after a stale deadline.
 The user service manager must remain running for independent coverage; machine shutdown, a stopped user manager, missing Telegram credentials, or unreachable notification transport still prevent external delivery.
-A failed sender leaves the wake queued and makes the service failure visible to doctor.
+The check waits out its observation window on errors as well as success; systemd also backs off launch failures and timeouts for a poll interval.
+A failed or interrupted sender leaves a failed or uncertain receipt beside the queued wake, and doctor keeps reporting it until supervision resumes.
+An uncertain send is never automatically repeated.
 The installer neither enables linger nor requests sudo, and non-Linux systems retain their existing harness-specific behavior.
 
 ### Cursor stop hook

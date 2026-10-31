@@ -9,6 +9,8 @@
 # Config cadence: config/watch.env, then config/x-mode.env, default FM_POLL=15.
 # Freshness: newest existing watcher beacon or successful drain timestamp.
 # One incident uses state/.primary-loss-alert and its existing sibling lock.
+# A listener-health receipt records delivery-uncertain before sending, followed
+# by delivery-sent or delivery-failed; uncertainty is never retried automatically.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 : "${FM_HOME:?FM_HOME must name the supervised home}"
@@ -32,7 +34,7 @@ case "${1:-}" in
     . "$SCRIPT_DIR/fm-backend.sh"
     for meta in "$FM_STATE_OVERRIDE"/*.meta; do
       [ -f "$meta" ] && [ ! -L "$meta" ] || continue
-      target=$(fm_backend_target_of_meta "$meta")
+      target=$(fm_backend_target_of_meta "$meta") || continue
       [ -n "$target" ] || continue
       backend=$(fm_backend_of_meta "$meta")
       if fm_backend_target_exists "${backend:-tmux}" "$target" "fm-$(basename "$meta" .meta)"; then
@@ -46,6 +48,14 @@ case "${1:-}" in
     . "$SCRIPT_DIR/fm-wake-lib.sh"
     lock="$STATE/.primary-loss-alert.lock"
     marker="$STATE/.primary-loss-alert"
+    write_incident_receipt() {
+      local tmp
+      tmp=$(mktemp "$STATE/.primary-loss-receipt.XXXXXX") || return 1
+      if ! printf '%s\n%s\n' "$incident" "$1" > "$tmp" || ! mv -f "$tmp" "$marker"; then
+        rm -f "$tmp"
+        return 1
+      fi
+    }
     fm_lock_acquire_wait_bounded "$lock" 1 || exit 1
     trap 'fm_lock_release "$lock"' EXIT
     if python3 "$SCRIPT_DIR/fm-supervision-health.py" fresh; then
@@ -55,19 +65,16 @@ case "${1:-}" in
     [ "$1" != _clear ] || exit 0
     [ ! -L "$marker" ] && [ ! -d "$marker" ] || { echo 'supervision-health: unsafe incident marker' >&2; exit 1; }
     if [ -s "$marker" ]; then
-      if grep -qx delivery-failed "$marker"; then
-        echo 'supervision-health: incident Telegram delivery previously failed' >&2
-        exit 1
-      fi
-      exit 0
+      python3 "$SCRIPT_DIR/fm-supervision-health.py" delivery
+      exit $?
     fi
     incident="listener-health:$$:$(date +%s)"
     reason='check: primary-supervision-lost: home supervision stopped checking in while work is still live; restart firstmate to resume supervision'
+    write_incident_receipt delivery-uncertain
     "$SCRIPT_DIR/fm-telegram-send.sh" "$reason" &
     sender=$!
     if fm_lock_acquire_wait_bounded "$FM_WAKE_QUEUE_LOCK" 1; then
       fm_wake_append_locked check primary-supervision-lost "$reason"
-      printf '%s\n' "$incident" > "$marker"
       fm_lock_release "$FM_WAKE_QUEUE_LOCK"
     else
       wait "$sender" || true
@@ -76,13 +83,15 @@ case "${1:-}" in
     fi
     fm_lock_release "$lock"
     trap - EXIT
-    if ! wait "$sender"; then
-      if fm_lock_acquire_wait_bounded "$lock" 1; then
-        if [ "$(cat "$marker" 2>/dev/null || true)" = "$incident" ]; then
-          printf '%s\ndelivery-failed\n' "$incident" > "$marker"
-        fi
-        fm_lock_release "$lock"
+    delivery=delivery-sent
+    wait "$sender" || delivery=delivery-failed
+    if fm_lock_acquire_wait_bounded "$lock" 1; then
+      if [ "$(head -n 1 "$marker" 2>/dev/null || true)" = "$incident" ]; then
+        write_incident_receipt "$delivery"
       fi
+      fm_lock_release "$lock"
+    fi
+    if [ "$delivery" = delivery-failed ]; then
       echo 'supervision-health: Telegram delivery failed; durable alert remains queued' >&2
       exit 1
     fi

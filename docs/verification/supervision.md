@@ -587,6 +587,13 @@ On 2026-10-31, `bash tests/fm-supervision-health.test.sh` passed in a private Li
 The installed systemd 262.1 parser accepted the generated units, and a bounded smoke executed their exact `ExecStart` command against a fake backend and sender transport.
 Installation and doctor control calls used a private systemctl fixture; no real user-manager timer activation was performed, so live timer scheduling and activation remain unverified.
 No real Herdr lifecycle, browser, or external Telegram service was used.
+
+The 2026-10-31 health-check corrections were verified with the same CLI suite against both the corrected executables and preserved pre-correction executables.
+The controls reproduced windowless metadata hiding a later live endpoint, a false alert during a supported slow check, an immediate failed-check retry, and a timed-out send whose subsequent doctor incorrectly reported ready.
+The corrected `bash tests/fm-supervision-health.test.sh` runs the real watcher at `FM_POLL=2` through ordinary cycles and a registered five-second check, then kills it and requires the queued alert and sender invocation within two seconds.
+It also runs the emitted service command through missing credentials and a hung sender, checking the poll-duration failure floor, persistent diagnostics, and exactly one send attempt.
+The isolated unit/parser smoke retains the real-manager activation limitation above.
+
 Other harnesses retain their existing arm lifetime because they do not set the omp primary PID.
 
 Pi 0.81.1 repeated the continuity and clean-exit lifecycle on 2026-07-23 after the Calm presentation changes.

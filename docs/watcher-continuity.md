@@ -92,6 +92,7 @@ An owned wait terminates when its configured work budget expires; a stopped or d
 T3 state reads allow the full verified-session sequence, and captures also allow the activity pagination budget; additional backward-page retries share that aggregate deadline.
 The native T3 event wait additionally budgets pending-request classification for every watched thread before its final event wait; forced expiry follows the event-failure path rather than counting as an empty successful poll.
 Pending-reply reconciliation applies these waits to each backend observation and recovery operation, preserving later-record progress when an operation times out.
+Ordinary, retry, and secondmate doorbells share a bounded heartbeat-aware ring; T3 recovery delivery uses that same four-operation budget for the agent read, both composer reads, and native send.
 During shutdown, the arm probes endpoints within its existing replacement grace period and reserves the final half-second of the poll for publication.
 The freshness deadline reserves half of `FM_POLL` for endpoint proof and alert publication.
 With a recorded live task endpoint and an expired freshness deadline, it queues `primary-supervision-lost` and invokes the existing Telegram sender once per incident.

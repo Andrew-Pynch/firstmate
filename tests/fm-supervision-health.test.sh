@@ -789,6 +789,156 @@ PY
   pass "supervision-health: $mode native event operation preserves request identity, failure accounting, and owner health"
 }
 
+health_delivery_code() {
+  local dir=$1 entry
+  mkdir -p "$dir/code/bin/backends"
+  for entry in "$ROOT/bin/"*; do
+    [ "${entry##*/}" = backends ] || ln -s "$entry" "$dir/code/bin/${entry##*/}"
+  done
+  for entry in "$ROOT/bin/backends/"*; do
+    [ "${entry##*/}" = t3code.sh ] || ln -s "$entry" "$dir/code/bin/backends/${entry##*/}"
+  done
+  printf '. %q\n' "$ROOT/bin/backends/t3code.sh" > "$dir/code/bin/backends/t3code.sh"
+  cat >> "$dir/code/bin/backends/t3code.sh" <<'SH'
+case "$FM_DELIVERY_MODE" in recovery|stuck) FM_BACKEND_T3CODE_STATE_BUDGET=4 ;; esac
+fm_test_delivery_step() {
+  printf '%s\n' "$1" >> "$FM_HOME/operations"
+  case "$FM_DELIVERY_MODE" in
+    recovery|stuck)
+      if [ "$FM_DELIVERY_MODE:$1" = stuck:send ]; then sleep 30; else sleep 3.8; fi
+      ;;
+    *)
+      if [ "$1" = agent ]; then
+        count=$(grep -c '^agent$' "$FM_HOME/operations")
+        expected=3
+        [ "$FM_DELIVERY_MODE" != secondmate ] || expected=1
+        if [ "$count" -eq "$expected" ]; then
+          touch "$FM_HOME/ring-started"
+          sleep "$FM_DELIVERY_DELAY"
+        fi
+      fi
+      ;;
+  esac
+}
+fm_backend_t3code_agent_state() { fm_test_delivery_step agent; printf alive; }
+fm_backend_t3code_composer_state() { fm_test_delivery_step composer; printf empty; }
+fm_backend_t3code_busy_state() { if [ -e "$FM_HOME/send-finished" ]; then printf busy; else printf idle; fi; }
+fm_backend_t3code_capture() { printf 'working %s\n' "$(date +%s%N)"; }
+fm_backend_t3code_send_text_submit() { fm_test_delivery_step send; touch "$FM_HOME/send-finished"; printf empty; }
+fm_backend_t3code_events_capable() { return 1; }
+SH
+}
+
+test_health_doorbell() {
+  local mode=$1 dir reader checker i delay=3 cycles=7
+  dir=$(health_fixture "doorbell-$mode")
+  health_delivery_code "$dir"
+  [ "$mode" != ring ] || { delay=20; cycles=15; }
+  printf 'backend=t3code\nwindow=delivery-thread\nharness=claude\nkind=ship\n' > "$dir/state/first.meta"
+  touch "$dir/state/.last-heartbeat" "$dir/state/.last-check" "$dir/state/.secondmate-liveness-tick"
+  if [ "$mode" != secondmate ]; then
+    FM_HOME="$dir" bash -c '
+      . "$1/bin/fm-task-inbox-lib.sh"
+      if [ "$2" = retry ]; then
+        mkdir -p "$FM_HOME/config"
+        touch "$FM_HOME/config/wait-no-turns"
+        rec=$(fm_task_inbox_write "$FM_HOME/state" first retry fire-and-forget)
+        fm_task_inbox_mark_retry "$FM_HOME/state" first "$rec"
+      else
+        fm_task_inbox_write "$FM_HOME/state" first "perform the work" >/dev/null
+      fi
+    ' _ "$ROOT" "$mode" || fail 'could not seed a due doorbell'
+  fi
+  cat > "$dir/secondmate-reader.sh" <<'SH'
+#!/usr/bin/env bash
+. "$FM_ROOT_OVERRIDE/bin/fm-watch.sh"
+WATCHER_PID=$$
+mkdir "$WATCH_LOCK"
+printf '%s\n' "$$" > "$WATCH_LOCK/pid"
+secondmate_ring_to_drain first delivery-thread || exit 1
+while :; do watcher_waited sleep 2; done
+SH
+  if [ "$mode" = secondmate ]; then reader="$dir/secondmate-reader.sh"; else reader="$dir/code/bin/fm-watch.sh"; fi
+  FM_HOME="$dir" FM_ROOT_OVERRIDE="$dir/code" FM_STATE_OVERRIDE="$dir/state" PATH="$dir/fakebin:$PATH" \
+    FM_DELIVERY_MODE="$mode" FM_DELIVERY_DELAY="$delay" FM_POLL=2 FM_SIGNAL_GRACE=0 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 FM_STALE_SECS=999999 FM_TASK_INBOX_GRACE_SECS=0 \
+    FM_FAKE_TMUX_WINDOW=fixture:fixture bash "$reader" > "$dir/reader.log" 2>&1 &
+  reader=$!
+  for i in $(seq 1 160); do [ -e "$dir/ring-started" ] && break; sleep 0.05; done
+  [ -e "$dir/ring-started" ] || fail "doorbell did not reach its delayed operation: $(cat "$dir/reader.log")"
+  (
+    for i in $(seq 1 "$cycles"); do HEALTH_TEST_POLL=2 health_run "$dir" run || exit 1; done
+  ) > "$dir/health.log" 2>&1 &
+  checker=$!
+  for i in $(seq 1 500); do [ -e "$dir/send-finished" ] && break; sleep 0.05; done
+  [ -e "$dir/send-finished" ] || fail "doorbell never completed: $(cat "$dir/reader.log")"
+  [ ! -e "$dir/telegram.log" ] || fail "healthy $mode doorbell triggered a supervision outage"
+  kill -0 "$reader" || fail 'doorbell owner stopped before verification'
+  python3 - "$reader" "$dir" <<'PY' || fail 'doorbell owner death missed its poll deadline'
+from pathlib import Path
+import os, signal, subprocess, sys, time
+pid=int(sys.argv[1]); home=Path(sys.argv[2]); groups=[]
+for row in subprocess.check_output(['ps','-eo','pid=,ppid=,pgid='],text=True).splitlines():
+    child,parent,group=map(int,row.split())
+    if parent==pid and child==group: groups.append(group)
+start=time.monotonic(); os.kill(pid,signal.SIGKILL)
+try:
+    while time.monotonic()-start < 2:
+        if all(p.exists() and 'primary-supervision-lost' in p.read_text() for p in (home/'telegram.log',home/'state/.wake-queue')): break
+        time.sleep(0.01)
+    else: raise SystemExit('no durable and external alert within FM_POLL=2')
+finally:
+    for group in groups:
+        try: os.killpg(group,signal.SIGTERM)
+        except ProcessLookupError: pass
+PY
+  wait "$reader" 2>/dev/null || true
+  wait "$checker" || fail "doorbell health checks failed: $(cat "$dir/health.log")"
+  pass "supervision-health: $mode doorbell completes without a false outage and owner death alerts"
+}
+
+test_health_real_recovery_delivery() {
+  local mode=$1 dir reader i
+  dir=$(health_fixture "real-delivery-$mode")
+  health_delivery_code "$dir"
+  health_pending_records "$dir"
+  rm "$dir/state/pending-replies/0000000000000002"
+  mkdir -p "$dir/mate/state"
+  printf 'kind=secondmate\nbackend=t3code\nwindow=delivery-thread\nharness=claude\nhome=%s/mate\n' "$dir" > "$dir/state/first.meta"
+  FM_HOME="$dir" FM_ROOT_OVERRIDE="$dir/code" FM_STATE_OVERRIDE="$dir/state" PATH="$dir/fakebin:$PATH" \
+    FM_DELIVERY_MODE="$mode" FM_POLL=1 FM_SIGNAL_GRACE=0 FM_CHECK_TIMEOUT=1 FM_PENDING_REPLY_SEND_HOOK='' \
+    bash -c '
+      . "$1/bin/fm-watch.sh"
+      WATCHER_PID=$$
+      mkdir "$WATCH_LOCK"
+      printf "%s\n" "$$" > "$WATCH_LOCK/pid"
+      started=$SECONDS
+      rc=0
+      watcher_pending_reply_operation fm_pending_reply_send_recovery "$STATE" 0000000000000001 || rc=$?
+      fm_pending_reply_reconcile_recovery "$STATE" 0000000000000001 || true
+      printf "%s %s\n" "$rc" "$((SECONDS-started))" > "$FM_HOME/result"
+    ' _ "$dir/code" > "$dir/reader.log" 2>&1 &
+  reader=$!
+  for i in $(seq 1 250); do [ -e "$dir/result" ] && break; sleep 0.1; done
+  if [ ! -e "$dir/result" ]; then kill "$reader" 2>/dev/null || true; fail 'recovery delivery did not remain bounded'; fi
+  wait "$reader" || fail "recovery reader failed: $(cat "$dir/reader.log")"
+  python3 - "$dir" "$mode" <<'PY' || fail 'real recovery delivery violated its operation budget'
+from pathlib import Path
+import sys
+home=Path(sys.argv[1]); mode=sys.argv[2]
+rc,elapsed=map(int,(home/'result').read_text().split())
+assert (home/'operations').read_text().splitlines() == ['agent','composer','composer','send']
+record=dict(line.split('=',1) for line in (home/'state/pending-replies/0000000000000001').read_text().splitlines() if '=' in line)
+messages=list((home/'state/first.inbox').glob('*.msg'))
+assert len(messages)==1 and 'corr=0000000000000001' in messages[0].read_text()
+if mode=='recovery':
+    assert rc==0 and elapsed>=15 and record['phase']=='recovery_sent' and (home/'send-finished').exists()
+else:
+    assert rc!=0 and elapsed<=20 and record['phase']=='recovery_unknown' and not (home/'send-finished').exists()
+PY
+  pass "supervision-health: real fm-send $mode accounts for all four backend operations"
+}
+
 test_health_bootstrap_default_home
 test_health_rejects_zero_poll
 test_health_rejects_unused_live
@@ -803,6 +953,11 @@ test_health_real_watcher pending-rpc
 test_health_pending_stuck
 test_health_t3_event delayed
 test_health_t3_event timeout
+test_health_doorbell ring
+test_health_doorbell retry
+test_health_doorbell secondmate
+test_health_real_recovery_delivery recovery
+test_health_real_recovery_delivery stuck
 test_health_wedge_reads
 test_health_orphan_host
 test_health_slow_endpoint

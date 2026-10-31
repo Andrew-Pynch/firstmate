@@ -609,6 +609,8 @@ The pending-reply regression observes two successful twenty-second RPCs through 
 Its stuck-operation case bounds observation and recovery separately, retains uncertain recovery state, and proves later-record progress and an alert after watcher death.
 The native-event regression replaces an approval ID behind identical rendered text, delays environment verification and thread reading by twenty seconds each, and requires a fresh durable wake and request signature.
 A separate forced-deadline case requires consecutive event failures to disable the fast path while the owning watcher remains healthy; both cases require an outage alert after owner death.
+Doorbell cases exercise ordinary and retry delivery through the real watcher plus the secondmate drain-ring function, retaining health during a delayed fake T3 operation and detecting owner death afterward.
+Recovery-delivery cases run the real `fm-send.sh` path with reduced operation budgets, require all four backend operations to finish before confirmation, and preserve uncertain recovery when the final send stalls past the bound.
 The arm regression uses a sole remote endpoint whose fake reply takes 0.8 seconds, requires publication within `FM_POLL=3`, and retains delayed healthy-replacement suppression at short polls.
 The arm regressions place a delayed remote endpoint before a live local one and require notification within both one-second and three-second poll intervals.
 The three omp lifecycle-gap cases continue to pass, including shutdown without primary-process exit; the generated-service smoke retains the real-manager activation limit above.

@@ -654,7 +654,7 @@ inbox_steer_check() {  # <window> <task>
   case "$verb" in
     ring)
       ring_rc=0
-      fm_task_inbox_ring "$backend" "$w" "$rec" "$(window_label "$w")" || ring_rc=$?
+      watcher_inbox_ring "$backend" "$w" "$rec" "$(window_label "$w")" || ring_rc=$?
       if [ "$ring_rc" -eq 3 ]; then
         inbox_steer_escalate_unavailable "$w" "$task" "$rec"
         return 0
@@ -674,7 +674,7 @@ inbox_steer_check() {  # <window> <task>
       ;;
     retry)
       ring_rc=0
-      fm_task_inbox_ring "$backend" "$w" "$rec" "$(window_label "$w")" || ring_rc=$?
+      watcher_inbox_ring "$backend" "$w" "$rec" "$(window_label "$w")" || ring_rc=$?
       if ! fm_task_inbox_clear_retry "$STATE" "$task" "$rec" && [ -f "$rec" ]; then
         reason="stale: $w (steering-inbox retry mark unremovable: ${rec%/*}/.retry-ring cannot be removed, so $rec would ring on every poll - inspect the inbox directory)"
         fm_wake_append stale "$w" "$reason" || exit 1
@@ -1031,7 +1031,7 @@ secondmate_ring_to_drain() {  # <task> <window>
   rec=$(fm_task_inbox_write "$STATE" "$task" \
     "${FM_FROMFIRST_MARK}delivery=${delivery_id} Drain pending rows in this home's wake queue, then resume idle supervision." \
     fire-and-forget) || return 1
-  fm_task_inbox_ring "$backend" "$w" "$rec" "$(window_label "$w")"
+  watcher_inbox_ring "$backend" "$w" "$rec" "$(window_label "$w")"
 }
 
 # Surface one durable parent check when the foreign queue's drain position has
@@ -3190,6 +3190,21 @@ watcher_output() {
   return "$rc"
 }
 
+watcher_inbox_ring_budget() {
+  if [ "$1" = t3code ]; then
+    fm_backend_source t3code || return 1
+    printf '%s' "$(( $(fm_backend_t3code_ring_budget) + CHECK_TIMEOUT ))"
+  else
+    printf '%s' "$((7 * CHECK_TIMEOUT + 1))"
+  fi
+}
+
+watcher_inbox_ring() {
+  local budget
+  budget=$(watcher_inbox_ring_budget "$1") || return 2
+  WATCHER_WAIT_BUDGET=$budget watcher_waited fm_task_inbox_ring "$@"
+}
+
 watcher_pending_reply_operation() {
   local budget=$CHECK_TIMEOUT meta backend remote_budget
   case "$1" in
@@ -3205,10 +3220,8 @@ watcher_pending_reply_operation() {
         remote_budget=${FM_SEND_REMOTE_BUDGET:-30}
         case "$remote_budget" in ''|0*|*[!0-9]*) return 2 ;; esac
         budget=$((3 * remote_budget + CHECK_TIMEOUT))
-      elif [ "$backend" = t3code ] && fm_backend_source t3code; then
-        budget=$((3 * FM_BACKEND_T3CODE_STATE_BUDGET + CHECK_TIMEOUT))
       else
-        budget=$((3 * CHECK_TIMEOUT))
+        budget=$(watcher_inbox_ring_budget "$backend") || return 2
       fi
       ;;
     */fm-on.sh)

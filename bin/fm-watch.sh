@@ -473,9 +473,9 @@ window_is_busy() {  # <window> <tail40>
   task=$(window_to_task "$w" "$STATE")
   meta="$STATE/$task.meta"
   if [ -n "$task" ] && [ -f "$meta" ]; then
-    verdict=$(fm_busy_classify_meta "$meta" "$task" "$STATE" "$tail40")
+    verdict=$(watcher_output fm_busy_classify_meta "$meta" "$task" "$STATE" "$tail40")
   else
-    verdict=$(fm_busy_classify "$(window_backend "$w")" "$w" "$(window_harness "$w")" \
+    verdict=$(watcher_output fm_busy_classify "$(window_backend "$w")" "$w" "$(window_harness "$w")" \
       "${task:-unknown}" "$STATE" "$tail40")
   fi
   case "$verdict" in
@@ -593,7 +593,7 @@ inbox_steer_escalate_unavailable() {  # <window> <task> <record>
 inbox_steer_busy() {  # <window> <backend> <task> <tail40>
   local w=$1 backend=$2 task=$3 tail40=$4
   if [ "$backend" = t3code ]; then
-    fm_busy_is_busy t3code "$w" "$(window_harness "$w")" "$task" "$STATE" "$tail40"
+    watcher_output fm_busy_is_busy t3code "$w" "$(window_harness "$w")" "$task" "$STATE" "$tail40"
   else
     window_is_busy "$w" "$tail40"
   fi
@@ -994,7 +994,7 @@ secondmate_busy_class() {  # <window>
   fi
   watcher_capture "$(window_backend "$w")" "$w" 40 "$(window_label "$w")" || return 0
   tail40=$WATCHER_CAPTURE
-  verdict=$(fm_busy_classify_meta "$meta" "$task" "$STATE" "$tail40")
+  verdict=$(watcher_output fm_busy_classify_meta "$meta" "$task" "$STATE" "$tail40")
   SECONDMATE_BUSY_CLASS=${verdict%% *}
 }
 
@@ -2305,8 +2305,8 @@ wedge_defer_t3code_running() {  # <window> <since-file> <triage-label> <idle-age
   local win=$1 since_file=$2 label=$3 age=$4 turn_age
   [ "$(window_backend "$win")" = t3code ] || return 1
   fm_backend_source t3code || return 1
-  [ "$(fm_backend_t3code_probe "$win")" = running ] || return 1
-  turn_age=$(fm_backend_t3code_turn_age "$win") || return 1
+  [ "$(WATCHER_WAIT_BUDGET=$FM_BACKEND_T3CODE_STATE_BUDGET watcher_output fm_backend_t3code_probe "$win")" = running ] || return 1
+  turn_age=$(WATCHER_WAIT_BUDGET=$FM_BACKEND_T3CODE_STATE_BUDGET watcher_output fm_backend_t3code_turn_age "$win") || return 1
   [ "$turn_age" -lt "$BUSY_TURN_MAX_SECS" ] || return 1
   clear_write_tracking "$(window_key "$win")"
   date +%s > "$since_file"
@@ -2862,9 +2862,9 @@ unknown_alive_stale_bound() {  # <window> <task>
   [ -n "$task" ] || return 1
   meta="$STATE/$task.meta"
   if [ -f "$meta" ]; then
-    verdict=$(fm_busy_classify_meta "$meta" "$task" "$STATE")
+    verdict=$(watcher_output fm_busy_classify_meta "$meta" "$task" "$STATE")
   else
-    verdict=$(fm_busy_classify "$(window_backend "$win")" "$win" "$(window_harness "$win")" \
+    verdict=$(watcher_output fm_busy_classify "$(window_backend "$win")" "$win" "$(window_harness "$win")" \
       "$task" "$STATE")
   fi
   [ "${verdict%% *}" = unknown ] || return 1
@@ -3089,7 +3089,8 @@ watcher_wait() {
   [ "$budget" -ge "$SIGNAL_GRACE" ] || budget=$SIGNAL_GRACE
   until=$((SECONDS + budget + 1))
   while kill -0 "$pid" 2>/dev/null; do
-    if [ "$ticks" -eq 0 ] && [ "$SECONDS" -lt "$until" ]; then
+    [ "$SECONDS" -lt "$until" ] || return 124
+    if [ "$ticks" -eq 0 ]; then
       watcher_heartbeat || true
     fi
     ticks=$(((ticks + 1) % 2))
@@ -3178,8 +3179,13 @@ watcher_waited() {  # <command...>
 }
 
 watcher_output() {
-  local rc=0
-  watcher_waited "$@" || rc=$?
+  local rc=0 backend=${2:-}
+  if [ "$1" = fm_busy_classify_meta ]; then backend=$(fm_backend_of_meta "$2"); fi
+  if [ "$backend" = t3code ] && fm_backend_source t3code; then
+    WATCHER_WAIT_BUDGET=$FM_BACKEND_T3CODE_STATE_BUDGET watcher_waited "$@" || rc=$?
+  else
+    watcher_waited "$@" || rc=$?
+  fi
   printf '%s' "$WATCHER_CAPTURE"
   return "$rc"
 }
@@ -3190,7 +3196,11 @@ watcher_pending_reply_tick() {
 
 # watcher_capture: fm_backend_capture through watcher_waited.
 watcher_capture() {  # <backend> <target> <lines> [expected-label]
-  watcher_waited fm_backend_capture "$@"
+  if [ "$1" = t3code ] && fm_backend_source t3code; then
+    WATCHER_WAIT_BUDGET=$FM_BACKEND_T3CODE_CAPTURE_BUDGET watcher_waited fm_backend_capture "$@"
+  else
+    watcher_waited fm_backend_capture "$@"
+  fi
 }
 
 # The event wait's scratch directory, given to it as TMPDIR. A stop kills the

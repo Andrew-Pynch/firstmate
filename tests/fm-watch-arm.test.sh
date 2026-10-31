@@ -1999,6 +1999,16 @@ SH
     chmod +x "$fakebin/ssh"
     printf '%s\n' "- a-remote - Fixture (host: fixture-host; root: $ROOT; home: $dir/remote-home; scope: fixture; projects: test; added 2026-10-31)" > "$dir/data/secondmates.md"
   fi
+  if [ "$mode" = remote-delayed ]; then
+    printf 'alive\n' > "$dir/remote-state"
+    cat > "$fakebin/ssh" <<'SH'
+#!/usr/bin/env bash
+printf 'started\n' > "$FM_HOME/remote-probe-started"
+sleep 0.8
+printf 'alive\n'
+SH
+    chmod +x "$fakebin/ssh"
+  fi
   ln -s /bin/sleep "$dir/omp"
   "$dir/omp" 60 &
   primary=$!
@@ -2145,10 +2155,10 @@ PYTEST
     pass "watch-arm: primary loss after actionable output alerts within one poll before successor confirmation"
     return
   fi
-  if [ "$mode" = slow-remote ]; then
+  if [ "$mode" = slow-remote ] || [ "$mode" = remote-delayed ]; then
     alert_started=$(python3 -c 'import time; print(time.monotonic())')
   fi
-  if [ "$mode" != handoff ] && [ "$mode" != handoff-new ] && [ "$mode" != orphaned ] && [ "$mode" != pipe-close ]; then
+  if [ "$mode" != handoff ] && [ "$mode" != handoff-new ] && [ "$mode" != orphaned ] && [ "$mode" != pipe-close ] && [ "$mode" != remote-delayed ]; then
     kill "$primary"
     wait "$primary" 2>/dev/null || true
   fi
@@ -2218,7 +2228,7 @@ PYTEST
     wait "$ARM_PID" 2>/dev/null || true
     fail "dead primary with live work left no durable alert within one poll"
   fi
-  if [ "$mode" = slow-remote ]; then
+  if [ "$mode" = slow-remote ] || [ "$mode" = remote-delayed ]; then
     [ -e "$dir/remote-probe-started" ] || fail 'slow remote probe never started'
     python3 - "$alert_started" "$poll" <<'PY' || fail 'slow remote exceeded one poll before alerting'
 import sys, time
@@ -2240,7 +2250,7 @@ PY
     || fail "primary loss did not reach the Telegram sender"
   [ "$(wc -l < "$send_log" | tr -d '[:space:]')" -eq 1 ] \
     || fail "concurrent primary monitors sent duplicate Telegram alerts"
-  if [ "$mode" = orphaned ] || [ "$mode" = pipe-close ]; then
+  if [ "$mode" = orphaned ] || [ "$mode" = pipe-close ] || [ "$mode" = remote-delayed ]; then
     kill "$primary"
     wait "$primary" 2>/dev/null || true
   fi
@@ -2297,6 +2307,7 @@ test_primary_exit_alerts_with_live_work send-failure
 test_primary_exit_alerts_with_live_work crash
 test_primary_exit_alerts_with_live_work empty
 test_primary_exit_alerts_with_live_work remote-alive
+test_primary_exit_alerts_with_live_work remote-delayed
 test_primary_exit_alerts_with_live_work slow-remote
 test_primary_exit_alerts_with_live_work slow-remote 0.8 1
 test_primary_exit_alerts_with_live_work remote-dead

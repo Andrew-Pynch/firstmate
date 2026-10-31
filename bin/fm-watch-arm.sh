@@ -251,7 +251,7 @@ primary_send_alert() {
 # passive and scoped on every supported backend; no shared inventory scan.
 primary_loss_alert() {
   local meta reason alert_locked=0 sender_pid sender_status=0 queue_status=0
-  local probe_result probe_budget pid pending live=0
+  local probe_result probe_budget pid pending live=0 handoff_timer=${1:-}
   local -a probes=()
   [ "$PRIMARY_ALERTED" -eq 0 ] || return 0
   if healthy_watcher && replacement_primary_alive; then return 0; fi
@@ -281,6 +281,7 @@ primary_loss_alert() {
       if kill -0 "$pid" 2>/dev/null; then pending=1; fi
     done
     [ "$pending" -eq 1 ] || break
+    if [ -n "$handoff_timer" ] && ! fm_pid_alive "$handoff_timer"; then break; fi
     sleep 0.02 &
     wait "$!" || true
   done
@@ -289,6 +290,16 @@ primary_loss_alert() {
   if [ "$live" -ne 1 ]; then
     for pid in ${probes[@]+"${probes[@]}"}; do wait "$pid" 2>/dev/null || true; done
     return 0
+  fi
+  if [ -n "$handoff_timer" ]; then
+    while fm_pid_alive "$handoff_timer"; do
+      if healthy_watcher && { primary_alive || replacement_primary_alive; }; then
+        for pid in ${probes[@]+"${probes[@]}"}; do wait "$pid" 2>/dev/null || true; done
+        return 0
+      fi
+      sleep 0.02
+    done
+    if healthy_watcher && { primary_alive || replacement_primary_alive; }; then return 0; fi
   fi
   reason="check: primary-supervision-lost: primary supervision stopped without a healthy replacement while work is still live; restart firstmate to resume supervision"
   if fm_lock_acquire_wait_max "$PRIMARY_ALERT_LOCK" 1; then
@@ -344,21 +355,13 @@ primary_actionable_handoff() {
 primary_shutdown_handoff() {
   local timer poll=${FM_POLL:-15}
   case "$poll" in ''|*[!0-9]*|0) poll=15 ;; esac
-  # A relative sleep does not lose the fractional second of the current clock
-  # tick. Reserve half a second for endpoint proof and durable publication.
+  local rc=0
   sleep "$((poll - 1)).5" &
   timer=$!
-  while :; do
-    if healthy_watcher && { primary_alive || replacement_primary_alive; }; then
-      kill "$timer" 2>/dev/null || true
-      wait "$timer" 2>/dev/null || true
-      return 0
-    fi
-    fm_pid_alive "$timer" || break
-    sleep 0.1
-  done
+  primary_loss_alert "$timer" || rc=$?
+  kill "$timer" 2>/dev/null || true
   wait "$timer" 2>/dev/null || true
-  primary_loss_alert
+  return "$rc"
 }
 # Lifecycle writes are bounded and best-effort so an observability failure
 # cannot stall an otherwise healthy watcher cycle. Take-over also uses the

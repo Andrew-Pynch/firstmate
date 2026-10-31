@@ -88,7 +88,9 @@ Bootstrap reports missing, inactive, failed, or outdated units; the Linux remote
 The check requires a live session owner from the existing session-lock inspection alongside the newest watcher heartbeat or successful drain timestamp.
 A fresh orphan watcher cannot suppress an alert after its owning session disappears.
 The watcher refreshes its beacon during owned bounded checks and waits, including its poll sleep, each secondmate probe/relaunch, process-event confirmation, inactive reconciliation, backend reads, and external guards, so supported slow checks do not look like lost supervision.
-A wait stops refreshing after its configured work budget; a stopped or dead watcher cannot keep the beacon fresh.
+An owned wait terminates when its configured work budget expires; a stopped or dead watcher cannot keep the beacon fresh.
+T3 state reads allow the full verified-session sequence, and captures also allow the activity pagination budget; additional backward-page retries share that aggregate deadline.
+During shutdown, the arm probes endpoints within its existing replacement grace period and reserves the final half-second of the poll for publication.
 The freshness deadline reserves half of `FM_POLL` for endpoint proof and alert publication.
 With a recorded live task endpoint and an expired freshness deadline, it queues `primary-supervision-lost` and invokes the existing Telegram sender once per incident.
 A fresh check-in clears the incident, permitting another alert after a later outage.

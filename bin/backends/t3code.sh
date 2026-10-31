@@ -467,6 +467,8 @@ fm_backend_t3code_escalation_marker() {  # <state_dir> <thread-id>
 }
 
 FM_BACKEND_T3CODE_CAPABILITY_BUDGET=122
+FM_BACKEND_T3CODE_STATE_BUDGET=$((FM_BACKEND_T3CODE_CAPABILITY_BUDGET + 30))
+FM_BACKEND_T3CODE_CAPTURE_BUDGET=$((FM_BACKEND_T3CODE_STATE_BUDGET + 51 * 30))
 
 fm_backend_t3code_events_capable() {  # <session>
   fm_backend_t3code_mcp status >/dev/null 2>&1

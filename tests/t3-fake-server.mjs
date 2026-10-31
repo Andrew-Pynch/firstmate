@@ -355,6 +355,11 @@ async function mcp(req, res) {
     res.writeHead(200, { "content-type": "text/event-stream", "mcp-session-id": "sess-fake" });
     return res.end();
   }
+  const delay = w.delayToolsMs?.[msg.params?.name] ?? 0;
+  if (delay > 0) {
+    log(w, { ...entry, delayStarted: true });
+    await sleep(delay);
+  }
   let result;
   if (msg.method === "initialize") {
     result = { protocolVersion: msg.params.protocolVersion, serverInfo: { name: "t3", version: w.serverVersion ?? "0.0.46-nightly.fake" }, capabilities: { tools: {} } };

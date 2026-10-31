@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 set -u
 . "$(dirname "${BASH_SOURCE[0]}")/wake-helpers.sh"
+. "$(dirname "${BASH_SOURCE[0]}")/t3-fake-lib.sh"
 TMP_ROOT=$(fm_test_tmproot fm-supervision-health)
 HEALTH="$ROOT/bin/fm-supervision-health.sh"
 ln -s /bin/sleep "$TMP_ROOT/omp"
 "$TMP_ROOT/omp" 600 &
 HEALTH_OWNER_PID=$!
 health_cleanup() {
+  t3_fake_stop
   kill "$HEALTH_OWNER_PID" 2>/dev/null || true
   wait "$HEALTH_OWNER_PID" 2>/dev/null || true
   fm_test_cleanup
@@ -85,7 +87,7 @@ test_health_incidents() {
 }
 
 test_health_real_watcher() {
-  local mode=$1 dir watcher checker i code check_timeout=30
+  local mode=$1 dir watcher checker i code check_timeout=30 health_cycles=6 healthy_seconds=6
   dir=$(health_fixture "real-$mode")
   code=$ROOT
   touch "$dir/state/.last-heartbeat"
@@ -129,6 +131,29 @@ exec "$FM_REAL_NODE" "$@"
 SH
     chmod +x "$dir/fakebin/node"
     check_timeout=2
+  fi
+  if [ "$mode" = capture-rpc ]; then
+    printf 'backend=t3code\nwindow=read-thread\n' > "$dir/state/a-t3.meta"
+    t3_fake_start "$dir/server"
+    t3_fake_case "$dir/server/world" '{"delayToolsMs":{"t3_thread_read":20000},"threads":{"read-thread":{"threadId":"read-thread","status":"running","activeRunId":"r1","items":[{"type":"assistant_message","status":"completed","text":"verified delayed capture"}]}}}'
+    t3_fake_credential "$dir/config/t3code-token"
+    cat > "$dir/fakebin/node" <<'SH'
+#!/usr/bin/env bash
+case "$1 ${2:-}" in
+  *fm-t3-mcp.mjs\ capture)
+    touch "$FM_HOME/capture-started"
+    "$FM_REAL_NODE" "$@" > "$FM_HOME/capture-inflight" || exit $?
+    cp "$FM_HOME/capture-inflight" "$FM_HOME/capture-result"
+    cat "$FM_HOME/capture-result"
+    touch "$FM_HOME/capture-completed"
+    exit 0 ;;
+  *fm-t3-mcp.mjs\ status) exit 1 ;;
+esac
+exec "$FM_REAL_NODE" "$@"
+SH
+    chmod +x "$dir/fakebin/node"
+    health_cycles=26
+    healthy_seconds=46
   fi
   if [ "$mode" = procevent ]; then
     fm_test_track_procevent_home "$dir"
@@ -182,17 +207,30 @@ SH
     for i in $(seq 1 160); do [ -e "$dir/capability-started" ] && break; sleep 0.05; done
     [ -e "$dir/capability-started" ] || fail "capability probe never started: $(cat "$dir/watcher.log")"
   fi
+  if [ "$mode" = capture-rpc ]; then
+    for i in $(seq 1 160); do [ -e "$dir/capture-started" ] && break; sleep 0.05; done
+    [ -e "$dir/capture-started" ] || fail "capture never started: $(cat "$dir/watcher.log")"
+  fi
   (
-    for i in $(seq 1 6); do
+    for i in $(seq 1 "$health_cycles"); do
       HEALTH_TEST_POLL=2 health_run "$dir" run || exit 1
     done
   ) > "$dir/health.log" 2>&1 &
   checker=$!
-  sleep 6
+  sleep "$healthy_seconds"
   [ ! -e "$dir/telegram.log" ] || fail "healthy real $mode watcher triggered an alert"
   kill -0 "$watcher" || fail "real healthy watcher exited: $(cat "$dir/watcher.log")"
   if [ "$mode" = slow ]; then
     [ -e "$dir/slow-finished" ] || fail 'supported slow check did not finish'
+  fi
+  if [ "$mode" = capture-rpc ]; then
+    [ -e "$dir/capture-completed" ] || fail 'multi-RPC capture did not complete'
+    grep -q 'verified delayed capture' "$dir/capture-result" || fail 'capture lost the delayed server result'
+    python3 - "$T3_FAKE_LOG" <<'PY' || fail 'capture did not finish both delayed RPCs'
+import json, sys
+rows=[json.loads(row) for row in open(sys.argv[1])]
+assert sum(row.get('tool') == 't3_thread_read' and not row.get('delayStarted') for row in rows) >= 2
+PY
   fi
   python3 - "$watcher" "$dir" <<'PYTEST' || fail "real $mode watcher death missed its poll deadline"
 from pathlib import Path
@@ -233,6 +271,7 @@ PYTEST
   fi
   wait "$checker" || fail "real watcher health monitor failed: $(cat "$dir/health.log")"
   [ "$(wc -l < "$dir/telegram.log")" -eq 1 ] || fail 'real watcher death alerted more than once'
+  if [ "$mode" = capture-rpc ]; then t3_fake_stop; fi
   pass "supervision-health: real $mode watcher stays healthy and its death alerts within one poll"
 }
 
@@ -474,6 +513,54 @@ test_health_rejects_zero_poll() {
   pass 'supervision-health: zero cadence is rejected'
 }
 
+test_health_wedge_reads() {
+  local dir watcher checker i
+  dir=$(health_fixture wedge-reads)
+  printf 'backend=t3code\nwindow=read-thread\n' > "$dir/state/t3.meta"
+  t3_fake_start "$dir/server"
+  t3_fake_case "$dir/server/world" '{"delayToolsMs":{"t3_thread_read":2000},"threads":{"read-thread":{"threadId":"read-thread","status":"running","activeRunId":"r1","runs":[{"runId":"r1","status":"running","startedAt":"2099-01-01T00:00:00Z"}]}}}'
+  t3_fake_credential "$dir/config/t3code-token"
+  FM_HOME="$dir" FM_ROOT_OVERRIDE="$ROOT" FM_STATE_OVERRIDE="$dir/state" \
+    FM_POLL=2 FM_CHECK_TIMEOUT=1 FM_SIGNAL_GRACE=0 bash -c '
+      . "$1/bin/fm-watch.sh"
+      WATCHER_PID=$$
+      mkdir "$WATCH_LOCK"
+      printf "%s\n" "$$" > "$WATCH_LOCK/pid"
+      wedge_defer_t3code_running read-thread "$STATE/since" fixture 10 || exit 1
+      touch "$FM_HOME/wedge-completed"
+      started=$SECONDS
+      WATCHER_WAIT_BUDGET=1 watcher_waited sleep 30
+      [ "$?" -eq 124 ] && [ "$((SECONDS-started))" -le 3 ] || exit 1
+      touch "$FM_HOME/bounded-wait-completed"
+      while :; do watcher_waited sleep 2; done
+    ' _ "$ROOT" > "$dir/watcher.log" 2>&1 &
+  watcher=$!
+  for i in $(seq 1 100); do [ -e "$dir/state/.last-watcher-beat" ] && break; sleep 0.05; done
+  (
+    for i in $(seq 1 7); do HEALTH_TEST_POLL=2 health_run "$dir" run || exit 1; done
+  ) > "$dir/health.log" 2>&1 &
+  checker=$!
+  for i in $(seq 1 180); do [ -e "$dir/bounded-wait-completed" ] && break; sleep 0.05; done
+  [ -e "$dir/wedge-completed" ] || fail "wedge reads failed: $(cat "$dir/watcher.log")"
+  [ -e "$dir/bounded-wait-completed" ] || fail 'owned wait exceeded its operation budget'
+  [ ! -e "$dir/telegram.log" ] || fail 'healthy wedge reads triggered an outage'
+  python3 - "$watcher" "$dir" <<'PY' || fail 'wedge reader death missed its poll deadline'
+from pathlib import Path
+import os, signal, sys, time
+pid=int(sys.argv[1]); home=Path(sys.argv[2])
+start=time.monotonic(); os.kill(pid,signal.SIGKILL)
+while time.monotonic()-start < 2:
+    if all(p.exists() and 'primary-supervision-lost' in p.read_text() for p in (home/'telegram.log',home/'state/.wake-queue')):
+        break
+    time.sleep(0.01)
+else: raise SystemExit('no durable and external alert within FM_POLL=2')
+PY
+  wait "$watcher" 2>/dev/null || true
+  wait "$checker" || fail "wedge reader health check failed: $(cat "$dir/health.log")"
+  t3_fake_stop
+  pass 'supervision-health: verified wedge reads refresh health, waits terminate, and reader death alerts'
+}
+
 test_health_bootstrap_default_home
 test_health_rejects_zero_poll
 test_health_rejects_unused_live
@@ -483,6 +570,8 @@ test_health_real_watcher slow
 test_health_real_watcher relaunch
 test_health_real_watcher procevent
 test_health_real_watcher capability
+test_health_real_watcher capture-rpc
+test_health_wedge_reads
 test_health_orphan_host
 test_health_slow_endpoint
 test_health_remote_work

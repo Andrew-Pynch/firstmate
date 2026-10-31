@@ -1852,8 +1852,13 @@ n=$(cat "$FM_HOME/state/arm-count" 2>/dev/null || echo 0)
 n=$((n + 1))
 echo "$n" > "$FM_HOME/state/arm-count"
 if [ "$n" -gt 1 ]; then
-  trap 'touch "$FM_HOME/state/retired"; exit 0' TERM
+  # Exercise delayed shell startup without racing the readiness deadline.
+  sleep 0.25
   touch "$FM_HOME/state/unready"
+  if [ "$GAP_MODE" = backoff ]; then
+    touch "$FM_HOME/state/retired"
+    exit 1
+  fi
   while :; do sleep 0.02 & wait "$!"; done
 fi
 echo "$$" > "$FM_HOME/state/first-pid"
@@ -1867,8 +1872,10 @@ read -r _ || true
 SH
   cp "$repo/bin/fm-watch-arm.sh" "$repo/bin/fm-supervision-host.sh"
   chmod +x "$repo/bin/fm-watch-arm.sh" "$repo/bin/fm-supervision-host.sh" "$home/fakebin/"*
+  # The driver has an eight-second setup bound. Keep readiness expiry outside
+  # it: close uses an in-flight arm, while backoff uses the child's explicit exit.
   FM_HOME="$home" FM_ROOT_OVERRIDE="$repo" FM_POLL=3 GAP_MODE="$mode" \
-    FM_OMP_ARM_READY_TIMEOUT_MS=100 FM_WATCH_ARM_RETIRE_TIMEOUT_MS=1000 \
+    FM_OMP_ARM_READY_TIMEOUT_MS=30000 FM_WATCH_ARM_RETIRE_TIMEOUT_MS=1000 \
     FM_WATCH_REARM_RETRY_BASE_MS=3000 FM_WATCH_REARM_RETRY_MAX_MS=3000 \
     EXT="$repo/.omp/extensions/fm-primary-omp-watch.ts" \
     node --input-type=module > "$home/driver.log" 2>&1 <<'JS' &

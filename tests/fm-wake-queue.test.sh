@@ -461,7 +461,7 @@ secondmate_stall_watch_leg() { # <dir> <leg> <mode> [arg...]
   local beat="$dir/state/.last-watcher-beat" sent="$dir/sent"
   local pid i=0 limit=600 met=0
   local marker='' want='' progress='' progress_start='' row_key='' bound=0
-  local body key observed_at=0 first=0 mark=0 mtime
+  local body key observed_at=0 mark=0 mtime cycles
   case "$mode" in
     alert|reject|tick)
       ;;
@@ -497,6 +497,7 @@ secondmate_stall_watch_leg() { # <dir> <leg> <mode> [arg...]
       ;;
   esac
   [ -z "$progress" ] || progress_start=$(cat "$progress" 2>/dev/null || true)
+  [ "$mode" != tick ] || fm_test_observe_watch_cycles
   rm -f "$beat"
   # These legs pin wake-loop stall behavior only. A large cadence alone does
   # not suppress the first endpoint tick when its marker is absent; seed it so
@@ -534,14 +535,10 @@ secondmate_stall_watch_leg() { # <dir> <leg> <mode> [arg...]
     met=0
     case "$mode" in
       tick)
-        if [ -e "$beat" ]; then
-          mtime=$(stall_watch_beat_epoch "$beat")
-          if [ "$first" -eq 0 ]; then
-            first=$mtime
-          elif [ "$mtime" -gt "$first" ]; then
-            met=1
-          fi
-        fi
+        # In-operation check-ins can advance the beacon before this scan.
+        # Two top-level cycle starts prove the intervening scan completed.
+        cycles=$(grep -c -x "$pid" "$dir/state/.test-watch-cycles" 2>/dev/null) || cycles=0
+        [ "$cycles" -lt 2 ] || met=1
         if [ "$met" -eq 0 ] && ! is_live_non_zombie "$pid" && stall_watch_has_wake "$out"; then
           met=1
         fi
@@ -610,7 +607,6 @@ secondmate_stall_watch_leg() { # <dir> <leg> <mode> [arg...]
       rm -f "$beat"
       FM_SECONDMATE_LIVENESS_SECS=99999999 "$WATCH" >>"$out" 2>>"$err" &
       pid=$!
-      first=0
       mark=0
     fi
     sleep 0.1

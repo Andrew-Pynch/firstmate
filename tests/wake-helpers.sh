@@ -139,6 +139,7 @@ SH
 # Preserve touch's behavior and record only the watcher's top-level beacon
 # calls, excluding the watcher_heartbeat helper's in-operation refreshes.
 fm_test_observe_watch_cycles() {
+  # shellcheck disable=SC2329 # Exported for indirect calls in the watcher child.
   touch() {
     command touch "$@" || return $?
     if [ "${FUNCNAME[1]:-}" = main ] \

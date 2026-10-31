@@ -2035,6 +2035,13 @@ The live rule-match evidence is recorded in [`verification/dispatch-resolve.md`]
 
 ## Toolchain
 
+Linux homes also need the independent supervision-health user timer described in [watcher continuity](watcher-continuity.md#independent-supervision-health).
+Use `FM_HOME=<home> bin/fm-bootstrap.sh install supervision-health` after approving installation, and `FM_HOME=<home> bin/fm-bootstrap.sh doctor supervision-health` to verify its current units, timer activation, and last service result.
+Changing watcher cadence or the installed code path requires reinstalling those units.
+After upgrading the heartbeat producer, restart supervision with the updated watcher before enabling or reinstalling the health timer.
+The timer uses the user's existing systemd manager, installs no package or daemon, and requires no sudo.
+Bootstrap reports missing, inactive, failed, or outdated units; the Linux remote doctor's `--fix` also installs them.
+
 On session start the first mate detects what its required toolchain is missing or too old and lists each problem with its exact install or upgrade command, or with manual instructions.
 It installs missing automatically supported tools only after you say go; for an installed but outdated tool, run the printed upgrade command after consent, while manual-only tools remain for you to install from the printed instructions.
 

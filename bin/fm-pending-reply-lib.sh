@@ -808,6 +808,14 @@ fm_pending_reply_fallback_idle_eligible() {  # <record-path>
   [ "$age" -ge "$grace" ]
 }
 
+fm_pending_reply_execute() {
+  if [ -n "${FM_PENDING_REPLY_EXECUTOR:-}" ]; then
+    "$FM_PENDING_REPLY_EXECUTOR" "$@"
+  else
+    "$@"
+  fi
+}
+
 # fm_pending_reply_backend_observation: one busy/idle observation of a
 # SECONDMATE endpoint, without ever reading its conversation.
 #
@@ -826,13 +834,13 @@ fm_pending_reply_fallback_idle_eligible() {  # <record-path>
 # which the caller accepts as idle only after its grace window.
 fm_pending_reply_backend_observation() {  # <backend> <target> [expected-label] [harness]
   local backend=$1 target=$2 expected_label=${3-} harness=${4-} native tail40
-  native=$(fm_backend_busy_state "$backend" "$target" 2>/dev/null || printf 'unknown')
+  native=$(fm_pending_reply_execute fm_backend_busy_state "$backend" "$target" 2>/dev/null || printf 'unknown')
   case "$native" in
     busy|idle) printf '%s' "$native"; return 0 ;;
   esac
   # T3's synthetic transcript cannot resolve native busy uncertainty.
   [ "$backend" != t3code ] || { printf 'unknown'; return 0; }
-  tail40=$(fm_backend_capture "$backend" "$target" 40 "$expected_label" 2>/dev/null) \
+  tail40=$(fm_pending_reply_execute fm_backend_capture "$backend" "$target" 40 "$expected_label" 2>/dev/null) \
     || { printf 'unknown'; return 0; }
   if printf '%s' "$tail40" | grep -v '^[[:space:]]*$' | tail -6 \
     | fm_busy_lines_match "$harness"; then
@@ -1518,7 +1526,7 @@ fm_pending_reply_tick_one() {  # <state-dir> <corr_id> <busy_state> [secondmate-
   fi
   phase=$(fm_pending_reply_get "$rec" phase)
   if [ "$phase" = awaiting_report ]; then
-    fm_pending_reply_send_recovery "$state" "$corr" 2>/dev/null || true
+    fm_pending_reply_execute fm_pending_reply_send_recovery "$state" "$corr" 2>/dev/null || true
   fi
   phase=$(fm_pending_reply_get "$rec" phase)
   case "$phase" in
@@ -1563,6 +1571,7 @@ _fm_pending_reply_select_needing_work() {  # <record-path>...
 # unchanged, only for the records that selection returns.
 fm_pending_reply_tick() {  # <state-dir>
   local state=$1 dir rec corr task_id phase delivered meta backend target label busy sm_home harness remote_host
+  local FM_PENDING_REPLY_EXECUTOR=${2:-}
   local observation observation_task found i
   local -a observation_tasks=() observation_values=() records=() selected=()
   dir=$(fm_pending_reply_dir "$state")
@@ -1668,7 +1677,7 @@ fm_pending_reply_tick() {  # <state-dir>
         done
         if [ "$found" = 0 ]; then
           if [ -n "$remote_host" ]; then
-            observation=$("$_FM_PENDING_REPLY_LIB_DIR/fm-on.sh" "$task_id" \
+            observation=$(fm_pending_reply_execute "$_FM_PENDING_REPLY_LIB_DIR/fm-on.sh" "$task_id" \
               fm-remote-secondmate-control.sh observe "$task_id" < /dev/null 2>/dev/null || printf 'unknown')
             case "$observation" in busy|idle|fallback-idle|unknown) ;; *) observation=unknown ;; esac
           else

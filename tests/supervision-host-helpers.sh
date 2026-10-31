@@ -629,7 +629,8 @@ assert_returned_driver_is_caught() {  # <attended|away>
   wait_until 150 watcher_live "$home" || fail "returned driver: no watcher started"
   append_status "$home" 'measurement driver running' paused
   wait_until 250 handled_at_least "$home" 1 || fail "returned driver: the paused signal was not handled"
-  cat > "$home/fakebin/tmux" <<'SH'
+  # Publish a complete executable without rewriting one the watcher is executing.
+  cat > "$home/fakebin/tmux.new" <<'SH'
 #!/usr/bin/env bash
 case "${1:-}" in
   list-windows) printf 'fm-demo\n'; exit 0 ;;
@@ -638,7 +639,9 @@ case "${1:-}" in
 esac
 exit 1
 SH
-  chmod +x "$home/fakebin/tmux"
+  if ! chmod +x "$home/fakebin/tmux.new" || ! mv -f "$home/fakebin/tmux.new" "$home/fakebin/tmux"; then
+    fail "returned driver: could not publish the live tmux fixture"
+  fi
   printf 'window=firstmate:fm-demo\nproject=demo\nkind=ship\nharness=pi\nbackend=tmux\n' > "$home/state/demo.meta"
   append_status "$home" 'measurement driver returned; inspect receipts' resolved
   # A hang guard only; the stale event's order after the resolved hand-back is the assertion

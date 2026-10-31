@@ -305,12 +305,8 @@ fi
 # turn-ended signature, annotation staleness checks, and guarded bookkeeping writes.
 
 POLL=${FM_POLL:-15}                   # seconds between cycles
-# The liveness beacon is touched once per cycle, immediately before the
-# terminal wait below (event_wait_or_sleep) as well as at the top of the next
-# one, so a healthy cycle's beacon can legitimately age up to POLL seconds
-# between touches. fm_poll_derived_grace (bin/fm-wake-lib.sh, already sourced
-# transitively above) is the single owner of the max(300, poll+60)
-# derivation - see docs/turnend-guard.md "Guard grace and the poll cadence".
+# The cycle and its owned bounded waits refresh the liveness beacon.
+# fm_poll_derived_grace remains the owner of the broader guard grace.
 # This recomputes the library default above now that the real configured
 # POLL is known.
 WATCHER_STALE_GRACE=${FM_WATCHER_STALE_GRACE:-${FM_GUARD_GRACE:-$(fm_poll_derived_grace "$POLL")}}
@@ -477,9 +473,9 @@ window_is_busy() {  # <window> <tail40>
   task=$(window_to_task "$w" "$STATE")
   meta="$STATE/$task.meta"
   if [ -n "$task" ] && [ -f "$meta" ]; then
-    verdict=$(fm_busy_classify_meta "$meta" "$task" "$STATE" "$tail40")
+    verdict=$(watcher_output fm_busy_classify_meta "$meta" "$task" "$STATE" "$tail40")
   else
-    verdict=$(fm_busy_classify "$(window_backend "$w")" "$w" "$(window_harness "$w")" \
+    verdict=$(watcher_output fm_busy_classify "$(window_backend "$w")" "$w" "$(window_harness "$w")" \
       "${task:-unknown}" "$STATE" "$tail40")
   fi
   case "$verdict" in
@@ -597,7 +593,7 @@ inbox_steer_escalate_unavailable() {  # <window> <task> <record>
 inbox_steer_busy() {  # <window> <backend> <task> <tail40>
   local w=$1 backend=$2 task=$3 tail40=$4
   if [ "$backend" = t3code ]; then
-    fm_busy_is_busy t3code "$w" "$(window_harness "$w")" "$task" "$STATE" "$tail40"
+    watcher_output fm_busy_is_busy t3code "$w" "$(window_harness "$w")" "$task" "$STATE" "$tail40"
   else
     window_is_busy "$w" "$tail40"
   fi
@@ -627,7 +623,7 @@ inbox_steer_check() {  # <window> <task>
       ;;
   esac
   backend=$(window_backend "$w")
-  agent_state=$(fm_backend_agent_state "$backend" "$w" 2>/dev/null || true)
+  agent_state=$(watcher_output fm_backend_agent_state "$backend" "$w" 2>/dev/null || true)
   case "$agent_state" in
     dead|missing)
       if [ "$verb" = retry ]; then
@@ -658,7 +654,7 @@ inbox_steer_check() {  # <window> <task>
   case "$verb" in
     ring)
       ring_rc=0
-      fm_task_inbox_ring "$backend" "$w" "$rec" "$(window_label "$w")" || ring_rc=$?
+      watcher_inbox_ring "$backend" "$w" "$rec" "$(window_label "$w")" || ring_rc=$?
       if [ "$ring_rc" -eq 3 ]; then
         inbox_steer_escalate_unavailable "$w" "$task" "$rec"
         return 0
@@ -678,7 +674,7 @@ inbox_steer_check() {  # <window> <task>
       ;;
     retry)
       ring_rc=0
-      fm_task_inbox_ring "$backend" "$w" "$rec" "$(window_label "$w")" || ring_rc=$?
+      watcher_inbox_ring "$backend" "$w" "$rec" "$(window_label "$w")" || ring_rc=$?
       if ! fm_task_inbox_clear_retry "$STATE" "$task" "$rec" && [ -f "$rec" ]; then
         reason="stale: $w (steering-inbox retry mark unremovable: ${rec%/*}/.retry-ring cannot be removed, so $rec would ring on every poll - inspect the inbox directory)"
         fm_wake_append stale "$w" "$reason" || exit 1
@@ -998,7 +994,7 @@ secondmate_busy_class() {  # <window>
   fi
   watcher_capture "$(window_backend "$w")" "$w" 40 "$(window_label "$w")" || return 0
   tail40=$WATCHER_CAPTURE
-  verdict=$(fm_busy_classify_meta "$meta" "$task" "$STATE" "$tail40")
+  verdict=$(watcher_output fm_busy_classify_meta "$meta" "$task" "$STATE" "$tail40")
   SECONDMATE_BUSY_CLASS=${verdict%% *}
 }
 
@@ -1012,9 +1008,9 @@ secondmate_idle_ring_safe() {  # <window>
   secondmate_busy_class "$w"
   [ "$SECONDMATE_BUSY_CLASS" = idle ] || return 1
   backend=$(window_backend "$w")
-  agent_state=$(fm_backend_agent_state "$backend" "$w" 2>/dev/null || true)
+  agent_state=$(watcher_output fm_backend_agent_state "$backend" "$w" 2>/dev/null || true)
   [ "$agent_state" = alive ] || return 1
-  cstate=$(fm_backend_composer_state "$backend" "$w" "$(window_label "$w")" 2>/dev/null) || cstate=unknown
+  cstate=$(watcher_output fm_backend_composer_state "$backend" "$w" "$(window_label "$w")" 2>/dev/null) || cstate=unknown
   [ "$cstate" != pending ] || return 1
   return 0
 }
@@ -1035,7 +1031,7 @@ secondmate_ring_to_drain() {  # <task> <window>
   rec=$(fm_task_inbox_write "$STATE" "$task" \
     "${FM_FROMFIRST_MARK}delivery=${delivery_id} Drain pending rows in this home's wake queue, then resume idle supervision." \
     fire-and-forget) || return 1
-  fm_task_inbox_ring "$backend" "$w" "$rec" "$(window_label "$w")"
+  watcher_inbox_ring "$backend" "$w" "$rec" "$(window_label "$w")"
 }
 
 # Surface one durable parent check when the foreign queue's drain position has
@@ -1174,7 +1170,7 @@ secondmate_liveness_tick() {
   [ "$(age_of "$tick_marker")" -ge "$SECONDMATE_LIVENESS_SECS" ] || return 0
   touch "$tick_marker" || return 1
   local now=$(( $(date +%s) )) meta id kind
-  local bound_marker attempts notify_key reason queued err first_reason='' failed=0
+  local first_reason='' failed=0
   for meta in "$STATE"/*.meta; do
     [ -e "$meta" ] || continue
     kind=$(fm_meta_get "$meta" kind 2>/dev/null || true)
@@ -1182,67 +1178,76 @@ secondmate_liveness_tick() {
     id=${meta##*/}
     id=${id%.meta}
     case "$id" in ''|*[!A-Za-z0-9._-]*) continue ;; esac
-    fm_secondmate_liveness_lock "$id" || continue
-    fm_secondmate_liveness_probe "$meta" "$id" poll
-    bound_marker="$STATE/.secondmate-relaunch-bound-$id"
-    reason='' notify_key='' err=''
-    case "$FM_SM_LIVE_STATUS" in
-      relaunchable)
-        if [ -e "$bound_marker" ] || [ -L "$bound_marker" ]; then
-          :
-        elif ! attempts=$(fm_secondmate_liveness_recent_attempts "$id" "$SECONDMATE_LIVENESS_WINDOW_SECS"); then
-          err="relaunch ledger is unreadable; endpoint left $FM_SM_LIVE_STATE"
-        elif [ "$attempts" -ge "$SECONDMATE_LIVENESS_MAX_ATTEMPTS" ]; then
-          if printf '%s\t%s\n' "$now" "$FM_SM_LIVE_STATE" > "$bound_marker"; then
-            reason="check: secondmate $id auto-relaunch paused after $SECONDMATE_LIVENESS_MAX_ATTEMPTS attempts in ${SECONDMATE_LIVENESS_WINDOW_SECS}s; endpoint still $FM_SM_LIVE_STATE - relaunch it manually or retire the route"
-            notify_key="secondmate-relaunch-bound-$id"
-          else
-            err="relaunch park marker could not be written; endpoint left $FM_SM_LIVE_STATE"
-          fi
-        elif fm_secondmate_liveness_relaunch "$meta" "$id" "$SECONDMATE_LIVENESS_TIMEOUT"; then
-          reason="check: secondmate $id auto-relaunched after $FM_SM_LIVE_CAUSE ($FM_SM_LIVE_WHERE)"
-          notify_key="secondmate-relaunch-$id-$now"
-        elif [ "$FM_SM_LIVE_STATUS" = skipped ]; then
-          err=$FM_SM_LIVE_REASON
-        else
-          reason="check: secondmate $id auto-relaunch failed after $FM_SM_LIVE_CAUSE: $(fm_sm_live_first_line "$FM_SM_LIVE_OUT")"
-          notify_key="secondmate-relaunch-failed-$id-$now"
-        fi
-        ;;
-      alive)
-        if [ -e "$bound_marker" ] || [ -L "$bound_marker" ]; then
-          if ! fm_secondmate_liveness_ledger_add "$id" rearmed; then
-            err="relaunch ledger is unwritable; auto-relaunch stays paused"
-          elif ! rm -f "$bound_marker"; then
-            err="relaunch park marker could not be cleared; auto-relaunch stays paused"
-          else
-            triage_log "secondmate $id live again; auto-relaunch pause cleared"
-          fi
-        fi
-        ;;
-      skipped)
-        triage_log "secondmate $id liveness: $FM_SM_LIVE_REASON"
-        ;;
-    esac
-    if [ -n "$reason" ]; then
-      queued=$(fm_wake_queued_keys check)
-      if printf '%s\n' "$queued" | grep -Fx "$notify_key" >/dev/null 2>&1 \
-        || fm_wake_append check "$notify_key" "$reason"; then
-        [ -n "$first_reason" ] || first_reason=$reason
-      else
-        err="check wake row could not be queued: $reason"
-      fi
-    fi
-    fm_secondmate_liveness_unlock "$id"
-    if [ -n "$err" ]; then
-      echo "watcher: secondmate $id liveness: $err" >&2
-      triage_log "secondmate $id liveness error: $err" || true
+    if ! WATCHER_WAIT_BUDGET=$((2 * SECONDMATE_LIVENESS_TIMEOUT + 60)) watcher_waited secondmate_liveness_one "$meta" "$id" "$now" 3>&2; then
       failed=1
     fi
+    [ -n "$first_reason" ] || first_reason=$WATCHER_CAPTURE
   done
   [ -z "$first_reason" ] || wake "$first_reason"
   [ "$failed" -eq 0 ]
 }
+
+secondmate_liveness_one() {
+  local meta=$1 id=$2 now=$3 bound_marker attempts notify_key reason queued err
+  fm_secondmate_liveness_lock "$id" || return 0
+  fm_secondmate_liveness_probe "$meta" "$id" poll
+  bound_marker="$STATE/.secondmate-relaunch-bound-$id"
+  reason='' notify_key='' err=''
+  case "$FM_SM_LIVE_STATUS" in
+    relaunchable)
+      if [ -e "$bound_marker" ] || [ -L "$bound_marker" ]; then
+        :
+      elif ! attempts=$(fm_secondmate_liveness_recent_attempts "$id" "$SECONDMATE_LIVENESS_WINDOW_SECS"); then
+        err="relaunch ledger is unreadable; endpoint left $FM_SM_LIVE_STATE"
+      elif [ "$attempts" -ge "$SECONDMATE_LIVENESS_MAX_ATTEMPTS" ]; then
+        if printf '%s\t%s\n' "$now" "$FM_SM_LIVE_STATE" > "$bound_marker"; then
+          reason="check: secondmate $id auto-relaunch paused after $SECONDMATE_LIVENESS_MAX_ATTEMPTS attempts in ${SECONDMATE_LIVENESS_WINDOW_SECS}s; endpoint still $FM_SM_LIVE_STATE - relaunch it manually or retire the route"
+          notify_key="secondmate-relaunch-bound-$id"
+        else
+          err="relaunch park marker could not be written; endpoint left $FM_SM_LIVE_STATE"
+        fi
+      elif fm_secondmate_liveness_relaunch "$meta" "$id" "$SECONDMATE_LIVENESS_TIMEOUT"; then
+        reason="check: secondmate $id auto-relaunched after $FM_SM_LIVE_CAUSE ($FM_SM_LIVE_WHERE)"
+        notify_key="secondmate-relaunch-$id-$now"
+      elif [ "$FM_SM_LIVE_STATUS" = skipped ]; then
+        err=$FM_SM_LIVE_REASON
+      else
+        reason="check: secondmate $id auto-relaunch failed after $FM_SM_LIVE_CAUSE: $(fm_sm_live_first_line "$FM_SM_LIVE_OUT")"
+        notify_key="secondmate-relaunch-failed-$id-$now"
+      fi
+      ;;
+    alive)
+      if [ -e "$bound_marker" ] || [ -L "$bound_marker" ]; then
+        if ! fm_secondmate_liveness_ledger_add "$id" rearmed; then
+          err="relaunch ledger is unwritable; auto-relaunch stays paused"
+        elif ! rm -f "$bound_marker"; then
+          err="relaunch park marker could not be cleared; auto-relaunch stays paused"
+        else
+          triage_log "secondmate $id live again; auto-relaunch pause cleared"
+        fi
+      fi
+      ;;
+    skipped)
+      triage_log "secondmate $id liveness: $FM_SM_LIVE_REASON"
+      ;;
+  esac
+  if [ -n "$reason" ]; then
+    queued=$(fm_wake_queued_keys check)
+    if printf '%s\n' "$queued" | grep -Fx "$notify_key" >/dev/null 2>&1 \
+      || fm_wake_append check "$notify_key" "$reason"; then
+      printf '%s\n' "$reason"
+    else
+      err="check wake row could not be queued: $reason"
+    fi
+  fi
+  fm_secondmate_liveness_unlock "$id"
+  if [ -n "$err" ]; then
+    echo "watcher: secondmate $id liveness: $err" >&2
+    triage_log "secondmate $id liveness error: $err" || true
+    return 1
+  fi
+  return 0
+} 2>&3
 
 # Consecutive wedge-escalation count for a window past FM_WEDGE_DEMAND_INSPECT_COUNT
 # (default 3): a pane that keeps re-wedging on the SAME stale hash - each
@@ -1881,7 +1886,7 @@ wedge_dead_record() {  # <window> <since-file> <triage-label> <idle-age> <pane-h
   local win=$1 since_file=$2 label=$3 age=$4 hash=$5 task=$6 key marker agent_state detail reason gen id
   key=$(window_key "$win")
   marker="$STATE/.dead-reported-$key"
-  agent_state=$(fm_backend_agent_state "$(window_backend "$win")" "$win" 2>/dev/null) || agent_state=unreadable
+  agent_state=$(watcher_output fm_backend_agent_state "$(window_backend "$win")" "$win" 2>/dev/null) || agent_state=unreadable
   case "$agent_state" in
     dead) detail='the endpoint is still there with no agent running in it' ;;
     missing) detail='the recorded endpoint is gone' ;;
@@ -1961,7 +1966,7 @@ wedge_guard_evidence() {  # <task> <window> -> one guard record on stdout
       triage_log "skipped wedge guard $guard (not a trusted executable owned by this user)"
       continue
     fi
-    out=$(fm_run_timed "$timeout" env "FM_GUARD_TASK=$task" "FM_GUARD_ENDPOINT=$win" \
+    out=$(WATCHER_WAIT_BUDGET="$timeout" watcher_output fm_run_timed "$timeout" env "FM_GUARD_TASK=$task" "FM_GUARD_ENDPOINT=$win" \
       "$guard" --json </dev/null 2>/dev/null) || continue
     verdict=$(printf '%s' "$out" | jq -rs '
       if length == 1 and (.[0] | type) == "object"
@@ -2300,8 +2305,8 @@ wedge_defer_t3code_running() {  # <window> <since-file> <triage-label> <idle-age
   local win=$1 since_file=$2 label=$3 age=$4 turn_age
   [ "$(window_backend "$win")" = t3code ] || return 1
   fm_backend_source t3code || return 1
-  [ "$(fm_backend_t3code_probe "$win")" = running ] || return 1
-  turn_age=$(fm_backend_t3code_turn_age "$win") || return 1
+  [ "$(WATCHER_WAIT_BUDGET=$FM_BACKEND_T3CODE_STATE_BUDGET watcher_output fm_backend_t3code_probe "$win")" = running ] || return 1
+  turn_age=$(WATCHER_WAIT_BUDGET=$FM_BACKEND_T3CODE_STATE_BUDGET watcher_output fm_backend_t3code_turn_age "$win") || return 1
   [ "$turn_age" -lt "$BUSY_TURN_MAX_SECS" ] || return 1
   clear_write_tracking "$(window_key "$win")"
   date +%s > "$since_file"
@@ -2528,7 +2533,7 @@ pause_state_class() {  # <window> <task>
   kind=$(window_kind "$win")
   if [ -e "$STATE/.paused-$key" ] && [ "$(age_of "$recheck_file")" -lt "$STALE_ESCALATE_SECS" ]; then
     if [ "$kind" != secondmate ]; then
-      agent_alive=$(fm_backend_agent_alive "$(window_backend "$win")" "$win" 2>/dev/null) || agent_alive=unknown
+      agent_alive=$(watcher_output fm_backend_agent_alive "$(window_backend "$win")" "$win" 2>/dev/null) || agent_alive=unknown
       if [ "$agent_alive" != dead ]; then
         rm -f "$recheck_file"
         printf 'none'
@@ -2545,7 +2550,7 @@ pause_state_class() {  # <window> <task>
     return
   fi
   if [ "$kind" != secondmate ]; then
-    agent_alive=$(fm_backend_agent_alive "$(window_backend "$win")" "$win" 2>/dev/null) || agent_alive=unknown
+    agent_alive=$(watcher_output fm_backend_agent_alive "$(window_backend "$win")" "$win" 2>/dev/null) || agent_alive=unknown
     if [ "$agent_alive" != dead ]; then
       rm -f "$recheck_file"
       printf 'none'
@@ -2857,13 +2862,13 @@ unknown_alive_stale_bound() {  # <window> <task>
   [ -n "$task" ] || return 1
   meta="$STATE/$task.meta"
   if [ -f "$meta" ]; then
-    verdict=$(fm_busy_classify_meta "$meta" "$task" "$STATE")
+    verdict=$(watcher_output fm_busy_classify_meta "$meta" "$task" "$STATE")
   else
-    verdict=$(fm_busy_classify "$(window_backend "$win")" "$win" "$(window_harness "$win")" \
+    verdict=$(watcher_output fm_busy_classify "$(window_backend "$win")" "$win" "$(window_harness "$win")" \
       "$task" "$STATE")
   fi
   [ "${verdict%% *}" = unknown ] || return 1
-  agent_alive=$(fm_backend_agent_alive "$(window_backend "$win")" "$win" 2>/dev/null) || agent_alive=unknown
+  agent_alive=$(watcher_output fm_backend_agent_alive "$(window_backend "$win")" "$win" 2>/dev/null) || agent_alive=unknown
   [ "$agent_alive" = alive ] || return 1
   unknown_alive_progressing "$task" || return 1
   STALE_WAIT_DECLARATION="unknown-alive:$task:$(window_backend "$win"):$win:$verdict"
@@ -3069,6 +3074,32 @@ watcher_stop_signals() {
   trap 'exit 1' INT
 }
 
+watcher_heartbeat() {
+  [ -n "${WATCHER_PID:-}" ] || return 0
+  local owner_state
+  owner_state=$(ps -o stat= -p "$WATCHER_PID" 2>/dev/null) || return 1
+  case "$owner_state" in *Z*|*T*|'') return 1 ;; esac
+  [ "$(cat "$WATCH_LOCK/pid" 2>/dev/null || true)" = "$WATCHER_PID" ] || return 1
+  touch "$STATE/.last-watcher-beat"
+}
+
+watcher_wait() {
+  local pid=$1 ticks=0 budget=${WATCHER_WAIT_BUDGET:-$CHECK_TIMEOUT} until
+  [ "$budget" -ge "$POLL" ] || budget=$POLL
+  [ "$budget" -ge "$SIGNAL_GRACE" ] || budget=$SIGNAL_GRACE
+  until=$((SECONDS + budget + 1))
+  while kill -0 "$pid" 2>/dev/null; do
+    [ "$SECONDS" -lt "$until" ] || return 124
+    if [ "$ticks" -eq 0 ]; then
+      watcher_heartbeat || true
+    fi
+    ticks=$(((ticks + 1) % 2))
+    sleep 0.1 &
+    wait "$!" || true
+  done
+  wait "$pid"
+}
+
 run_check_capture() {
   local pgid
   fm_check_output_cleanup
@@ -3093,7 +3124,7 @@ run_check_capture() {
     fm_check_output_cleanup
     return 1
   fi
-  wait "$FM_ACTIVE_CHECK_PID" 2>/dev/null || true
+  watcher_wait "$FM_ACTIVE_CHECK_PID" 2>/dev/null || true
   FM_ACTIVE_CHECK_PID=
   fm_active_check_stop || return 1
   FM_CHECK_RESULT=$(cat "$FM_CHECK_OUTPUT" 2>/dev/null || true)
@@ -3138,7 +3169,7 @@ watcher_waited() {  # <command...>
     fm_capture_output_cleanup
     return 2
   fi
-  wait "$FM_ACTIVE_CHECK_PID"
+  watcher_wait "$FM_ACTIVE_CHECK_PID"
   rc=$?
   FM_ACTIVE_CHECK_PID=
   fm_active_check_stop || { fm_capture_output_cleanup; return 2; }
@@ -3147,9 +3178,67 @@ watcher_waited() {  # <command...>
   return "$rc"
 }
 
+watcher_output() {
+  local rc=0 backend=${2:-}
+  if [ "$1" = fm_busy_classify_meta ]; then backend=$(fm_backend_of_meta "$2"); fi
+  if [ "$backend" = t3code ] && fm_backend_source t3code; then
+    WATCHER_WAIT_BUDGET=$FM_BACKEND_T3CODE_STATE_BUDGET watcher_waited "$@" || rc=$?
+  else
+    watcher_waited "$@" || rc=$?
+  fi
+  printf '%s' "$WATCHER_CAPTURE"
+  return "$rc"
+}
+
+watcher_inbox_ring_budget() {
+  if [ "$1" = t3code ]; then
+    fm_backend_source t3code || return 1
+    printf '%s' "$(( $(fm_backend_t3code_ring_budget) + CHECK_TIMEOUT ))"
+  else
+    printf '%s' "$((7 * CHECK_TIMEOUT + 1))"
+  fi
+}
+
+watcher_inbox_ring() {
+  local budget
+  budget=$(watcher_inbox_ring_budget "$1") || return 2
+  WATCHER_WAIT_BUDGET=$budget watcher_waited fm_task_inbox_ring "$@"
+}
+
+watcher_pending_reply_operation() {
+  local budget=$CHECK_TIMEOUT meta backend remote_budget
+  case "$1" in
+    fm_backend_capture)
+      watcher_capture "${@:2}" || return $?
+      printf '%s' "$WATCHER_CAPTURE"
+      return 0
+      ;;
+    fm_pending_reply_send_recovery)
+      meta="$2/$(fm_pending_reply_get "$(fm_pending_reply_path "$2" "$3")" task_id).meta"
+      backend=$(fm_backend_of_meta "$meta")
+      if [ -n "$(fm_meta_get "$meta" remote_host)" ]; then
+        remote_budget=${FM_SEND_REMOTE_BUDGET:-30}
+        case "$remote_budget" in ''|0*|*[!0-9]*) return 2 ;; esac
+        budget=$((3 * remote_budget + CHECK_TIMEOUT))
+      else
+        budget=$(watcher_inbox_ring_budget "$backend") || return 2
+      fi
+      ;;
+    */fm-on.sh)
+      budget=${FM_SEND_REMOTE_BUDGET:-30}
+      case "$budget" in ''|0*|*[!0-9]*) return 2 ;; esac
+      ;;
+  esac
+  WATCHER_WAIT_BUDGET=$budget watcher_output "$@"
+}
+
 # watcher_capture: fm_backend_capture through watcher_waited.
 watcher_capture() {  # <backend> <target> <lines> [expected-label]
-  watcher_waited fm_backend_capture "$@"
+  if [ "$1" = t3code ] && fm_backend_source t3code; then
+    WATCHER_WAIT_BUDGET=$FM_BACKEND_T3CODE_CAPTURE_BUDGET watcher_waited fm_backend_capture "$@"
+  else
+    watcher_waited fm_backend_capture "$@"
+  fi
 }
 
 # The event wait's scratch directory, given to it as TMPDIR. A stop kills the
@@ -3283,7 +3372,7 @@ heartbeat_scan_finds_actionable() {
 # supervision cycle: the reader is a short-lived subprocess of THIS watcher, not
 # a second watcher, so every guard/beacon/arm/turn-end mechanism is unchanged.
 event_wait_or_sleep() {
-  local w b session first_backend="" first_session="" rec rc
+  local w b session first_backend="" first_session="" rec rc capability_budget wait_budget
   local windows=() t3_windows=()
   while IFS= read -r w; do
     b=$(window_backend "$w")
@@ -3316,7 +3405,7 @@ event_wait_or_sleep() {
   fi
 
   if [ "${#windows[@]}" -eq 0 ]; then
-    sleep "$POLL"
+    watcher_waited sleep "$POLL"
     return
   fi
 
@@ -3324,7 +3413,11 @@ event_wait_or_sleep() {
   # read); re-probed only when the backend/session key changes.
   if [ "$_event_cap_key" != "$first_backend:$first_session" ]; then
     _event_cap_key="$first_backend:$first_session"
-    if fm_backend_events_capable "$first_backend" "$first_session"; then
+    capability_budget=$CHECK_TIMEOUT
+    if [ "$first_backend" = t3code ] && fm_backend_source t3code; then
+      capability_budget=$FM_BACKEND_T3CODE_CAPABILITY_BUDGET
+    fi
+    if WATCHER_WAIT_BUDGET=$capability_budget watcher_waited fm_backend_events_capable "$first_backend" "$first_session"; then
       _event_cap_ok=1
     else
       _event_cap_ok=0
@@ -3332,7 +3425,7 @@ event_wait_or_sleep() {
     _event_cap_fails=0
   fi
   if [ "$_event_cap_ok" != 1 ]; then
-    sleep "$POLL"
+    watcher_waited sleep "$POLL"
     return
   fi
 
@@ -3340,7 +3433,11 @@ event_wait_or_sleep() {
   # signal for all of it (watcher_waited).
   fm_wait_tmp_cleanup
   WATCHER_WAIT_TMP=$(mktemp -d "${TMPDIR:-/tmp}/fm-watch-wait.XXXXXX") || WATCHER_WAIT_TMP=
-  TMPDIR=${WATCHER_WAIT_TMP:-${TMPDIR:-/tmp}} FM_BACKEND_EVENTS_CAPABILITY_CONFIRMED=1 watcher_waited \
+  wait_budget=$CHECK_TIMEOUT
+  if [ "$first_backend" = t3code ] && fm_backend_source t3code; then
+    wait_budget=$(fm_backend_t3code_wait_budget "$POLL" "${#windows[@]}")
+  fi
+  TMPDIR=${WATCHER_WAIT_TMP:-${TMPDIR:-/tmp}} FM_BACKEND_EVENTS_CAPABILITY_CONFIRMED=1 WATCHER_WAIT_BUDGET=$wait_budget watcher_waited \
     fm_backend_wait_transition "$first_backend" "$first_session" "$POLL" "$STATE" "${windows[@]}"
   rc=$?
   rec=$WATCHER_CAPTURE
@@ -3350,18 +3447,18 @@ event_wait_or_sleep() {
       _event_cap_fails=0
       handle_push_transition "$first_backend" "$first_session" "$rec"
       ;;
-    2)
+    1)
+      # 1: a clean full-budget wait with no actionable edge - the reader already
+      # blocked ~POLL, so just continue; the next cycle re-scans.
+      _event_cap_fails=0
+      ;;
+    *)
       # Event path unusable this cycle (connect/subscribe failure). Sleep the
       # budget and count toward the runtime-disable threshold; past it, drop to
       # pure polling for the rest of this watcher process.
       _event_cap_fails=$((_event_cap_fails + 1))
       [ "$_event_cap_fails" -ge "$EVENT_CAP_FAIL_MAX" ] && _event_cap_ok=0
-      sleep "$POLL"
-      ;;
-    *)
-      # 1: a clean full-budget wait with no actionable edge - the reader already
-      # blocked ~POLL, so just continue; the next cycle re-scans.
-      _event_cap_fails=0
+      watcher_waited sleep "$POLL"
       ;;
   esac
 }
@@ -3708,17 +3805,17 @@ while :; do
 
   # Opt-in fleet activity ledger (docs/fleet-ledger.md): pick up newly appended
   # status lines before this cycle can exit on a wake. Off costs one file test.
-  [ ! -e "$CONFIG/fleet-ledger" ] || FM_HOME=$FM_HOME FM_STATE_OVERRIDE=$STATE FM_CONFIG_OVERRIDE=$CONFIG "$SCRIPT_DIR/fm-fleet-ledger.sh" capture || true
+  [ ! -e "$CONFIG/fleet-ledger" ] || watcher_output env FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" FM_CONFIG_OVERRIDE="$CONFIG" "$SCRIPT_DIR/fm-fleet-ledger.sh" capture || true
   # Opt-in Herdr project groups (docs/herdr-backend.md "Project groups"):
   # display-only tags and agents view, never a wake. Off costs one file test.
-  [ ! -e "$CONFIG/herdr-project-groups" ] || FM_HOME=$FM_HOME FM_STATE_OVERRIDE=$STATE FM_CONFIG_OVERRIDE=$CONFIG "$SCRIPT_DIR/fm-herdr-groups.sh" sync || true
+  [ ! -e "$CONFIG/herdr-project-groups" ] || watcher_output env FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" FM_CONFIG_OVERRIDE="$CONFIG" "$SCRIPT_DIR/fm-herdr-groups.sh" sync || true
   # Opt-in Rex attention marks, validation progress, and tint (docs/rex-backend.md
   # "Attention marks"): display and desktop notification only, never a wake.
   # Off (no config file and no cached record) costs two file tests and a glob.
   if [ -e "$CONFIG/rex-status-marks" ] || [ -e "$CONFIG/rex-tint" ] \
     || compgen -G "$STATE/.rex-mark-*" >/dev/null || compgen -G "$STATE/.rex-progress-*" >/dev/null \
     || compgen -G "$STATE/.rex-tint-*" >/dev/null; then
-    FM_HOME=$FM_HOME FM_STATE_OVERRIDE=$STATE FM_CONFIG_OVERRIDE=$CONFIG "$SCRIPT_DIR/fm-rex-marks.sh" sync >/dev/null 2>&1 || true
+    watcher_output env FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" FM_CONFIG_OVERRIDE="$CONFIG" "$SCRIPT_DIR/fm-rex-marks.sh" sync >/dev/null 2>&1 || true
   fi
 
   if [ "$(age_of "$STATE/home-summary.json")" -ge "$HOME_SUMMARY_INTERVAL" ]; then
@@ -3740,7 +3837,7 @@ while :; do
   # parent reports, observe backend busy/idle turn completion, send one recovery
   # repost after grace, and escalate once if the recovery turn is also missed.
   # No conversation scraping; unresolved records are never silently expired.
-  fm_pending_reply_tick "$STATE" || true
+  fm_pending_reply_tick "$STATE" watcher_pending_reply_operation >/dev/null || true
 
   open_decision_reminder_tick || {
     echo 'watcher: open-decision reminder check failed' >&2
@@ -3771,7 +3868,10 @@ while :; do
   # only republishes results already captured durably and restarts a source
   # whose owner is gone. It is a no-op with nothing registered.
   if [ -d "$STATE/procevent" ]; then
-    FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-procevent.sh" reconcile >/dev/null 2>&1 || true
+    if procevent_budget=$(fm_procevent_launch_confirm_seconds); then
+      WATCHER_WAIT_BUDGET=$((procevent_budget + CHECK_TIMEOUT)) \
+        watcher_waited env FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-procevent.sh" reconcile >/dev/null 2>&1 || true
+    fi
   fi
   # Then deliver any queued-but-unsurfaced result, including one a runner
   # published while this watcher was between cycles.
@@ -3785,8 +3885,9 @@ while :; do
   # This is mechanical and silent unless a durable terminal-outcome obligation
   # was created, so quiet cycles never wake firstmate or consume model tokens.
   inactive_out=
-  if inactive_out=$(FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" \
-    "$SCRIPT_DIR/fm-inactive-reconcile.sh" scan 2>/dev/null); then
+  if WATCHER_WAIT_BUDGET=31 watcher_waited env FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" \
+    "$SCRIPT_DIR/fm-inactive-reconcile.sh" scan 2>/dev/null; then
+    inactive_out=$WATCHER_CAPTURE
     if [ -n "$inactive_out" ]; then
       wake "check: inactive-outcome"
     fi
@@ -3936,7 +4037,7 @@ EOF
   # signature for an already-pending file (last write wins below).
   pending=$(scan_signals)
   if [ -n "$pending" ]; then
-    sleep "$SIGNAL_GRACE"
+    watcher_waited sleep "$SIGNAL_GRACE"
     pending=$(printf '%s\n%s' "$pending" "$(scan_signals)")
     # The final coalesced signal set is the watcher-carried status-change
     # trigger for this home's published summary. Start it before either
@@ -4357,5 +4458,6 @@ EOF
 
   # Terminal wait: a bounded native-event wait for push-capable homes (herdr, rex),
   # else the blind poll sleep. See event_wait_or_sleep.
+  watcher_heartbeat || true
   event_wait_or_sleep
 done

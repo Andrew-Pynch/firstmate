@@ -466,6 +466,20 @@ fm_backend_t3code_escalation_marker() {  # <state_dir> <thread-id>
   printf '%s/%s%s' "$1" "$FM_BACKEND_T3CODE_ESCALATED_PREFIX" "$(printf '%s' "$2" | tr ':/.' '___')"
 }
 
+FM_BACKEND_T3CODE_CAPABILITY_BUDGET=122
+FM_BACKEND_T3CODE_STATE_BUDGET=$((FM_BACKEND_T3CODE_CAPABILITY_BUDGET + 30))
+FM_BACKEND_T3CODE_CAPTURE_BUDGET=$((FM_BACKEND_T3CODE_STATE_BUDGET + 51 * 30))
+
+fm_backend_t3code_ring_budget() {
+  printf '%s' "$((4 * FM_BACKEND_T3CODE_STATE_BUDGET))"
+}
+
+fm_backend_t3code_wait_budget() {
+  awk -v seconds="$1" -v threads="$2" -v setup="$FM_BACKEND_T3CODE_CAPABILITY_BUDGET" \
+    -v observation="$((FM_BACKEND_T3CODE_CAPTURE_BUDGET - FM_BACKEND_T3CODE_CAPABILITY_BUDGET + 30))" \
+    'BEGIN { whole = int(seconds); if (whole < seconds) whole++; printf "%.0f\n", setup + threads * observation + whole + 15 }'
+}
+
 fm_backend_t3code_events_capable() {  # <session>
   fm_backend_t3code_mcp status >/dev/null 2>&1
 }

@@ -134,6 +134,38 @@ SH
   printf '%s\n' "$fakebin/fm-crew-state.sh"
 }
 
+# Opt-in cycle observation for real-watcher triage tests. Heartbeats now also
+# advance during backend waits, so their mtime cannot prove a scan completed.
+# Preserve touch's behavior and record only the watcher's top-level beacon
+# calls, excluding the watcher_heartbeat helper's in-operation refreshes.
+fm_test_observe_watch_cycles() {
+  # shellcheck disable=SC2329 # Exported for indirect calls in the watcher child.
+  touch() {
+    command touch "$@" || return $?
+    if [ "${FUNCNAME[1]:-}" = main ] \
+      && [ "${BASH_SOURCE[1]##*/}" = fm-watch.sh ] \
+      && [ "$#" -eq 1 ] && [[ "$1" == */.last-watcher-beat ]]; then
+      printf '%s\n' "$$" >> "${1%/*}/.test-watch-cycles"
+    fi
+  }
+  export -f touch
+}
+
+# Two new cycle starts from this watcher prove the intervening scan completed.
+# Match its PID so restarts cannot reuse evidence from a previous watcher.
+fm_test_wait_watch_cycle() {  # <state> <pid> [limit-ticks]
+  local state=$1 pid=$2 limit=${3:-300} before now i=0
+  before=$(grep -c -x "$pid" "$state/.test-watch-cycles" 2>/dev/null) || before=0
+  while [ "$i" -lt "$limit" ]; do
+    kill -0 "$pid" 2>/dev/null || return 1
+    now=$(grep -c -x "$pid" "$state/.test-watch-cycles" 2>/dev/null) || now=0
+    [ "$now" -lt "$((before + 2))" ] || return 0
+    sleep 0.1
+    i=$((i + 1))
+  done
+  return 1
+}
+
 # Prime <file>'s .seen-* marker to its CURRENT signature through the production
 # signature owner (bin/fm-wake-lib.sh), so a test can declare "everything in
 # this file was already surfaced or deliberately absorbed" before exercising
@@ -394,4 +426,25 @@ dead_pid() {
     p=$((p + 1))
   done
   printf '%s\n' "$p"
+}
+
+make_remote_liveness_fixture() {
+  local dir=$1 verdict=$2
+  mkdir -p "$dir/data" "$dir/fakebin" "$dir/remote-home"
+  rm -f "$dir/state/live.meta"
+  printf 'kind=secondmate\nwindow=remote:mate\nremote_host=fixture-host\nremote_backend=herdr\n' > "$dir/state/mate.meta"
+  printf '%s\n' "$verdict" > "$dir/remote-state"
+  printf '%s\n' "- mate - Fixture (host: fixture-host; root: $ROOT; home: $dir/remote-home; scope: fixture; projects: test; added 2026-10-31)" > "$dir/data/secondmates.md"
+  touch "$dir/state/.secondmate-liveness-tick"
+  cat > "$dir/fakebin/ssh" <<'SSH'
+#!/usr/bin/env bash
+python3 - "${!#}" <<'PY'
+import base64, sys
+assert base64.b64decode(sys.argv[1]) == b'fm-remote-secondmate-control.sh\0state\0mate\0'
+PY
+[ "$?" -eq 0 ] || exit 1
+printf 'state mate\n' >> "$FM_HOME/remote-probes.log"
+cat "$FM_HOME/remote-state"
+SSH
+  chmod +x "$dir/fakebin/ssh"
 }

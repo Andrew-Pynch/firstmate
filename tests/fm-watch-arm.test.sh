@@ -826,8 +826,8 @@ test_markerless_legacy_queue_is_recovered_on_arm() {
 
   start_rearm_arm "$home" "$state" "$fakebin" "$dir/arm.out"
   wait_for_exit "$ARM_PID" "$REARM_EXIT_POLLS" || fail "markerless legacy queue was stranded at re-arm"
-  grep -F 'check: rearm-resurface' "$dir/arm.out" >/dev/null \
-    || fail "markerless legacy queue did not trigger recovery"
+  # The stalled-main check can surface this old queue before rearm-resurface.
+  # Assert recovery and delivery below, not which check wins that race.
   case "$(cat "$state/.watcher-down" 2>/dev/null || true)" in
     pending:downtime:*|announced:downtime:*) ;;
     *) fail "markerless legacy queue was not adopted into downtime recovery" ;;
@@ -1956,6 +1956,369 @@ test_append_wakes_handling_successor after-ack malformed
 test_append_wakes_handling_successor before-ack malformed
 test_append_wakes_handling_successor after-ack missing identical
 test_append_wakes_handling_successor after-ack malformed identical
+test_primary_exit_alerts_with_live_work() {
+  local mode=$1 dir state fakebin primary i armout script replacement='' peer='' send_log grace=999999 watcher output
+  local handoff_delay=${2:-0.8} poll=${3:-3} sole=${5:-0}
+  local anchor_pid='' arm_source=${4:-$WATCH_ARM} input=/dev/null alert_started=''
+  dir=$(make_supercase "primary-exit-$mode-$handoff_delay-$poll-$sole")
+  state="$dir/state"
+  fakebin="$dir/fakebin"
+  armout="$dir/arm.out"
+  mkdir -p "$dir/bin"
+  ln -s "$ROOT/bin/backends" "$dir/bin/backends"
+  for script in "$ROOT"/bin/*.sh; do
+    [ "${script##*/}" = fm-telegram-send.sh ] && continue
+    if [ "${script##*/}" = fm-watch-arm.sh ]; then
+      ln -s "$arm_source" "$dir/bin/fm-watch-arm.sh"
+    else
+      ln -s "$script" "$dir/bin/${script##*/}"
+    fi
+  done
+  send_log="$dir/telegram.out"
+  cat > "$dir/bin/fm-telegram-send.sh" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$FM_TEST_TELEGRAM_LOG"
+exit "${FM_TEST_TELEGRAM_FAIL:-0}"
+SH
+  chmod +x "$dir/bin/fm-telegram-send.sh"
+  printf 'window=fixture:0\nbackend=tmux\n' > "$state/live.meta"
+  [ "$mode" != empty ] || rm "$state/live.meta"
+  case "$mode" in
+    remote-*) make_remote_liveness_fixture "$dir" "${mode#remote-}" ;;
+  esac
+  if [ "$mode" = slow-remote ]; then
+    mv "$state/live.meta" "$state/z-worker.meta"
+    make_remote_liveness_fixture "$dir" alive
+    mv "$state/mate.meta" "$state/a-remote.meta"
+    [ "$sole" -eq 0 ] || rm "$state/z-worker.meta"
+    cat > "$fakebin/ssh" <<'SH'
+#!/usr/bin/env bash
+printf 'started\n' > "$FM_HOME/remote-probe-started"
+sleep 20
+exit 255
+SH
+    chmod +x "$fakebin/ssh"
+    printf '%s\n' "- a-remote - Fixture (host: fixture-host; root: $ROOT; home: $dir/remote-home; scope: fixture; projects: test; added 2026-10-31)" > "$dir/data/secondmates.md"
+  fi
+  if [ "$mode" = remote-delayed ]; then
+    printf 'alive\n' > "$dir/remote-state"
+    cat > "$fakebin/ssh" <<'SH'
+#!/usr/bin/env bash
+printf 'started\n' > "$FM_HOME/remote-probe-started"
+sleep 0.8
+printf 'alive\n'
+SH
+    chmod +x "$fakebin/ssh"
+  fi
+  ln -s /bin/sleep "$dir/omp"
+  "$dir/omp" 60 &
+  primary=$!
+  printf '%s\n' "$primary" > "$state/.lock"
+  if [ "$mode" = anchor ]; then
+    "$dir/omp" 60 &
+    anchor_pid=$!
+    printf '%s\n' "$anchor_pid" > "$state/.lock"
+  fi
+  if [ "$mode" = cycle-close ] || [ "$mode" = actionable-gap ] || [ "$mode" = happy ] || [ "$mode" = pipe-close ] || [ "$mode" = contention-pipe-close ]; then grace=0; fi
+  output=$armout
+  if [ "$mode" = pipe ] || [ "$mode" = pipe-close ] || [ "$mode" = contention-pipe-close ]; then
+    output="$dir/arm.pipe"
+    mkfifo "$output"
+    if [ "$mode" = pipe ]; then
+      # Open the read end so launch succeeds, then disappear before readiness.
+      bash -c 'exec 3< "$1"' _ "$output" &
+    else
+      # Consume readiness, then disappear before the external cat of the wake.
+      bash -c 'IFS= read -r line < "$1"; printf "%s\n" "$line" > "$2"' _ "$output" "$armout" &
+    fi
+    peer=$!
+  fi
+  if [ "$mode" = happy ]; then
+    input="$dir/confirmation.pipe"
+    mkfifo "$input"
+    exec 9<> "$input"
+  fi
+  PATH="$fakebin:$PATH" FM_HOME="$dir" FM_ROOT_OVERRIDE="$ROOT" FM_STATE_OVERRIDE="$state" \
+    FM_WATCH_PRIMARY_PID="$primary" FM_POLL="$poll" FM_SIGNAL_GRACE="$grace" \
+    FM_FAKE_TMUX_WINDOW='fixture:fixture' \
+    FM_TEST_TELEGRAM_LOG="$send_log" FM_TEST_TELEGRAM_FAIL="$([ "$mode" = send-failure ] && echo 1 || echo 0)" \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
+    "$dir/bin/fm-watch-arm.sh" < "$input" > "$output" 2> "$armout.err" &
+  ARM_PID=$!
+  i=0
+  while [ "$i" -lt 200 ]; do
+    if [ "$mode" = pipe ]; then
+      [ -e "$state/.last-watcher-beat" ] && break
+    else
+      grep -q '^watcher: started' "$armout" 2>/dev/null && break
+    fi
+    sleep 0.1
+    i=$((i + 1))
+  done
+  if [ "$mode" != pipe ] && ! grep -q '^watcher: started' "$armout"; then
+    kill "$primary" "$ARM_PID" 2>/dev/null || true
+    fail "primary-exit arm did not start: $(cat "$armout")"
+  fi
+  if [ "$mode" = attached ]; then
+    PATH="$fakebin:$PATH" FM_HOME="$dir" FM_STATE_OVERRIDE="$state" \
+      FM_WATCH_PRIMARY_PID="$primary" FM_POLL="$poll" FM_SIGNAL_GRACE=999999 \
+      FM_FAKE_TMUX_WINDOW='fixture:fixture' \
+      FM_TEST_TELEGRAM_LOG="$send_log" \
+      FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
+      "$dir/bin/fm-watch-arm.sh" > "$dir/peer.out" 2>&1 &
+    peer=$!
+    wait_for_file_text "$dir/peer.out" 'watcher: attached' \
+      || fail "second primary monitor did not attach"
+  fi
+  if [ "$mode" = contention ] || [ "$mode" = queue-contention ] || [ "$mode" = contention-pipe-close ]; then
+    local held_lock="$state/.primary-loss-alert.lock"
+    [ "$mode" != queue-contention ] || held_lock="$state/.wake-queue.lock"
+    bash -c '. "$1"; fm_lock_acquire_wait "$2"; touch "$3"; sleep 60' _ \
+      "$ROOT/bin/fm-wake-lib.sh" "$held_lock" "$dir/alert-lock-ready" &
+    peer=$!
+    i=0
+    while [ "$i" -lt 100 ] && [ ! -e "$dir/alert-lock-ready" ]; do
+      sleep 0.1
+      i=$((i + 1))
+    done
+    [ -e "$dir/alert-lock-ready" ] || fail "dedupe lock fixture did not acquire its lock"
+  fi
+  if [ "$mode" = cycle-close ] || [ "$mode" = actionable-gap ] || [ "$mode" = happy ] || [ "$mode" = pipe-close ] || [ "$mode" = contention-pipe-close ]; then
+    watcher=$(cat "$state/.watch.lock/pid")
+    kill -STOP "$ARM_PID"
+    printf 'done: fixture completed while primary was alive\n' > "$state/live.status"
+    i=0
+    while [ "$i" -lt 100 ] && is_live_non_zombie "$watcher"; do
+      sleep 0.1
+      i=$((i + 1))
+    done
+    if is_live_non_zombie "$watcher" \
+      || ! grep -q 'live.status' "$state/.wake-queue" 2>/dev/null; then
+      kill -CONT "$ARM_PID"
+      kill "$primary" "$ARM_PID" 2>/dev/null || true
+      fail "cycle-close fixture did not complete its actionable watcher cycle"
+    fi
+    if [ "$mode" = happy ]; then
+      kill -CONT "$ARM_PID"
+      wait_for_file_text "$armout" 'watcher: awaiting-successor' \
+        || fail "the finishing arm did not request a successor"
+      sleep "$((poll + 1))"
+      is_live_non_zombie "$ARM_PID" || fail "the finishing arm exited before confirmation"
+      PATH="$fakebin:$PATH" FM_HOME="$dir" FM_STATE_OVERRIDE="$state" \
+        FM_WATCH_PRIMARY_PID="$primary" FM_POLL="$poll" FM_SIGNAL_GRACE=999999 \
+        FM_FAKE_TMUX_WINDOW='fixture:fixture' FM_WATCH_PREDECESSOR_ARM_PID="$ARM_PID" \
+        FM_TEST_TELEGRAM_LOG="$send_log" FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
+        "$dir/bin/fm-watch-arm.sh" --restart > "$dir/replacement.out" 2>&1 &
+      replacement=$!
+      wait_for_file_text "$dir/replacement.out" 'watcher: started' \
+        || fail "the successor did not become ready"
+      printf 'successor-ready\n' >&9
+      exec 9>&-
+      wait_for_exit "$ARM_PID" 50 || fail "the confirmed arm did not retire"
+      wait "$ARM_PID" || fail "a live primary's actionable close failed"
+      grep -q '^signal:' "$armout" || fail "the live primary lost its actionable output"
+      ! grep -q 'primary-supervision-lost' "$state/.wake-queue" \
+        || fail "a live primary's ordinary close was misreported as an outage"
+      [ ! -s "$send_log" ] || fail "an ordinary actionable close sent an outage message"
+      kill "$replacement"
+      wait "$replacement" 2>/dev/null || true
+      kill "$primary"
+      wait "$primary" 2>/dev/null || true
+      pass "watch-arm: a live primary receives the completed cycle without an outage alert"
+      return
+    fi
+  fi
+  if [ "$mode" = actionable-gap ]; then
+    kill -CONT "$ARM_PID"
+    wait_for_file_text "$armout" 'signal:' || fail "the finishing arm did not publish its wake"
+    python3 - "$primary" "$poll" "$send_log" "$state/.wake-queue" <<'PYTEST' || fail "primary loss in the successor window was not alerted within one poll"
+import os
+from pathlib import Path
+import signal
+import sys
+import time
+primary, poll, send_log, queue = sys.argv[1:]
+started = time.monotonic()
+os.kill(int(primary), signal.SIGTERM)
+while time.monotonic() - started < float(poll):
+    if all(Path(p).exists() and 'primary-supervision-lost' in Path(p).read_text() for p in (send_log, queue)):
+        break
+    time.sleep(0.02)
+else:
+    raise SystemExit('missing external or durable alert before the poll deadline')
+PYTEST
+    wait "$primary" 2>/dev/null || true
+    wait_for_exit "$ARM_PID" 50
+    expect_code 1 "$?" "the alerting predecessor must exit with primary-loss status"
+    [ "$(wc -l < "$send_log" | tr -d '[:space:]')" -eq 1 ] || fail "successor-window loss sent duplicate alerts"
+    FM_HOME="$dir" FM_STATE_OVERRIDE="$state" "$DRAIN" > "$dir/drain.out" 2>/dev/null
+    grep -q 'primary-supervision-lost' "$dir/drain.out" || fail "the successor-window alert was not drainable"
+    pass "watch-arm: primary loss after actionable output alerts within one poll before successor confirmation"
+    return
+  fi
+  if [ "$mode" = slow-remote ] || [ "$mode" = remote-delayed ]; then
+    alert_started=$(python3 -c 'import time; print(time.monotonic())')
+  fi
+  if [ "$mode" != handoff ] && [ "$mode" != handoff-new ] && [ "$mode" != orphaned ] && [ "$mode" != pipe-close ] && [ "$mode" != remote-delayed ]; then
+    kill "$primary"
+    wait "$primary" 2>/dev/null || true
+  fi
+  if [ "$mode" = cycle-close ] || [ "$mode" = pipe-close ] || [ "$mode" = contention-pipe-close ]; then
+    kill -CONT "$ARM_PID"
+  elif [ "$mode" != crash ] && [ "$mode" != slow-remote ] && [ "$mode" != pipe ] && [ "$mode" != anchor ] && [ "$mode" != contention ] && [ "$mode" != queue-contention ]; then
+    # omp shutdown retires the arm before its process disappears.
+    kill -HUP "$ARM_PID"
+    if [ "$mode" = two-hup ]; then
+      sleep 0.2
+      kill -HUP "$ARM_PID"
+    fi
+  fi
+  if [ "$mode" = handoff ] || [ "$mode" = handoff-new ]; then
+    # Exercise both delayed and immediate replacement, including short polls.
+    [ "$handoff_delay" = 0 ] || sleep "$handoff_delay"
+    if [ "$mode" = handoff-new ]; then
+      kill "$primary"
+      wait "$primary" 2>/dev/null || true
+      "$dir/omp" 60 &
+      primary=$!
+      printf '%s\n' "$primary" > "$state/.lock"
+    fi
+    PATH="$fakebin:$PATH" FM_HOME="$dir" FM_STATE_OVERRIDE="$state" \
+      FM_WATCH_PRIMARY_PID="$primary" FM_POLL="$poll" FM_SIGNAL_GRACE=999999 \
+      FM_FAKE_TMUX_WINDOW='fixture:fixture' \
+      FM_WATCH_PREDECESSOR_ARM_PID="$ARM_PID" \
+      FM_TEST_TELEGRAM_LOG="$send_log" \
+      FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
+      "$dir/bin/fm-watch-arm.sh" --restart > "$dir/replacement.out" 2>&1 &
+    replacement=$!
+  fi
+  if [ "$mode" = empty ] || [ "$mode" = remote-dead ] || [ "$mode" = remote-missing ] || [ "$mode" = remote-stopped ] || [ "$mode" = handoff ] || [ "$mode" = handoff-new ]; then
+    wait_for_exit "$ARM_PID" 100
+    ! grep -q 'primary-supervision-lost' "$state/.wake-queue" 2>/dev/null \
+      || fail "a $mode shutdown incorrectly alarmed"
+    [ ! -s "$send_log" ] || fail "a $mode shutdown sent a Telegram alarm"
+    [ -z "$replacement" ] || kill "$replacement" 2>/dev/null || true
+    [ -z "$replacement" ] || wait "$replacement" 2>/dev/null || true
+    [ "$mode" = empty ] || kill "$primary" 2>/dev/null || true
+    [ "$mode" = empty ] || wait "$primary" 2>/dev/null || true
+    pass "watch-arm: $mode shutdown does not report lost supervision"
+    return
+  fi
+  if [ "$mode" = queue-contention ]; then
+    i=0
+    while [ "$i" -lt 40 ] && [ ! -s "$send_log" ]; do
+      sleep 0.1
+      i=$((i + 1))
+    done
+    if [ ! -s "$send_log" ]; then
+      kill "$peer" "$ARM_PID" 2>/dev/null || true
+      fail "a held wake-queue lock suppressed the independent Telegram alert"
+    fi
+    kill "$peer" 2>/dev/null || true
+    wait "$peer" 2>/dev/null || true
+    peer=''
+  fi
+  i=0
+  while [ "$i" -lt 40 ]; do
+    grep -q 'primary-supervision-lost' "$state/.wake-queue" 2>/dev/null && break
+    sleep 0.1
+    i=$((i + 1))
+  done
+  if ! grep -q 'primary-supervision-lost' "$state/.wake-queue" 2>/dev/null; then
+    kill "$ARM_PID" 2>/dev/null || true
+    wait "$ARM_PID" 2>/dev/null || true
+    fail "dead primary with live work left no durable alert within one poll"
+  fi
+  if [ "$mode" = slow-remote ] || [ "$mode" = remote-delayed ]; then
+    [ -e "$dir/remote-probe-started" ] || fail 'slow remote probe never started'
+    python3 - "$alert_started" "$poll" <<'PY' || fail 'slow remote exceeded one poll before alerting'
+import sys, time
+assert time.monotonic()-float(sys.argv[1]) < float(sys.argv[2])
+PY
+  fi
+  wait "$ARM_PID" 2>/dev/null || true
+  if [ "$mode" = contention ] || [ "$mode" = contention-pipe-close ]; then
+    kill "$peer" 2>/dev/null || true
+    grep -q 'alert dedupe lock unavailable' "$state/.wake-queue" \
+      || fail "dedupe contention did not leave a durable alert"
+  fi
+  if [ -n "$anchor_pid" ]; then
+    kill "$anchor_pid" 2>/dev/null || true
+    wait "$anchor_pid" 2>/dev/null || true
+  fi
+  [ -z "$peer" ] || wait "$peer" 2>/dev/null || true
+  grep -q 'primary-supervision-lost' "$send_log" \
+    || fail "primary loss did not reach the Telegram sender"
+  [ "$(wc -l < "$send_log" | tr -d '[:space:]')" -eq 1 ] \
+    || fail "concurrent primary monitors sent duplicate Telegram alerts"
+  if [ "$mode" = orphaned ] || [ "$mode" = pipe-close ] || [ "$mode" = remote-delayed ]; then
+    kill "$primary"
+    wait "$primary" 2>/dev/null || true
+  fi
+  if [ "$mode" = send-failure ]; then
+    grep -q 'Telegram delivery failed' "$state/.wake-queue" \
+      || fail "sender failure did not remain visible to the next session"
+  fi
+  FM_HOME="$dir" FM_STATE_OVERRIDE="$state" "$DRAIN" > "$dir/drain.out" 2>/dev/null
+  grep -q 'primary-supervision-lost' "$dir/drain.out" \
+    || fail "the next session drain did not present the primary-loss alert"
+  pass "watch-arm: primary $mode with live work alerts within one poll and survives until drain"
+}
+
+test_primary_identity_failure_is_named_without_an_outage_alert() {
+  local dir out rc
+  dir=$(make_case primary-identity-failure)
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$dir/fakebin/ps"
+  chmod +x "$dir/fakebin/ps"
+  out=$(PATH="$dir/fakebin:$PATH" FM_HOME="$dir" FM_STATE_OVERRIDE="$dir/state" \
+    FM_PROC_ROOT_OVERRIDE="$dir/no-proc" FM_WATCH_PRIMARY_PID="$$" "$WATCH_ARM" 2>&1)
+  rc=$?
+  expect_code 1 "$rc" "an unprovable primary identity must refuse monitoring"
+  assert_contains "$out" 'cannot establish primary process identity' \
+    "identity failure did not name its cause"
+  [ ! -s "$dir/state/.wake-queue" ] || fail "identity-read failure reported a dead primary"
+  pass "watch-arm: unreadable primary identity refuses by name without a false outage alert"
+  dir=$(make_case primary-anchor-failure)
+  out=$(FM_HOME="$dir" FM_STATE_OVERRIDE="$dir/state" FM_WATCH_PRIMARY_PID="$$" "$WATCH_ARM" 2>&1)
+  rc=$?
+  expect_code 1 "$rc" "an unreadable primary anchor must refuse monitoring"
+  assert_contains "$out" 'cannot establish live primary session anchor' \
+    "anchor failure did not name its cause"
+  [ ! -e "$dir/state/.last-watcher-beat" ] || fail "unknown anchor still started a watcher"
+  pass "watch-arm: unknown initial session anchor refuses before launching a watcher"
+}
+
+test_primary_exit_alerts_with_live_work contention-pipe-close
+test_primary_exit_alerts_with_live_work handoff 0 2
+test_primary_exit_alerts_with_live_work handoff-new 0 2
+test_primary_exit_alerts_with_live_work handoff 0.8 2
+test_primary_exit_alerts_with_live_work queue-contention
+test_primary_exit_alerts_with_live_work happy
+test_primary_exit_alerts_with_live_work actionable-gap
+test_primary_exit_alerts_with_live_work anchor
+test_primary_exit_alerts_with_live_work contention
+test_primary_exit_alerts_with_live_work pipe
+test_primary_exit_alerts_with_live_work pipe-close
+test_primary_exit_alerts_with_live_work two-hup
+test_primary_exit_alerts_with_live_work cycle-close
+test_primary_exit_alerts_with_live_work shutdown
+test_primary_exit_alerts_with_live_work handoff-new
+test_primary_exit_alerts_with_live_work orphaned
+test_primary_exit_alerts_with_live_work send-failure
+test_primary_exit_alerts_with_live_work crash
+test_primary_exit_alerts_with_live_work empty
+test_primary_exit_alerts_with_live_work remote-alive
+test_primary_exit_alerts_with_live_work remote-delayed
+test_primary_exit_alerts_with_live_work slow-remote
+test_primary_exit_alerts_with_live_work slow-remote 0.8 3 "$WATCH_ARM" 1
+test_primary_exit_alerts_with_live_work remote-unknown
+test_primary_exit_alerts_with_live_work slow-remote 0.8 1
+test_primary_exit_alerts_with_live_work remote-dead
+test_primary_exit_alerts_with_live_work remote-missing
+test_primary_exit_alerts_with_live_work remote-stopped
+test_primary_exit_alerts_with_live_work handoff
+test_primary_exit_alerts_with_live_work attached
+test_primary_identity_failure_is_named_without_an_outage_alert
 test_attached_arm_reports_the_delivered_wake
 test_attached_arm_reports_the_delivered_wake_after_drain
 test_arm_refuses_an_unusable_launch_confirm_window

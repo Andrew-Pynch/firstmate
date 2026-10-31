@@ -54,7 +54,8 @@
 # wrapper for a required tool it can discover under nvm, asdf, or mise. It never
 # installs packages, creates a login session, writes an auto-login password,
 # changes FileVault, stores an account password, or replaces a non-Firstmate
-# wrapper; those remain reported gaps.
+# wrapper; those remain reported gaps. On Linux it also checks this FM_HOME's
+# independent supervision timer and installs its user units under --fix.
 set -eu
 
 # Resolve this script's directory with builtins only: a host missing a required
@@ -996,6 +997,17 @@ for tool in "${OPTIONAL_TOOLS[@]}"; do
     printf 'optional %s=absent\n' "$tool"
   fi
 done
+
+if [ "$PLATFORM" = linux ] && [ -x "$FM_ROOT/bin/fm-supervision-health.sh" ]; then
+  if [ "$MODE" = fix ]; then
+    FM_HOME="${FM_HOME:-$FM_ROOT}" "$FM_ROOT/bin/fm-supervision-health.sh" install || true
+  fi
+  if health_detail=$(FM_HOME="${FM_HOME:-$FM_ROOT}" "$FM_ROOT/bin/fm-supervision-health.sh" doctor 2>&1); then
+    record supervision-health "ok: $health_detail"
+  else
+    record supervision-health "fixable: $health_detail" "$FM_ROOT/bin/fm-supervision-health.sh install"
+  fi
+fi
 
 GAPS=()
 i=0

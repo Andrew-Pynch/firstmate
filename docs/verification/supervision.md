@@ -573,6 +573,46 @@ grok 0.2.103 (89c3d36fb6f1) [stable]
 | omp | `FM_OMP_LIVE_E2E=1 tests/fm-omp-primary-live-e2e.test.sh` | One initial `fm_watch_arm_omp` invocation (the openai-codex model reaches extension tools through omp's `xd://` virtual-file bridge, a `write` to `xd://fm_watch_arm_omp`, counted as the same invocation) started a live watcher; an actionable close spawned a ledger-linked successor and woke main exactly once; the lab is reaped by path, and omp 18.1.11 did not exit within 30s of its rpc stdin closing, recorded as a note. omp 18.1.11, 2026-09-05. |
 | Grok | `FM_GROK_LIVE_E2E=1 tests/fm-grok-continuity-live-e2e.test.sh` | Native task completion surfaced the actionable close and the cycle ledger recorded `reason=actionable-signal`. |
 
+On 2026-10-29, omp 18.11.0 supervised an isolated live tmux endpoint through its real RPC session and `/fm-watch-arm-omp`.
+SIGKILL reached the durable `primary-supervision-lost` alert and the actual Telegram sender with a private fake transport in 0.151 seconds with `FM_POLL=2`.
+Closing RPC stdin exercised the installed runtime's normal session disposal and independently started the actual sender while recording the durable alert; both outputs arrived in 1.754 seconds, with omp exiting zero.
+These smoke tests did not contact the external Telegram service.
+`bin/fm-test-run.sh tests/fm-watch-arm.test.sh tests/fm-watcher-lock.test.sh` covers primary shutdown and abrupt loss, immediate and delayed replacement at a two-second poll, single-attempt delivery under contention and output-reader loss, empty-home suppression, and next-drain persistence.
+`tests/fm-omp-harness.test.sh` also passed with the host's real omp ancestor outside the detector's eight-parent window.
+The actionable-close regressions in these suites cover primary loss after reason publication and hold the predecessor open until successor readiness is explicitly confirmed.
+The [independent health check](../watcher-continuity.md#independent-supervision-health) extends coverage to supervision-host mode and shutdown during successor retry.
+`tests/fm-supervision-health.test.sh` checks incident recovery, quiet healthy windows, installation, and diagnosis; the lifecycle cases in `tests/fm-omp-harness.test.sh` exercise host shutdown, the actionable-close window, and shutdown during retry backoff against the independent command.
+On 2026-10-31, `bash tests/fm-supervision-health.test.sh` passed in a private Linux fixture, and isolated invocations of the three lifecycle cases each observed the durable alert and sender invocation within a three-second poll.
+The installed systemd 262.1 parser accepted the generated units, and a bounded smoke executed their exact `ExecStart` command against a fake backend and sender transport.
+Installation and doctor control calls used a private systemctl fixture; no real user-manager timer activation was performed, so live timer scheduling and activation remain unverified.
+No real Herdr lifecycle, browser, or external Telegram service was used.
+
+`bash tests/fm-supervision-health.test.sh` runs the real watcher at `FM_POLL=2` through ordinary cycles and a registered five-second check, then kills it and requires the queued alert and sender invocation within two seconds.
+It also runs the emitted service command through missing credentials and a hung sender, checking the poll-duration failure floor, persistent diagnostics, and exactly one send attempt.
+The isolated unit/parser smoke retains the real-manager activation limitation above.
+The queue-lock regressions hold the real queue lock through the initial send attempt, release it, and prove that later checks publish exactly one outage row while preserving failed or uncertain transport diagnostics and never repeating the send.
+The real-watcher recovery case starts a twenty-second fake secondmate relaunch with `FM_POLL=2` and an ordinary check timeout of two seconds, observes healthy suppression during recovery, then kills the watcher and requires the durable alert and sender invocation within two seconds.
+These tests use isolated metadata and fake backend/launch commands, without a live secondmate lifecycle.
+Focused existing liveness cases also pass for multiple recoveries before one wake, a failed relaunch, and a per-mate ledger error that retains stderr and does not prevent later recovery.
+The health suite also exercises a real twenty-second process-event launch-confirmation window, a slow first T3 endpoint beside a live local endpoint, and remote-only work through a fake scoped SSH transport.
+It requires healthy suppression during confirmation and an alert within a two-second poll after watcher death.
+The remote cases require an alert for `alive` and unknown results, with `dead`, `missing`, and `stopped` remaining quiet; focused arm tests cover the same states through the shared endpoint predicate.
+Sole-endpoint regressions require a timed-out T3 probe and a timed-out remote probe to alert through the independent check and arm respectively, while a definitive T3 missing result stays quiet.
+All remote and T3 transport in these cases is fake, with no server or remote mutation.
+The ownership regression runs a real supervision host and watcher under an isolated harness process, kills that primary while the watcher still updates its beacon, and requires an outage within one poll.
+The same suite covers a twenty-second fake T3 capability response with a two-second ordinary check budget, requiring healthy suppression during the request and a bounded alert after watcher death.
+Its capture regression runs the real MCP helper against an isolated HTTP fixture with two sequential twenty-second thread-read replies, requires the returned activity text, and checks that the actual watcher stays healthy before detecting its death.
+The sourced watcher-function regression exercises both verified wedge reads against delayed HTTP replies, checks that an expired owned wait terminates, and requires a bounded alert after the reader dies.
+The pending-reply regression observes two successful twenty-second RPCs through the actual watcher before checking recovery of both that record and a later record.
+Its stuck-operation case bounds observation and recovery separately, retains uncertain recovery state, and proves later-record progress and an alert after watcher death.
+The native-event regression replaces an approval ID behind identical rendered text, delays environment verification and thread reading by twenty seconds each, and requires a fresh durable wake and request signature.
+A separate forced-deadline case requires consecutive event failures to disable the fast path while the owning watcher remains healthy; both cases require an outage alert after owner death.
+Doorbell cases exercise ordinary and retry delivery through the real watcher plus the secondmate drain-ring function, retaining health during a delayed fake T3 operation and detecting owner death afterward.
+Recovery-delivery cases run the real `fm-send.sh` path with reduced operation budgets, require all four backend operations to finish before confirmation, and preserve uncertain recovery when the final send stalls past the bound.
+The arm regression uses a sole remote endpoint whose fake reply takes 0.8 seconds, requires publication within `FM_POLL=3`, and retains delayed healthy-replacement suppression at short polls.
+The arm regressions place a delayed remote endpoint before a live local one and require notification within both one-second and three-second poll intervals.
+The three omp lifecycle-gap cases continue to pass, including shutdown without primary-process exit; the generated-service smoke retains the real-manager activation limit above.
+
 Pi 0.81.1 repeated the continuity and clean-exit lifecycle on 2026-07-23 after the Calm presentation changes.
 
 Pi 0.86.1 repeated the isolated watcher-only live check on 2026-09-22:

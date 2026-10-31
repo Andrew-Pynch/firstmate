@@ -1280,6 +1280,35 @@ fm_backend_target_exists() {  # <backend> <target> [expected-label]
   esac
 }
 
+fm_backend_recorded_target_exists() {
+  local meta=$1 target backend remote_host remote_state id
+  [ -f "$meta" ] && [ ! -L "$meta" ] || return 1
+  target=$(fm_backend_target_of_meta "$meta") || return 1
+  [ -n "$target" ] || return 1
+  id=${meta##*/}
+  id=${id%.meta}
+  remote_host=$(fm_meta_get "$meta" remote_host)
+  if [ -n "$remote_host" ]; then
+    remote_state=$(FM_HOME="$FM_HOME" "$FM_BACKEND_LIB_DIR/fm-on.sh" "$id" \
+      fm-remote-secondmate-control.sh state "$id" < /dev/null 2>/dev/null) || return 2
+    case "$(printf '%s\n' "$remote_state" | tail -1)" in
+      alive) return 0 ;;
+      dead|missing|stopped) return 1 ;;
+      *) return 2 ;;
+    esac
+  fi
+  backend=$(fm_backend_of_meta "$meta")
+  if [ "$backend" = t3code ]; then
+    fm_backend_source t3code || return 2
+    case "$(fm_backend_t3code_agent_state "$target")" in
+      alive|dead) return 0 ;;
+      missing) return 1 ;;
+      *) return 2 ;;
+    esac
+  fi
+  fm_backend_target_exists "${backend:-tmux}" "$target" "fm-$id"
+}
+
 # fm_backend_agent_state: the single recovery-grade agent/endpoint state
 # contract. It is deliberately richer than fm_backend_target_exists's cheap
 # pane-presence read and prints exactly one of:

@@ -157,6 +157,8 @@
 #          restore a tangled primary checkout itself, while an unlocked one is
 #          told to leave that work to the lock holder. Unset/0 (the default)
 #          keeps detect-only meaning unlocked, exactly as before.
+#        fm-bootstrap.sh doctor supervision-health
+#          Inspect this Linux home's independent listener-health timer.
 #        fm-bootstrap.sh install <tool>...
 #          Install the named tools (only ones the captain approved).
 #        fm-bootstrap.sh lavish-compatible
@@ -861,6 +863,10 @@ secondmate_handoff_detect() {
 
 install_cmd() {
   case "$1" in
+    supervision-health)
+      printf 'FM_HOME=%q FM_ROOT_OVERRIDE=%q FM_STATE_OVERRIDE=%q FM_CONFIG_OVERRIDE=%q %q install\n' \
+        "$FM_HOME" "$FM_ROOT" "$STATE" "$CONFIG" "$SCRIPT_DIR/fm-supervision-health.sh"
+      ;;
     tmux|node|git|gh|curl|jq|orca|zellij) echo "brew install $1  # or the platform's package manager" ;;
     cmux) echo "brew install --cask cmux  # or see https://cmux.com" ;;
     treehouse) echo "curl -fsSL https://kunchenguid.github.io/treehouse/install.sh | sh" ;;
@@ -1441,6 +1447,11 @@ if [ "${1:-}" = "lavish-reply-compatible" ]; then
   exit 2
 fi
 
+if [ "${1:-}" = doctor ] && [ "${2:-}" = supervision-health ]; then
+  exec env "FM_HOME=$FM_HOME" "FM_ROOT_OVERRIDE=$FM_ROOT" "FM_STATE_OVERRIDE=$STATE" \
+    "FM_CONFIG_OVERRIDE=$CONFIG" "$SCRIPT_DIR/fm-supervision-health.sh" doctor
+fi
+
 if [ "${1:-}" = "install" ]; then
   shift
   [ $# -gt 0 ] || { echo "usage: fm-bootstrap.sh install <tool>..." >&2; exit 1; }
@@ -1452,7 +1463,7 @@ if [ "${1:-}" = "install" ]; then
     fi
     cmd=${cmd%%  #*}
     echo "installing $t: $cmd"
-    eval "$cmd"
+    eval "$cmd" || exit $?
   done
   exit 0
 fi
@@ -1514,6 +1525,12 @@ fi
 # Local detection: presence, version floors, and configuration. Nothing here
 # leaves this machine, so it stays on the session-start critical path.
 detect_local_tools() {
+  if [ "$(uname -s)" = Linux ] && [ -x "$FM_ROOT/bin/fm-supervision-health.sh" ]; then
+    if ! health_detail=$(FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" FM_CONFIG_OVERRIDE="$CONFIG" \
+      "$FM_ROOT/bin/fm-supervision-health.sh" doctor 2>&1); then
+      printf 'MISSING: supervision-health (install: %s; reason: %s)\n' "$(install_cmd supervision-health)" "$health_detail"
+    fi
+  fi
   if [ "$BACKEND_VALID" -eq 0 ]; then
     echo "BACKEND_INVALID: $BACKEND (known: $FM_BACKEND_KNOWN)"
   fi

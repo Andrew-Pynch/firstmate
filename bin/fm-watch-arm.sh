@@ -60,6 +60,29 @@
 # state/.watch-triage.log remains exclusively the watcher's absorbed-wake debug
 # log and is never written here.
 #
+# An omp arm receives FM_WATCH_PRIMARY_PID. It checks that process identity
+# while waiting, so an abruptly lost primary cannot leave an unread cycle.
+# On omp's shutdown HUP, this same arm retires its watcher, then allows
+# FM_POLL minus half a second for replacement and endpoint probes.
+# Cleanup and alert-lock contention can delay notification beyond one poll;
+# sender completion can also extend the arm's lifetime beyond that window.
+# Without a healthy successor and with a recorded live endpoint it starts the
+# Telegram send independently and queues primary-supervision-lost for the next
+# drain, so queue-lock contention cannot suppress the external alert.
+# A lost output pipe also alerts, even before readiness can be reported.
+# Sender failure adds a durable delivery-failure row so missing Telegram
+# configuration is visible at the next drain without delaying the first alert.
+# state/.primary-loss-alert records an incident under its sibling .lock, shared
+# with the independent listener-health check, until supervision resumes.
+# An unprovable initial primary identity refuses by name before arming.
+# Replacement proof compares the current canonical session anchor to the one
+# captured at launch, so an outer harness wrapper is never its own successor.
+# Dedupe-lock contention is bounded to one second and cannot suppress the alert.
+# Other harnesses and explicit TERM/INT retirement keep their existing lifetime.
+# After an actionable cycle, watcher: awaiting-successor asks the omp adapter
+# to start its successor while this arm keeps checking the primary. The adapter
+# writes successor-ready to stdin only after verifying readiness; then this arm exits.
+#
 # --restart: stop ONLY this FM_HOME's watcher (the pid recorded in THIS home's
 # state/.watch.lock) and own a fresh cycle, or attach if a verified live peer
 # wins the singleton while the duplicate child stands down. It
@@ -171,6 +194,178 @@ ARM_PID=${BASHPID:-$$}
 case "$CYCLE_LOG_MAX_BYTES" in ''|*[!0-9]*|0) CYCLE_LOG_MAX_BYTES=262144 ;; esac
 case "$CYCLE_LOG_KEEP_LINES" in ''|*[!0-9]*|0) CYCLE_LOG_KEEP_LINES=1000 ;; esac
 
+PRIMARY_PID=${FM_WATCH_PRIMARY_PID:-}
+PRIMARY_IDENTITY=
+PRIMARY_LOCK_PID=
+PRIMARY_BACKEND_LOADED=0
+PRIMARY_ALERTED=0
+if [ -n "$PRIMARY_PID" ]; then
+  case "$PRIMARY_PID" in
+    *[!0-9]*|0|1)
+      echo "watcher: FAILED - invalid FM_WATCH_PRIMARY_PID" >&2
+      exit 1
+      ;;
+  esac
+  PRIMARY_IDENTITY=$(fm_pid_identity "$PRIMARY_PID" 2>/dev/null || true)
+  if [ -z "$PRIMARY_IDENTITY" ]; then
+    echo "watcher: FAILED - cannot establish primary process identity for pid $PRIMARY_PID" >&2
+    exit 1
+  fi
+  # The session anchor can be an outer harness, not the omp process itself.
+  # Snapshot it once so that same anchor cannot masquerade as a replacement.
+  # shellcheck source=/dev/null
+  . "$SCRIPT_DIR/fm-session-lock-lib.sh"
+  fm_session_lock_inspect "$STATE"
+  if [ "$FM_LOCK_INSPECT_STATE" != held ]; then
+    echo "watcher: FAILED - cannot establish live primary session anchor" >&2
+    exit 1
+  fi
+  PRIMARY_LOCK_PID=$FM_LOCK_INSPECT_PID
+fi
+PRIMARY_ALERT_LOCK="$STATE/.primary-loss-alert.lock"
+PRIMARY_ALERT_MARKER="$STATE/.primary-loss-alert"
+
+primary_monitor_started() {
+  [ -n "$PRIMARY_PID" ] || return 0
+  fm_lock_try_acquire "$PRIMARY_ALERT_LOCK" || return 0
+  rm -f "$PRIMARY_ALERT_MARKER"
+  fm_lock_release "$PRIMARY_ALERT_LOCK"
+}
+
+primary_alive() {
+  [ -n "$PRIMARY_IDENTITY" ] && fm_pid_alive "$PRIMARY_PID" \
+    && [ "$(fm_pid_identity "$PRIMARY_PID" 2>/dev/null || true)" = "$PRIMARY_IDENTITY" ]
+}
+
+replacement_primary_alive() {
+  [ -n "$PRIMARY_PID" ] || return 1
+  fm_session_lock_inspect "$STATE"
+  [ "$FM_LOCK_INSPECT_STATE" = held ] && [ "$FM_LOCK_INSPECT_PID" != "$PRIMARY_LOCK_PID" ]
+}
+
+primary_send_alert() {
+  [ -x "$SCRIPT_DIR/fm-telegram-send.sh" ] || return 127
+  FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" \
+    "$SCRIPT_DIR/fm-telegram-send.sh" "$1" >/dev/null 2>&1
+}
+
+# Only recorded endpoints in this home count. The backend owner keeps this
+# passive and scoped on every supported backend; no shared inventory scan.
+primary_loss_alert() {
+  local meta reason alert_locked=0 sender_pid sender_status=0 queue_status=0
+  local probe_result probe_budget probe_status pid pending live=0 handoff_timer=${1:-}
+  local -a probes=()
+  [ "$PRIMARY_ALERTED" -eq 0 ] || return 0
+  if healthy_watcher && replacement_primary_alive; then return 0; fi
+  if [ "$PRIMARY_BACKEND_LOADED" -eq 0 ]; then
+    # shellcheck source=/dev/null
+    . "$SCRIPT_DIR/fm-backend.sh"
+    PRIMARY_BACKEND_LOADED=1
+  fi
+  _fm_wake_require_timeout || return 1
+  probe_result=$(mktemp "$STATE/.primary-loss-probe.XXXXXX") || return 1
+  probe_budget=$(awk -v poll="${FM_POLL:-15}" 'BEGIN { n=int(poll/3); if (n<1) n=1; if (n>5) n=5; print n }')
+  for meta in "$STATE"/*.meta; do
+    [ -f "$meta" ] && [ ! -L "$meta" ] || continue
+    (
+      probe_status=0
+      # shellcheck disable=SC2016 # The child bash expands its own positional parameters.
+      fm_run_timed "$probe_budget" env FM_HOME="$FM_HOME" FM_ROOT_OVERRIDE="$FM_ROOT" \
+        FM_STATE_OVERRIDE="$STATE" bash -c '. "$1"; fm_backend_recorded_target_exists "$2"' \
+        _ "$SCRIPT_DIR/fm-backend.sh" "$meta" >/dev/null 2>&1 || probe_status=$?
+      [ "$probe_status" -eq 1 ] || printf x >> "$probe_result"
+    ) &
+    probes+=("$!")
+  done
+  while :; do
+    if [ -s "$probe_result" ]; then live=1; break; fi
+    pending=0
+    for pid in ${probes[@]+"${probes[@]}"}; do
+      if kill -0 "$pid" 2>/dev/null; then pending=1; fi
+    done
+    [ "$pending" -eq 1 ] || break
+    if [ -n "$handoff_timer" ] && ! fm_pid_alive "$handoff_timer"; then live=1; break; fi
+    sleep 0.02 &
+    wait "$!" || true
+  done
+  for pid in ${probes[@]+"${probes[@]}"}; do kill -TERM "$pid" 2>/dev/null || true; done
+  rm -f "$probe_result"
+  if [ "$live" -ne 1 ]; then
+    for pid in ${probes[@]+"${probes[@]}"}; do wait "$pid" 2>/dev/null || true; done
+    return 0
+  fi
+  if [ -n "$handoff_timer" ]; then
+    while fm_pid_alive "$handoff_timer"; do
+      if healthy_watcher && { primary_alive || replacement_primary_alive; }; then
+        for pid in ${probes[@]+"${probes[@]}"}; do wait "$pid" 2>/dev/null || true; done
+        return 0
+      fi
+      sleep 0.02
+    done
+    if healthy_watcher && { primary_alive || replacement_primary_alive; }; then return 0; fi
+  fi
+  reason="check: primary-supervision-lost: primary supervision stopped without a healthy replacement while work is still live; restart firstmate to resume supervision"
+  if fm_lock_acquire_wait_max "$PRIMARY_ALERT_LOCK" 1; then
+    if [ -s "$PRIMARY_ALERT_MARKER" ]; then
+      fm_lock_release "$PRIMARY_ALERT_LOCK"
+      PRIMARY_ALERTED=1
+      return 0
+    fi
+    alert_locked=1
+  else
+    reason="$reason (alert dedupe lock unavailable)"
+  fi
+  # A live queue-lock holder must not prevent the independent alert channel
+  # from seeing primary loss. This bounded sender remains our waited child.
+  PRIMARY_ALERTED=1
+  primary_send_alert "$reason" &
+  sender_pid=$!
+  fm_wake_append check primary-supervision-lost "$reason" || queue_status=1
+  if [ "$alert_locked" -eq 1 ]; then
+    if [ "$queue_status" -eq 0 ]; then
+      printf '%s\n' "$PRIMARY_PID:$PRIMARY_IDENTITY" > "$PRIMARY_ALERT_MARKER" || queue_status=1
+    fi
+    fm_lock_release "$PRIMARY_ALERT_LOCK"
+  fi
+  wait "$sender_pid" || sender_status=$?
+  for pid in ${probes[@]+"${probes[@]}"}; do wait "$pid" 2>/dev/null || true; done
+  [ "$queue_status" -eq 0 ] || return 1
+  case "$sender_status" in
+    0) ;;
+    127) fm_wake_append check primary-supervision-lost "$reason (Telegram sender unavailable)" || return 1 ;;
+    *) fm_wake_append check primary-supervision-lost "$reason (Telegram delivery failed)" || return 1 ;;
+  esac
+  return 0
+}
+
+primary_actionable_handoff() {
+  [ -n "$PRIMARY_PID" ] || return 0
+  local confirmation
+  printf 'watcher: awaiting-successor\n'
+  while :; do
+    if ! primary_alive; then
+      primary_loss_alert
+      return 1
+    fi
+    if IFS= read -r -t "$ATTACH_POLL" confirmation && [ "$confirmation" = successor-ready ]; then
+      return 0
+    fi
+    sleep 0.1 &
+    wait "$!" || true
+  done
+}
+
+primary_shutdown_handoff() {
+  local timer poll=${FM_POLL:-15}
+  case "$poll" in ''|*[!0-9]*|0) poll=15 ;; esac
+  local rc=0
+  sleep "$((poll - 1)).5" &
+  timer=$!
+  primary_loss_alert "$timer" || rc=$?
+  kill "$timer" 2>/dev/null || true
+  wait "$timer" 2>/dev/null || true
+  return "$rc"
+}
 # Lifecycle writes are bounded and best-effort so an observability failure
 # cannot stall an otherwise healthy watcher cycle. Take-over also uses the
 # owner's row as stop evidence; missing evidence takes the safe recovery path
@@ -450,6 +645,11 @@ attach_and_wait() {
       fail_arm_ground_gone
       return 1
     fi
+    if [ -n "$PRIMARY_PID" ] && ! primary_alive; then
+      if healthy_watcher && replacement_primary_alive; then return 0; fi
+      primary_loss_alert
+      return 1
+    fi
     if healthy_watcher; then
       if [ "$HEALTHY_PID" != "$attached_pid" ] || [ "$HEALTHY_IDENTITY" != "$cycle_watcher_identity" ]; then
         cycle_log_append unknown unknown lock-replaced "attached:$HEALTHY_PID"
@@ -483,7 +683,8 @@ attach_and_wait() {
     fi
     if close_unobserved_cycle; then
       cycle_log_append unknown unknown attached-delivered-wake none
-      return 0
+      primary_actionable_handoff
+      return $?
     fi
     cycle_log_append unknown unknown attached-cycle-ended none
     return 1
@@ -521,7 +722,10 @@ watch_output_reason_type() {
 
 print_watch_output() {
   local out=$1
-  [ -s "$out" ] && cat "$out"
+  if [ -s "$out" ] && ! cat "$out"; then
+    [ -z "$PRIMARY_PID" ] || handle_arm_signal PIPE 141
+    return 1
+  fi
 }
 
 handling_successor_generation() {
@@ -698,7 +902,11 @@ cleanup_child() {
 # shellcheck disable=SC2329 # Invoked indirectly by the signal traps below.
 handle_arm_signal() {
   local signal=$1 rc=$2
-  trap - HUP TERM INT
+  trap - HUP TERM INT PIPE
+  trap '' HUP PIPE
+  if { [ "$signal" = HUP ] || [ "$signal" = PIPE ]; } && [ -n "$PRIMARY_PID" ]; then
+    exec >/dev/null 2>&1
+  fi
   if [ -n "$child" ] && fm_pid_alive "$child"; then
     # The watcher installs its own cleanup traps only after acquiring and
     # publishing the home-bound lock identity. Do not TERM it in the middle of
@@ -717,12 +925,19 @@ handle_arm_signal() {
   fi
   cycle_log_append "$rc" "$signal" arm-interrupted none
   cleanup_child
+  if [ -n "$PRIMARY_PID" ]; then
+    case "$signal" in
+      HUP) primary_shutdown_handoff ;;
+      PIPE) primary_loss_alert ;;
+    esac
+  fi
   exit "$rc"
 }
 
 trap 'handle_arm_signal HUP 129' HUP
 trap 'handle_arm_signal TERM 143' TERM
 trap 'handle_arm_signal INT 130' INT
+[ -z "$PRIMARY_PID" ] || trap 'handle_arm_signal PIPE 141' PIPE
 
 child_out=$(mktemp "$STATE/.watch-arm-output.XXXXXX") || {
   echo "watcher: FAILED - no live watcher with a fresh beacon"
@@ -743,6 +958,17 @@ child_done=0
 owned_child_finished() {
   local rc=$1 signal reason_type status
   signal=$(cycle_signal_name "$rc")
+  # The primary can disappear after the watcher exits but before this arm
+  # observes that close. A completed cycle still needs a live reader.
+  if [ -n "$PRIMARY_PID" ] && ! primary_alive; then
+    primary_loss_alert
+    cycle_log_append "$rc" "$signal" primary-session-lost none
+    print_watch_output "$child_out"
+    rm -f "$child_out" 2>/dev/null || true
+    child=
+    child_out=
+    return 1
+  fi
   if [ "$rc" -eq 0 ] && watch_output_has_wake "$child_out"; then
     reason_type=$(watch_output_reason_type "$child_out")
     cycle_log_append "$rc" "$signal" "$reason_type" none
@@ -750,7 +976,8 @@ owned_child_finished() {
     rm -f "$child_out" 2>/dev/null || true
     child=
     child_out=
-    return 0
+    primary_actionable_handoff
+    return $?
   fi
 
   if [ "$rc" -eq 0 ]; then
@@ -776,7 +1003,8 @@ owned_child_finished() {
     fi
     if close_unobserved_cycle; then
       cycle_log_append "$rc" "$signal" clean-exit-delivered-wake none
-      return 0
+      primary_actionable_handoff
+      return $?
     fi
     cycle_log_append "$rc" "$signal" unexpected-clean-exit none
     return 1
@@ -821,10 +1049,32 @@ while :; do
       fi
       cycle_mark_predecessor_successor "started:$child"
       [ "$TAKEN_OVER" -eq 0 ] || cycle_mark_predecessor_successor "started:$child" "$ARM_PID"
+      primary_monitor_started || exit 1
       if [ -n "$handling_generation" ]; then
         echo "watcher: started pid=$child (beacon fresh) recovery-generation=$handling_generation"
       else
         echo "watcher: started pid=$child (beacon fresh)"
+      fi
+      if [ -n "$PRIMARY_PID" ]; then
+        while fm_pid_alive "$child"; do
+          if ! primary_alive; then
+            if healthy_watcher && [ "$HEALTHY_PID" != "$child" ] && replacement_primary_alive; then
+              cleanup_child
+              wait "$child" 2>/dev/null || true
+              cycle_log_append 0 none primary-replaced "attached:$HEALTHY_PID"
+              child=
+              child_out=
+              exit 0
+            fi
+            cleanup_child
+            wait "$child" 2>/dev/null || true
+            primary_loss_alert
+            cycle_log_append 1 none primary-session-lost none
+            exit 1
+          fi
+          sleep "$ATTACH_POLL" &
+          wait "$!" || true
+        done
       fi
       wait "$child"
       rc=$?

@@ -310,7 +310,16 @@ SH
 #!/usr/bin/env bash
 exit 0
 SH
-  chmod +x "$CASE_BIN/uname" "$CASE_BIN/launchctl" "$CASE_BIN/dscl" "$CASE_BIN/tasks-axi" "$CASE_BIN/treehouse" "$CASE_BIN/claude"
+  cat > "$CASE_BIN/systemctl" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$FM_HOME/systemctl.log"
+case "$*" in
+  *is-enabled*) echo enabled ;;
+  *is-active*) echo active ;;
+  *show*) echo success ;;
+esac
+SH
+  chmod +x "$CASE_BIN/systemctl" "$CASE_BIN/uname" "$CASE_BIN/launchctl" "$CASE_BIN/dscl" "$CASE_BIN/tasks-axi" "$CASE_BIN/treehouse" "$CASE_BIN/claude"
 }
 
 # doctor [args...] -> runs the real doctor against the current fixture,
@@ -320,6 +329,7 @@ doctor() {
   DOCTOR_OUT=$(
     HOME="$CASE_HOME" \
     FM_HOME="$CASE_PROJECT_HOME" \
+    FM_SUPERVISION_UNIT_DIR="$CASE_HOME/.config/systemd/user" \
     PATH="$CASE_HOME/.local/bin:$CASE_BIN:$BASE_PATH" \
     FM_FAKE_STATE="$CASE_STATE" \
     FM_FAKE_LAUNCHCTL_LOG="$CASE_LAUNCHCTL_LOG" \
@@ -801,6 +811,8 @@ doctor --fix
 expect_code 0 "$DOCTOR_RC" "--fix did not start the herdr server on linux: $DOCTOR_OUT"
 assert_contains "$DOCTOR_OUT" 'fix herdr-server=applied:' "--fix did not report starting the server"
 assert_contains "$DOCTOR_OUT" 'check herdr-server=ok:' "the started server was not confirmed by the re-check"
+assert_contains "$DOCTOR_OUT" 'check supervision-health=ok:' "the independent timer was not confirmed"
+assert_grep 'enable --now firstmate-supervision-health-' "$CASE_PROJECT_HOME/systemctl.log" "doctor did not enable the fixture timer"
 [ ! -s "$CASE_LAUNCHCTL_LOG" ] || fail "the linux path invoked launchctl"
 pass "a non-darwin host skips launch agents and starts its herdr server directly"
 

@@ -17,10 +17,10 @@
 //     main has already drained, or a status file cleanup has since removed,
 //     never reaches main again. Losing an owed one across a session
 //     replacement is still worse than repeating it.
-//   - Replacement shutdown retires the established predecessor arm before the
-//     successor arms; unlike Pi, it is not retained until a distinct active
-//     successor generation commits its own arm, so omp keeps the plain
-//     teardown-and-rearm replacement shape.
+//   - Replacement shutdown sends HUP to a plain arm, retiring its watcher
+//     without waiting for the arm's bounded primary-loss handoff before the
+//     successor starts. A supervision host receives TERM and is awaited.
+//     bin/fm-watch-arm.sh owns the plain arm's shutdown grace and alert contract.
 //   - The Pi supervision branch is out of scope for omp: every actionable wake
 //     is delivered to main, so no branch offer is made and no calm presentation
 //     hooks exist.
@@ -219,6 +219,7 @@ type ReplacementCoordinator = {
   // the counter naming generations; see "Session-generation ownership" above.
   activeGeneration?: SessionGeneration | null;
   nextGenerationId?: number;
+  awaitingSuccessors?: Map<string, ChildProcess>;
   // Watcher-wake texts already judged at a model request, mapped to the text
   // the model reads instead, or null to keep the original; see "Stalled alarms".
   stallDecisions?: Map<string, string | null>;
@@ -241,6 +242,7 @@ function replacementCoordinatorFor(handoff: string): ReplacementCoordinator {
   return created;
 }
 const replacementCoordinator = replacementCoordinatorFor(actionableHandoff);
+const awaitingSuccessors = replacementCoordinator.awaitingSuccessors ??= new Map<string, ChildProcess>();
 const armReadiness = new WeakMap<ChildProcess, Promise<boolean>>();
 const armClose = new WeakMap<ChildProcess, Promise<void>>();
 // Children the extension itself asked to exit; their close is not a failure
@@ -627,7 +629,11 @@ function stopGeneration(generation: SessionGeneration): ChildProcess | null {
   generation.retryTimer = null;
   generation.cleanupTimer = null;
   const child = generation.child;
-  if (child) child.kill("SIGTERM");
+  // HUP retires the cycle but lets the existing arm cover a missing successor.
+  if (child) {
+    child.kill(armHostMode.get(child) ? "SIGTERM" : "SIGHUP");
+    child.unref();
+  }
   generation.child = null;
   return child;
 }
@@ -665,7 +671,9 @@ async function stopSessionGeneration(generation: SessionGeneration, replacement:
     throw error;
   } finally {
     const child = stopGeneration(generation);
-    await waitForGenerationChildClose(child);
+    // Plain arms retain only the bounded shutdown handoff. Waiting for that
+    // handoff here would delay the successor that is supposed to satisfy it.
+    if (child && armHostMode.get(child)) await waitForGenerationChildClose(child);
   }
   const currentTokens = generation.pendingActionables.map((pending) => pending.token).join("\n");
   if (replacement && currentTokens && currentTokens !== persistedTokens) {
@@ -1040,6 +1048,7 @@ export default function (pi: ExtensionAPI) {
       const replacement = startArm(owner, predecessorArmPid);
       const successorChild = owner.child;
       if (replacement.ok && successorChild && await waitForReadiness(successorChild)) {
+        awaitingSuccessors.get(predecessorArmPid)?.stdin?.end("successor-ready\n");
         return { failure: "", recovery: armRecovery.get(successorChild) };
       }
       if (replacement.ok) {
@@ -1115,6 +1124,7 @@ export default function (pi: ExtensionAPI) {
       FM_HOME: fmHome,
       FM_ROOT_OVERRIDE: fmRoot,
       FM_CONFIG_OVERRIDE: config,
+      FM_WATCH_PRIMARY_PID: hostMode ? "" : String(process.pid),
       FM_WATCH_ARM_SCRIPT: hostMode ? hostScript : armScript,
       FM_WATCH_PREDECESSOR_ARM_PID: predecessorArmPid,
     };
@@ -1123,8 +1133,9 @@ export default function (pi: ExtensionAPI) {
     const armChild = spawn("bash", ["-lc", `config_dir="\${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"; [ -f "$config_dir/x-mode.env" ] && . "$config_dir/x-mode.env"; ${command}`], {
       cwd: fmRoot,
       env,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: [hostMode ? "ignore" : "pipe", "pipe", "pipe"],
     });
+    armChild.stdin?.on("error", () => {});
     armHostMode.set(armChild, hostMode);
     owner.child = armChild;
     let stdout = "";
@@ -1162,6 +1173,14 @@ export default function (pi: ExtensionAPI) {
         armPendingActionable.set(armChild, pending);
         enqueuePendingActionable(owner, pending);
       }
+      const predecessor = String(armChild.pid ?? "");
+      if (reason && /^watcher: awaiting-successor$/m.test(combined) && !awaitingSuccessors.has(predecessor)) {
+        awaitingSuccessors.set(predecessor, armChild);
+        settleReadiness(false);
+        releaseChild();
+        owner.retryFailures = 0;
+        void processPendingActionables(owner);
+      }
     };
     const releaseChild = (): void => {
       if (owner.child === armChild) owner.child = null;
@@ -1182,6 +1201,7 @@ export default function (pi: ExtensionAPI) {
       releaseChild();
       const classification = classifyClose(hostMode, stdout, stderr, code, signal);
       const predecessor = String(armChild.pid ?? "");
+      if (awaitingSuccessors.delete(predecessor)) return;
       if (classification.kind === "actionable") {
         const pending = armPendingActionable.get(armChild) ?? createPendingActionable(classification.message, predecessor);
         enqueuePendingActionable(owner, pending);

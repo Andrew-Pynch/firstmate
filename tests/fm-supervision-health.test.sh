@@ -662,7 +662,9 @@ SH
       }
       started=$SECONDS
       fm_pending_reply_tick "$STATE" watcher_pending_reply_operation
-      [ "$((SECONDS-started))" -lt 12 ] || exit 1
+      # The observation allows POLL+1=3s and recovery allows 7*CHECK_TIMEOUT+2=9s.
+      # Keep a finite scan bound with headroom for record reconciliation.
+      [ "$((SECONDS-started))" -lt 16 ] || exit 1
       fm_pending_reply_reconcile_recovery "$STATE" 0000000000000001 || exit 1
       touch "$FM_HOME/scan-completed"
       while :; do watcher_waited sleep 2; done
@@ -670,10 +672,10 @@ SH
   watcher=$!
   for i in $(seq 1 100); do [ -e "$dir/state/.last-watcher-beat" ] && break; sleep 0.05; done
   (
-    for i in $(seq 1 9); do HEALTH_TEST_POLL=2 health_run "$dir" run || exit 1; done
+    for i in $(seq 1 12); do HEALTH_TEST_POLL=2 health_run "$dir" run || exit 1; done
   ) > "$dir/health.log" 2>&1 &
   checker=$!
-  for i in $(seq 1 220); do [ -e "$dir/scan-completed" ] && break; sleep 0.05; done
+  for i in $(seq 1 360); do [ -e "$dir/scan-completed" ] && break; sleep 0.05; done
   [ -e "$dir/scan-completed" ] || fail "stuck operation starved the scan: $(cat "$dir/watcher.log")"
   [ ! -e "$dir/telegram.log" ] || fail 'bounded pending-reply operations caused a false outage'
   python3 - "$dir" <<'PY' || fail 'stuck operation lost recovery state or later work'

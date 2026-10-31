@@ -43,17 +43,12 @@ def live_work():
         while probes:
             for process, deadline in probes[:]:
                 status = process.poll()
-                if status == 0:
+                if status is not None and status != 1:
                     return True
                 if status is not None:
                     probes.remove((process, deadline))
                 elif time.monotonic() >= deadline:
-                    try:
-                        os.killpg(process.pid, signal.SIGKILL)
-                    except ProcessLookupError:
-                        pass
-                    process.wait()
-                    probes.remove((process, deadline))
+                    return True
             if probes:
                 time.sleep(0.01)
         return False

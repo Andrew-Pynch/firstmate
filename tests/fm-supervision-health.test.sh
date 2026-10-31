@@ -487,26 +487,28 @@ PY
 
 test_health_remote_work() {
   local verdict dir
-  for verdict in alive dead missing stopped; do
+  for verdict in alive unknown dead missing stopped; do
     dir=$(health_fixture "remote-$verdict")
     make_remote_liveness_fixture "$dir" "$verdict"
     health_run "$dir" check >/dev/null || fail "remote $verdict probe failed"
     [ -s "$dir/remote-probes.log" ] || fail 'recorded remote endpoint was probed locally'
-    if [ "$verdict" = alive ]; then
+    if [ "$verdict" = alive ] || [ "$verdict" = unknown ]; then
       [ "$(grep -c primary-supervision-lost "$dir/state/.wake-queue")" -eq 1 ] || fail 'remote-only live work did not queue its outage'
       [ "$(wc -l < "$dir/telegram.log")" -eq 1 ] || fail 'remote-only live work did not alert'
     else
       [ ! -e "$dir/telegram.log" ] || fail "remote $verdict endpoint raised an outage"
     fi
   done
-  pass 'supervision-health: remote-only live work alerts; dead, missing and stopped endpoints stay quiet'
+  pass 'supervision-health: live or unknown remote work alerts; absent endpoints stay quiet'
 }
 
 test_health_slow_endpoint() {
-  local dir checker
-  dir=$(health_fixture slow-endpoint)
+  local mode=${1:-mixed} dir checker started
+  dir=$(health_fixture "slow-endpoint-$mode")
   mv "$dir/state/live.meta" "$dir/state/z-live.meta"
+  [ "$mode" = mixed ] || rm "$dir/state/z-live.meta"
   printf 'backend=t3code\nwindow=unavailable-thread\n' > "$dir/state/a-slow.meta"
+  printf '%s\n' "$mode" > "$dir/probe-mode"
   mv "$dir/fakebin/tmux" "$dir/fakebin/tmux-base"
   cat > "$dir/fakebin/tmux" <<'SH'
 #!/usr/bin/env bash
@@ -516,19 +518,37 @@ SH
   cat > "$dir/fakebin/node" <<'SH'
 #!/usr/bin/env bash
 case "$*" in
-  *fm-t3-mcp.mjs*) touch "$FM_HOME/slow-probe-started"; sleep 20; exit 1 ;;
+  *fm-t3-mcp.mjs*)
+    touch "$FM_HOME/slow-probe-started"
+    case "$(cat "$FM_HOME/probe-mode")" in
+      unknown) printf '{"ok":false}\n' ;;
+      missing) printf '{"ok":true,"exists":false}\n' ;;
+      *) sleep 20; exit 1 ;;
+    esac
+    exit 0 ;;
 esac
 exec "$FM_REAL_NODE" "$@"
 SH
   chmod +x "$dir/fakebin/node" "$dir/fakebin/tmux"
-  FM_REAL_NODE=$(command -v node) HEALTH_TEST_POLL=3 health_run "$dir" run > "$dir/health.log" 2>&1 &
+  started=$(python3 -c 'import time; print(time.monotonic())')
+  FM_REAL_NODE=$(command -v node) HEALTH_TEST_POLL=3 health_run "$dir" check > "$dir/health.log" 2>&1 &
   checker=$!
-  for _ in $(seq 1 100); do [ -e "$dir/telegram.log" ] && break; sleep 0.02; done
-  [ -e "$dir/slow-probe-started" ] || fail 'slow backend fixture did not run'
-  [ -e "$dir/telegram.log" ] || fail "slow first endpoint starved later live work: $(cat "$dir/health.log")"
   wait "$checker" || fail 'slow-endpoint check failed'
+  [ -e "$dir/slow-probe-started" ] || fail 'slow backend fixture did not run'
+  if [ "$mode" = missing ]; then
+    [ ! -e "$dir/telegram.log" ] || fail 'definitively missing endpoint raised an outage'
+    [ ! -s "$dir/state/.wake-queue" ] || fail 'definitively missing endpoint queued an outage'
+    pass 'supervision-health: definitively missing sole endpoint stays quiet'
+    return
+  fi
+  [ -e "$dir/telegram.log" ] || fail "slow first endpoint starved later live work: $(cat "$dir/health.log")"
+  python3 - "$started" <<'PY' || fail 'endpoint outage exceeded one poll'
+import sys, time
+assert time.monotonic() - float(sys.argv[1]) < 3
+PY
   [ "$(grep -c primary-supervision-lost "$dir/state/.wake-queue")" -eq 1 ] || fail 'slow-endpoint outage not queued once'
-  pass 'supervision-health: slow first endpoint cannot starve a later live endpoint'
+  [ "$(wc -l < "$dir/telegram.log")" -eq 1 ] || fail 'endpoint outage sent duplicate alerts'
+  pass "supervision-health: $mode endpoint uncertainty cannot suppress an outage"
 }
 
 test_health_bootstrap_default_home() {
@@ -961,6 +981,9 @@ test_health_real_recovery_delivery stuck
 test_health_wedge_reads
 test_health_orphan_host
 test_health_slow_endpoint
+test_health_slow_endpoint sole
+test_health_slow_endpoint unknown
+test_health_slow_endpoint missing
 test_health_remote_work
 test_health_queue_retry missing
 test_health_queue_retry hang

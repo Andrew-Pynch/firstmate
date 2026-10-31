@@ -1290,11 +1290,22 @@ fm_backend_recorded_target_exists() {
   remote_host=$(fm_meta_get "$meta" remote_host)
   if [ -n "$remote_host" ]; then
     remote_state=$(FM_HOME="$FM_HOME" "$FM_BACKEND_LIB_DIR/fm-on.sh" "$id" \
-      fm-remote-secondmate-control.sh state "$id" < /dev/null 2>/dev/null) || return 1
-    [ "$(printf '%s\n' "$remote_state" | tail -1)" = alive ]
-    return $?
+      fm-remote-secondmate-control.sh state "$id" < /dev/null 2>/dev/null) || return 2
+    case "$(printf '%s\n' "$remote_state" | tail -1)" in
+      alive) return 0 ;;
+      dead|missing|stopped) return 1 ;;
+      *) return 2 ;;
+    esac
   fi
   backend=$(fm_backend_of_meta "$meta")
+  if [ "$backend" = t3code ]; then
+    fm_backend_source t3code || return 2
+    case "$(fm_backend_t3code_agent_state "$target")" in
+      alive|dead) return 0 ;;
+      missing) return 1 ;;
+      *) return 2 ;;
+    esac
+  fi
   fm_backend_target_exists "${backend:-tmux}" "$target" "fm-$id"
 }
 

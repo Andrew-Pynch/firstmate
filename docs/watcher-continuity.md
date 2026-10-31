@@ -100,7 +100,8 @@ A fresh check-in clears the incident, permitting another alert after a later out
 The incident marker is shared with the arm's fast-path alert to avoid duplicate notifications.
 Recorded remote secondmates use the existing scoped remote state command; only its `alive` verdict counts as live work.
 The independent check and arm run endpoint probes concurrently with individual deadlines, so an unavailable backend cannot prevent another recorded endpoint from triggering the alert.
-No live endpoints means no alert.
+Timed-out or unknown endpoint results count as live work for this alert decision; only definitively absent endpoints stay quiet.
+Arm cleanup and alert-lock contention can delay shutdown notification beyond one poll interval.
 
 Each oneshot watches the freshness deadline for one poll interval, with separately bounded endpoint and notification I/O; the timer starts the next window after it exits.
 This avoids adding a full timer interval after a stale deadline.

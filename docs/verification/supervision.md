@@ -599,7 +599,8 @@ These tests use isolated metadata and fake backend/launch commands, without a li
 Focused existing liveness cases also pass for multiple recoveries before one wake, a failed relaunch, and a per-mate ledger error that retains stderr and does not prevent later recovery.
 The health suite also exercises a real twenty-second process-event launch-confirmation window, a slow first T3 endpoint beside a live local endpoint, and remote-only work through a fake scoped SSH transport.
 It requires healthy suppression during confirmation and an alert within a two-second poll after watcher death.
-The remote cases require an alert only for `alive`, with `dead`, `missing`, and `stopped` remaining quiet; focused arm tests cover the same states through the shared endpoint predicate.
+The remote cases require an alert for `alive` and unknown results, with `dead`, `missing`, and `stopped` remaining quiet; focused arm tests cover the same states through the shared endpoint predicate.
+Sole-endpoint regressions require a timed-out T3 probe and a timed-out remote probe to alert through the independent check and arm respectively, while a definitive T3 missing result stays quiet.
 All remote and T3 transport in these cases is fake, with no server or remote mutation.
 The ownership regression runs a real supervision host and watcher under an isolated harness process, kills that primary while the watcher still updates its beacon, and requires an outage within one poll.
 The same suite covers a twenty-second fake T3 capability response with a two-second ordinary check budget, requiring healthy suppression during the request and a bounded alert after watcher death.

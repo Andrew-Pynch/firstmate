@@ -251,7 +251,7 @@ primary_send_alert() {
 # passive and scoped on every supported backend; no shared inventory scan.
 primary_loss_alert() {
   local meta reason alert_locked=0 sender_pid sender_status=0 queue_status=0
-  local probe_result probe_budget pid pending live=0 handoff_timer=${1:-}
+  local probe_result probe_budget probe_status pid pending live=0 handoff_timer=${1:-}
   local -a probes=()
   [ "$PRIMARY_ALERTED" -eq 0 ] || return 0
   if healthy_watcher && replacement_primary_alive; then return 0; fi
@@ -266,11 +266,11 @@ primary_loss_alert() {
   for meta in "$STATE"/*.meta; do
     [ -f "$meta" ] && [ ! -L "$meta" ] || continue
     (
-      if fm_run_timed "$probe_budget" env FM_HOME="$FM_HOME" FM_ROOT_OVERRIDE="$FM_ROOT" \
+      probe_status=0
+      fm_run_timed "$probe_budget" env FM_HOME="$FM_HOME" FM_ROOT_OVERRIDE="$FM_ROOT" \
         FM_STATE_OVERRIDE="$STATE" bash -c '. "$1"; fm_backend_recorded_target_exists "$2"' \
-        _ "$SCRIPT_DIR/fm-backend.sh" "$meta" >/dev/null 2>&1; then
-        printf x >> "$probe_result"
-      fi
+        _ "$SCRIPT_DIR/fm-backend.sh" "$meta" >/dev/null 2>&1 || probe_status=$?
+      [ "$probe_status" -eq 1 ] || printf x >> "$probe_result"
     ) &
     probes+=("$!")
   done
@@ -281,7 +281,7 @@ primary_loss_alert() {
       if kill -0 "$pid" 2>/dev/null; then pending=1; fi
     done
     [ "$pending" -eq 1 ] || break
-    if [ -n "$handoff_timer" ] && ! fm_pid_alive "$handoff_timer"; then break; fi
+    if [ -n "$handoff_timer" ] && ! fm_pid_alive "$handoff_timer"; then live=1; break; fi
     sleep 0.02 &
     wait "$!" || true
   done

@@ -1958,9 +1958,9 @@ test_append_wakes_handling_successor after-ack missing identical
 test_append_wakes_handling_successor after-ack malformed identical
 test_primary_exit_alerts_with_live_work() {
   local mode=$1 dir state fakebin primary i armout script replacement='' peer='' send_log grace=999999 watcher output
-  local handoff_delay=${2:-0.8} poll=${3:-3}
+  local handoff_delay=${2:-0.8} poll=${3:-3} sole=${5:-0}
   local anchor_pid='' arm_source=${4:-$WATCH_ARM} input=/dev/null alert_started=''
-  dir=$(make_supercase "primary-exit-$mode-$handoff_delay-$poll")
+  dir=$(make_supercase "primary-exit-$mode-$handoff_delay-$poll-$sole")
   state="$dir/state"
   fakebin="$dir/fakebin"
   armout="$dir/arm.out"
@@ -1990,6 +1990,7 @@ SH
     mv "$state/live.meta" "$state/z-worker.meta"
     make_remote_liveness_fixture "$dir" alive
     mv "$state/mate.meta" "$state/a-remote.meta"
+    [ "$sole" -eq 0 ] || rm "$state/z-worker.meta"
     cat > "$fakebin/ssh" <<'SH'
 #!/usr/bin/env bash
 printf 'started\n' > "$FM_HOME/remote-probe-started"
@@ -2309,6 +2310,8 @@ test_primary_exit_alerts_with_live_work empty
 test_primary_exit_alerts_with_live_work remote-alive
 test_primary_exit_alerts_with_live_work remote-delayed
 test_primary_exit_alerts_with_live_work slow-remote
+test_primary_exit_alerts_with_live_work slow-remote 0.8 3 "$WATCH_ARM" 1
+test_primary_exit_alerts_with_live_work remote-unknown
 test_primary_exit_alerts_with_live_work slow-remote 0.8 1
 test_primary_exit_alerts_with_live_work remote-dead
 test_primary_exit_alerts_with_live_work remote-missing

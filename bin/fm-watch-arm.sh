@@ -269,6 +269,7 @@ primary_loss_alert() {
     [ -f "$meta" ] && [ ! -L "$meta" ] || continue
     (
       probe_status=0
+      # shellcheck disable=SC2016 # The child bash expands its own positional parameters.
       fm_run_timed "$probe_budget" env FM_HOME="$FM_HOME" FM_ROOT_OVERRIDE="$FM_ROOT" \
         FM_STATE_OVERRIDE="$STATE" bash -c '. "$1"; fm_backend_recorded_target_exists "$2"' \
         _ "$SCRIPT_DIR/fm-backend.sh" "$meta" >/dev/null 2>&1 || probe_status=$?

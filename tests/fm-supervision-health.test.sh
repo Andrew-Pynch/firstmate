@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -u
+# shellcheck source=tests/wake-helpers.sh
 . "$(dirname "${BASH_SOURCE[0]}")/wake-helpers.sh"
+# shellcheck source=tests/t3-fake-lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/t3-fake-lib.sh"
 TMP_ROOT=$(fm_test_tmproot fm-supervision-health)
 HEALTH="$ROOT/bin/fm-supervision-health.sh"
@@ -443,6 +445,7 @@ test_health_orphan_host() {
   dir=$(health_fixture orphan-host)
   ln -s /bin/bash "$dir/omp"
   touch "$dir/state/.last-heartbeat" "$dir/state/.last-check" "$dir/config/supervision-host"
+  # shellcheck disable=SC2016 # The child bash expands its PID, environment, and arguments.
   FM_HOME="$dir" FM_ROOT_OVERRIDE="$ROOT" FM_STATE_OVERRIDE="$dir/state" \
     FM_CONFIG_OVERRIDE="$dir/config" FM_POLL=3 FM_SIGNAL_GRACE=0 \
     FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 FM_STALE_SECS=999999 \
@@ -552,15 +555,15 @@ PY
 }
 
 test_health_bootstrap_default_home() {
-  local dir rc
+  local dir rc test_path
   dir=$(health_fixture default-home)
+  test_path="$dir/fakebin:$PATH"
   (
     unset FM_HOME FM_STATE_OVERRIDE FM_CONFIG_OVERRIDE
     export FM_ROOT_OVERRIDE="$dir" FM_SUPERVISION_UNIT_DIR="$dir/units" FM_POLL=3
-    export PATH="$dir/fakebin:$PATH"
-    bash "$ROOT/bin/fm-bootstrap.sh" install supervision-health >/dev/null || exit 1
-    bash "$ROOT/bin/fm-bootstrap.sh" doctor supervision-health >/dev/null || exit 1
-    FM_FAKE_TIMER_STATE=inactive bash "$ROOT/bin/fm-bootstrap.sh" install supervision-health >/dev/null 2>&1
+    PATH="$test_path" bash "$ROOT/bin/fm-bootstrap.sh" install supervision-health >/dev/null || exit 1
+    PATH="$test_path" bash "$ROOT/bin/fm-bootstrap.sh" doctor supervision-health >/dev/null || exit 1
+    PATH="$test_path" FM_FAKE_TIMER_STATE=inactive bash "$ROOT/bin/fm-bootstrap.sh" install supervision-health >/dev/null 2>&1
     rc=$?
     [ "$rc" -ne 0 ] || exit 1
   ) || fail 'bootstrap lost its default home or hid a failed timer installation'
@@ -920,7 +923,7 @@ PY
 }
 
 test_health_real_recovery_delivery() {
-  local mode=$1 dir reader i
+  local mode=$1 dir reader
   dir=$(health_fixture "real-delivery-$mode")
   health_delivery_code "$dir"
   health_pending_records "$dir"
@@ -941,7 +944,7 @@ test_health_real_recovery_delivery() {
       printf "%s %s\n" "$rc" "$((SECONDS-started))" > "$FM_HOME/result"
     ' _ "$dir/code" > "$dir/reader.log" 2>&1 &
   reader=$!
-  for i in $(seq 1 250); do [ -e "$dir/result" ] && break; sleep 0.1; done
+  for _ in $(seq 1 250); do [ -e "$dir/result" ] && break; sleep 0.1; done
   if [ ! -e "$dir/result" ]; then kill "$reader" 2>/dev/null || true; fail 'recovery delivery did not remain bounded'; fi
   wait "$reader" || fail "recovery reader failed: $(cat "$dir/reader.log")"
   python3 - "$dir" "$mode" <<'PY' || fail 'real recovery delivery violated its operation budget'

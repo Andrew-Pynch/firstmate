@@ -30,10 +30,12 @@ if [[ ! $FM_POLL =~ ^0*[1-9][0-9]*$ ]]; then
 fi
 case "${1:-}" in
   _probe)
+    # shellcheck source=bin/fm-backend.sh
     . "$SCRIPT_DIR/fm-backend.sh"
     fm_backend_recorded_target_exists "$2"
     ;;
   _owner)
+    # shellcheck source=bin/fm-session-lock-lib.sh
     . "$SCRIPT_DIR/fm-session-lock-lib.sh"
     fm_session_lock_inspect "$FM_STATE_OVERRIDE"
     [ "$FM_LOCK_INSPECT_STATE" = held ]
@@ -90,8 +92,8 @@ case "${1:-}" in
     fm_lock_release "$lock"
     trap - EXIT
     if [ -n "$sender" ]; then
-      delivery=delivery-sent
-      wait "$sender" || delivery=delivery-failed
+      delivery='delivery-sent'
+      wait "$sender" || delivery='delivery-failed'
       if fm_lock_acquire_wait_bounded "$lock" 1; then
         if [ "$(head -n 1 "$marker" 2>/dev/null || true)" = "$incident" ]; then
           write_incident_receipt "$delivery"

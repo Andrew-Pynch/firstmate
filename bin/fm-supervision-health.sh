@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+# Independent, home-scoped supervision health check and systemd user units.
+# Usage: FM_HOME=/absolute/home bin/fm-supervision-health.sh check|run|install|doctor
+# check samples once; run watches freshness for one FM_POLL window, with bounded I/O.
+# install writes a per-home service/timer under XDG_CONFIG_HOME/systemd/user and
+# enables it through systemctl --user. No sudo, packages, or daemon are needed.
+# doctor checks unit contents, enabled/active timer state, and service failures.
+# FM_SUPERVISION_UNIT_DIR overrides the unit directory for isolated managers.
+# Config cadence: config/watch.env, then config/x-mode.env, default FM_POLL=15.
+# Freshness: newest existing watcher beacon or successful drain timestamp.
+# One incident uses state/.primary-loss-alert and its existing sibling lock.
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+: "${FM_HOME:?FM_HOME must name the supervised home}"
+case "$FM_HOME" in /*) ;; *) echo 'supervision-health: FM_HOME must be absolute' >&2; exit 2 ;; esac
+export FM_HOME
+export FM_ROOT_OVERRIDE="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
+export FM_STATE_OVERRIDE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
+export FM_CONFIG_OVERRIDE="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
+# shellcheck source=/dev/null
+[ ! -f "$FM_CONFIG_OVERRIDE/watch.env" ] || . "$FM_CONFIG_OVERRIDE/watch.env"
+# shellcheck source=/dev/null
+[ ! -f "$FM_CONFIG_OVERRIDE/x-mode.env" ] || . "$FM_CONFIG_OVERRIDE/x-mode.env"
+export FM_POLL="${FM_POLL:-15}"
+if [[ ! $FM_POLL =~ ^0*[1-9][0-9]*$ ]]; then
+  echo 'supervision-health: FM_POLL must be a positive integer' >&2
+  exit 2
+fi
+case "${1:-}" in
+  _live)
+    # shellcheck source=bin/fm-backend.sh
+    . "$SCRIPT_DIR/fm-backend.sh"
+    for meta in "$FM_STATE_OVERRIDE"/*.meta; do
+      [ -f "$meta" ] && [ ! -L "$meta" ] || continue
+      target=$(fm_backend_target_of_meta "$meta")
+      [ -n "$target" ] || continue
+      backend=$(fm_backend_of_meta "$meta")
+      if fm_backend_target_exists "${backend:-tmux}" "$target" "fm-$(basename "$meta" .meta)"; then
+        exit 0
+      fi
+    done
+    exit 1
+    ;;
+  _incident|_clear)
+    # shellcheck source=bin/fm-wake-lib.sh
+    . "$SCRIPT_DIR/fm-wake-lib.sh"
+    lock="$STATE/.primary-loss-alert.lock"
+    marker="$STATE/.primary-loss-alert"
+    fm_lock_acquire_wait_bounded "$lock" 1 || exit 1
+    trap 'fm_lock_release "$lock"' EXIT
+    if python3 "$SCRIPT_DIR/fm-supervision-health.py" fresh; then
+      rm -f "$marker"
+      exit 0
+    fi
+    [ "$1" != _clear ] || exit 0
+    [ ! -L "$marker" ] && [ ! -d "$marker" ] || { echo 'supervision-health: unsafe incident marker' >&2; exit 1; }
+    if [ -s "$marker" ]; then
+      if grep -qx delivery-failed "$marker"; then
+        echo 'supervision-health: incident Telegram delivery previously failed' >&2
+        exit 1
+      fi
+      exit 0
+    fi
+    incident="listener-health:$$:$(date +%s)"
+    reason='check: primary-supervision-lost: home supervision stopped checking in while work is still live; restart firstmate to resume supervision'
+    "$SCRIPT_DIR/fm-telegram-send.sh" "$reason" &
+    sender=$!
+    if fm_lock_acquire_wait_bounded "$FM_WAKE_QUEUE_LOCK" 1; then
+      fm_wake_append_locked check primary-supervision-lost "$reason"
+      printf '%s\n' "$incident" > "$marker"
+      fm_lock_release "$FM_WAKE_QUEUE_LOCK"
+    else
+      wait "$sender" || true
+      echo 'supervision-health: could not queue primary-supervision-lost' >&2
+      exit 1
+    fi
+    fm_lock_release "$lock"
+    trap - EXIT
+    if ! wait "$sender"; then
+      if fm_lock_acquire_wait_bounded "$lock" 1; then
+        if [ "$(cat "$marker" 2>/dev/null || true)" = "$incident" ]; then
+          printf '%s\ndelivery-failed\n' "$incident" > "$marker"
+        fi
+        fm_lock_release "$lock"
+      fi
+      echo 'supervision-health: Telegram delivery failed; durable alert remains queued' >&2
+      exit 1
+    fi
+    ;;
+  check|run|install|doctor)
+    exec python3 "$SCRIPT_DIR/fm-supervision-health.py" "$1"
+    ;;
+  *) echo 'usage: FM_HOME=/absolute/home fm-supervision-health.sh check|run|install|doctor' >&2; exit 2 ;;
+esac

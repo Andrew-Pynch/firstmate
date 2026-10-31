@@ -76,7 +76,26 @@ omp's replacement follows its own generation-owner contract in `.omp/extensions/
 - An in-process child session never owns the watch.
 
 The omp primary-loss alert, actionable successor confirmation, and bounded shutdown handoff are owned by `bin/fm-watch-arm.sh`'s header and covered by `tests/fm-watch-arm.test.sh`.
-This alert covers plain arm mode only; optional `config/supervision-host` mode does not detect or alert when the omp primary exits, so live work can lose supervision silently in that mode.
+The independent health check below covers both plain arm and supervision-host mode, including a primary process that remains alive after its supervision generation stops.
+
+### Independent supervision health
+
+On Linux, a per-home systemd user timer runs `bin/fm-supervision-health.sh` independently of the primary and its watcher children.
+Install it through `bin/fm-bootstrap.sh install supervision-health`, and inspect it through `bin/fm-bootstrap.sh doctor supervision-health`.
+The command header owns its flags, unit paths, and cadence configuration.
+Bootstrap reports missing, inactive, failed, or outdated units; the Linux remote doctor includes the same check and its `--fix` installs the units.
+
+The check uses the newest existing watcher heartbeat or successful drain timestamp, rather than the primary PID or extension ownership.
+With a recorded live task endpoint and no check-in for `FM_POLL` seconds, it queues `primary-supervision-lost` and invokes the existing Telegram sender once per incident.
+A fresh check-in clears the incident, permitting another alert after a later outage.
+The incident marker is shared with the arm's fast-path alert to avoid duplicate notifications.
+No live endpoints means no alert.
+
+Each oneshot watches the freshness deadline for one poll interval, with separately bounded endpoint and notification I/O; the timer starts the next window after it exits.
+This avoids adding a full timer interval after a stale deadline.
+The user service manager must remain running for independent coverage; machine shutdown, a stopped user manager, missing Telegram credentials, or unreachable notification transport still prevent external delivery.
+A failed sender leaves the wake queued and makes the service failure visible to doctor.
+The installer neither enables linger nor requests sudo, and non-Linux systems retain their existing harness-specific behavior.
 
 ### Cursor stop hook
 

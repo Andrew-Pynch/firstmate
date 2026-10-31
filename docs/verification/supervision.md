@@ -581,7 +581,12 @@ These smoke tests did not contact the external Telegram service.
 `bin/fm-test-run.sh tests/fm-watch-arm.test.sh tests/fm-watcher-lock.test.sh` covers primary shutdown and abrupt loss, immediate and delayed replacement at a two-second poll, single-attempt delivery under contention and output-reader loss, empty-home suppression, and next-drain persistence.
 `tests/fm-omp-harness.test.sh` also passed with the host's real omp ancestor outside the detector's eight-parent window.
 The actionable-close regressions in these suites cover primary loss after reason publication and hold the predecessor open until successor readiness is explicitly confirmed.
-The [plain-mode boundary](../watcher-continuity.md#omp-session-replacement) excludes optional supervision-host mode.
+The [independent health check](../watcher-continuity.md#independent-supervision-health) extends coverage to supervision-host mode and shutdown during successor retry.
+`tests/fm-supervision-health.test.sh` checks incident recovery, quiet healthy windows, installation, and diagnosis; the lifecycle cases in `tests/fm-omp-harness.test.sh` exercise host shutdown, the actionable-close window, and shutdown during retry backoff against the independent command.
+On 2026-10-31, `bash tests/fm-supervision-health.test.sh` passed in a private Linux fixture, and isolated invocations of the three lifecycle cases each observed the durable alert and sender invocation within a three-second poll.
+The installed systemd 262.1 parser accepted the generated units, and a bounded smoke executed their exact `ExecStart` command against a fake backend and sender transport.
+Installation and doctor control calls used a private systemctl fixture; no real user-manager timer activation was performed, so live timer scheduling and activation remain unverified.
+No real Herdr lifecycle, browser, or external Telegram service was used.
 Other harnesses retain their existing arm lifetime because they do not set the omp primary PID.
 
 Pi 0.81.1 repeated the continuity and clean-exit lifecycle on 2026-07-23 after the Calm presentation changes.

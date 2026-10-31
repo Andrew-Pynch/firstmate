@@ -70,8 +70,8 @@
 # A lost output pipe also alerts, even before readiness can be reported.
 # Sender failure adds a durable delivery-failure row so missing Telegram
 # configuration is visible at the next drain without delaying the first alert.
-# state/.primary-loss-alert records the notified primary identity under its
-# sibling .lock, so overlapping arms alert once until a fresh monitor starts.
+# state/.primary-loss-alert records an incident under its sibling .lock, shared
+# with the independent listener-health check, until supervision resumes.
 # An unprovable initial primary identity refuses by name before arming.
 # Replacement proof compares the current canonical session anchor to the one
 # captured at launch, so an outer harness wrapper is never its own successor.
@@ -267,7 +267,7 @@ primary_loss_alert() {
     fm_backend_target_exists "${backend:-tmux}" "$target" "$label" || continue
     reason="check: primary-supervision-lost: primary supervision stopped without a healthy replacement while work is still live; restart firstmate to resume supervision"
     if fm_lock_acquire_wait_max "$PRIMARY_ALERT_LOCK" 1; then
-      if [ "$(cat "$PRIMARY_ALERT_MARKER" 2>/dev/null || true)" = "$PRIMARY_PID:$PRIMARY_IDENTITY" ]; then
+      if [ -s "$PRIMARY_ALERT_MARKER" ]; then
         fm_lock_release "$PRIMARY_ALERT_LOCK"
         PRIMARY_ALERTED=1
         return 0

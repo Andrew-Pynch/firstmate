@@ -1825,6 +1825,123 @@ EOF
   pass ".omp extensions: a descendant of the lock holder never overwrites either loaded marker"
 }
 
+test_independent_health_covers_lifecycle_gap() {
+  local mode=$1 repo home checker driver
+  repo="$TMP_ROOT/health-$mode/repo"; home="$TMP_ROOT/health-$mode/home"
+  install_omp_extension_fixture "$repo"
+  mkdir -p "$home/state" "$home/config" "$home/fakebin"
+  printf 'backend=tmux\nwindow=fixture:0\n' > "$home/state/live.meta"
+  if [ "$mode" = host ]; then : > "$home/config/supervision-host"; fi
+  cat > "$home/fakebin/tmux" <<'SH'
+#!/usr/bin/env bash
+case "$*" in
+  *'#{session_name}:#{window_name}'*) echo fixture:fixture ;;
+  *'#{window_id}'*'#{window_index}'*'#{window_name}'*) echo '@0|0|fixture' ;;
+  *'#{window_id}'*) echo '@0' ;;
+  *) echo fixture ;;
+esac
+SH
+  cat > "$home/fakebin/bun" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$FM_HOME/telegram.log"
+SH
+  cat > "$repo/bin/fm-watch-arm.sh" <<'SH'
+#!/usr/bin/env bash
+[ "${1:-}" != --handling-delivered ] || exit 0
+n=$(cat "$FM_HOME/state/arm-count" 2>/dev/null || echo 0)
+n=$((n + 1))
+echo "$n" > "$FM_HOME/state/arm-count"
+if [ "$n" -gt 1 ]; then
+  trap 'touch "$FM_HOME/state/retired"; exit 0' TERM
+  touch "$FM_HOME/state/unready"
+  while :; do sleep 0.02 & wait "$!"; done
+fi
+echo "$$" > "$FM_HOME/state/first-pid"
+printf 'watcher: started pid=%s (beacon fresh)\n' "$$"
+while [ ! -e "$FM_HOME/state/fire" ]; do
+  touch "$FM_HOME/state/.last-watcher-beat"
+  sleep 1
+done
+printf 'signal: fixture wake\nwatcher: awaiting-successor\n'
+read -r _ || true
+SH
+  cp "$repo/bin/fm-watch-arm.sh" "$repo/bin/fm-supervision-host.sh"
+  chmod +x "$repo/bin/fm-watch-arm.sh" "$repo/bin/fm-supervision-host.sh" "$home/fakebin/"*
+  FM_HOME="$home" FM_ROOT_OVERRIDE="$repo" FM_POLL=3 GAP_MODE="$mode" \
+    FM_OMP_ARM_READY_TIMEOUT_MS=100 FM_WATCH_ARM_RETIRE_TIMEOUT_MS=1000 \
+    FM_WATCH_REARM_RETRY_BASE_MS=3000 FM_WATCH_REARM_RETRY_MAX_MS=3000 \
+    EXT="$repo/.omp/extensions/fm-primary-omp-watch.ts" \
+    node --input-type=module > "$home/driver.log" 2>&1 <<'JS' &
+import { pathToFileURL } from 'node:url';
+import { writeFileSync, readFileSync, existsSync } from 'node:fs';
+const state = `${process.env.FM_HOME}/state`;
+const handlers = new Map();
+const mod = await import(pathToFileURL(process.env.EXT).href);
+writeFileSync(`${state}/.lock`, `${process.pid}\n`);
+mod.default({on(e,h){handlers.set(e,h);},registerTool(){},registerCommand(){},sendMessage(){}});
+const until = async p => {
+  for (let i=0; i<400; i++) {
+    if (p()) return;
+    await new Promise(r => setTimeout(r, 20));
+  }
+  throw new Error('fixture did not reach lifecycle boundary');
+};
+await handlers.get('session_start')({}, {});
+await until(() => existsSync(`${state}/.last-watcher-beat`));
+writeFileSync(`${state}/ready`, '');
+await until(() => existsSync(`${state}/trigger`));
+if (process.env.GAP_MODE !== 'host') {
+  writeFileSync(`${state}/fire`, '');
+  await until(() => existsSync(`${state}/${process.env.GAP_MODE === 'backoff' ? 'retired' : 'unready'}`));
+}
+writeFileSync(`${state}/gap-time`, String(Date.now() / 1000));
+if (process.env.GAP_MODE === 'close') process.exit(0);
+await handlers.get('session_shutdown')({}, {});
+if (process.env.GAP_MODE === 'backoff') process.kill(Number(readFileSync(`${state}/first-pid`, 'utf8')), 0);
+writeFileSync(`${state}/shutdown-complete`, '');
+await until(() => existsSync(`${state}/finish`));
+process.exit(0);
+JS
+  driver=$!
+  for _ in $(seq 1 100); do [ -e "$home/state/ready" ] && break; sleep 0.05; done
+  [ -e "$home/state/ready" ] || fail "health $mode fixture never became ready: $(cat "$home/driver.log")"
+  (
+    for _ in 1 2; do
+      FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" FM_ROOT_OVERRIDE="$ROOT" FM_POLL=3 \
+        PATH="$home/fakebin:$PATH" "$ROOT/bin/fm-supervision-health.sh" run || exit 1
+    done
+  ) > "$home/checker.log" 2>&1 &
+  checker=$!
+  sleep 0.5
+  [ ! -e "$home/telegram.log" ] || fail "health $mode fixture alerted while healthy"
+  touch "$home/state/trigger"
+  python3 - "$home" <<'PYTEST' || fail "independent health missed $mode: $(cat "$home/checker.log") $(cat "$home/driver.log")"
+from pathlib import Path
+import sys
+import time
+home=Path(sys.argv[1]); state=home/'state'
+limit=time.monotonic()+8
+while not (state/'gap-time').exists():
+    if time.monotonic()>limit: raise SystemExit('no lifecycle gap marker')
+    time.sleep(0.01)
+start=float((state/'gap-time').read_text())
+while time.time()-start < 3:
+    if all(p.exists() and 'primary-supervision-lost' in p.read_text() for p in (home/'telegram.log', state/'.wake-queue')):
+        break
+    time.sleep(0.01)
+else: raise SystemExit('no external and durable alert within one poll')
+PYTEST
+  if [ "$mode" != close ]; then
+    kill -0 "$driver" || fail "$mode test lost its still-running primary"
+    [ -e "$home/state/shutdown-complete" ] || fail "$mode shutdown never completed"
+  fi
+  touch "$home/state/finish"
+  wait "$driver" || fail "health $mode driver failed"
+  wait "$checker" || fail "health $mode oneshot failed"
+  [ "$(wc -l < "$home/telegram.log")" -eq 1 ] || fail "$mode delivered more than one alert"
+  pass ".omp independent health: $mode lifecycle gap alerts within one poll"
+}
+
 test_detection_anchored_name_and_marker_precedence
 test_lock_identity_and_liveness_classification
 test_bun_run_omp_session_owns_its_lock
@@ -1857,3 +1974,7 @@ test_watch_extension_restart_never_replays_a_cleaned_up_task
 test_extension_markers_name_only_the_lock_holder
 test_remote_host_leg_accepts_omp
 test_remote_parent_leg_accepts_omp
+
+test_independent_health_covers_lifecycle_gap host
+test_independent_health_covers_lifecycle_gap close
+test_independent_health_covers_lifecycle_gap backoff

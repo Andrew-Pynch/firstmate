@@ -77,8 +77,9 @@
 # captured at launch, so an outer harness wrapper is never its own successor.
 # Dedupe-lock contention is bounded to one second and cannot suppress the alert.
 # Other harnesses and explicit TERM/INT retirement keep their existing lifetime.
-# An actionable cycle has a small adapter successor-launch gap; this arm
-# covers primary loss through its own close, not machine-wide process loss.
+# After an actionable cycle, watcher: awaiting-successor asks the omp adapter
+# to start its successor while this arm keeps checking the primary. The adapter
+# writes successor-ready to stdin only after verifying readiness; then this arm exits.
 #
 # --restart: stop ONLY this FM_HOME's watcher (the pid recorded in THIS home's
 # state/.watch.lock) and own a fresh cycle, or attach if a verified live peer
@@ -295,6 +296,23 @@ primary_loss_alert() {
       *) fm_wake_append check primary-supervision-lost "$reason (Telegram delivery failed)" || return 1 ;;
     esac
     return 0
+  done
+}
+
+primary_actionable_handoff() {
+  [ -n "$PRIMARY_PID" ] || return 0
+  local confirmation
+  printf 'watcher: awaiting-successor\n'
+  while :; do
+    if ! primary_alive; then
+      primary_loss_alert
+      return 1
+    fi
+    if IFS= read -r -t "$ATTACH_POLL" confirmation && [ "$confirmation" = successor-ready ]; then
+      return 0
+    fi
+    sleep 0.1 &
+    wait "$!" || true
   done
 }
 
@@ -634,7 +652,8 @@ attach_and_wait() {
     fi
     if close_unobserved_cycle; then
       cycle_log_append unknown unknown attached-delivered-wake none
-      return 0
+      primary_actionable_handoff
+      return $?
     fi
     cycle_log_append unknown unknown attached-cycle-ended none
     return 1
@@ -926,7 +945,8 @@ owned_child_finished() {
     rm -f "$child_out" 2>/dev/null || true
     child=
     child_out=
-    return 0
+    primary_actionable_handoff
+    return $?
   fi
 
   if [ "$rc" -eq 0 ]; then
@@ -952,7 +972,8 @@ owned_child_finished() {
     fi
     if close_unobserved_cycle; then
       cycle_log_append "$rc" "$signal" clean-exit-delivered-wake none
-      return 0
+      primary_actionable_handoff
+      return $?
     fi
     cycle_log_append "$rc" "$signal" unexpected-clean-exit none
     return 1

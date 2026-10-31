@@ -1959,7 +1959,7 @@ test_append_wakes_handling_successor after-ack malformed identical
 test_primary_exit_alerts_with_live_work() {
   local mode=$1 dir state fakebin primary i armout script replacement='' peer='' send_log grace=999999 watcher output
   local handoff_delay=${2:-0.8} poll=${3:-3}
-  local anchor_pid=''
+  local anchor_pid='' arm_source=${4:-$WATCH_ARM} input=/dev/null
   dir=$(make_supercase "primary-exit-$mode-$handoff_delay-$poll")
   state="$dir/state"
   fakebin="$dir/fakebin"
@@ -1968,7 +1968,11 @@ test_primary_exit_alerts_with_live_work() {
   ln -s "$ROOT/bin/backends" "$dir/bin/backends"
   for script in "$ROOT"/bin/*.sh; do
     [ "${script##*/}" = fm-telegram-send.sh ] && continue
-    ln -s "$script" "$dir/bin/${script##*/}"
+    if [ "${script##*/}" = fm-watch-arm.sh ]; then
+      ln -s "$arm_source" "$dir/bin/fm-watch-arm.sh"
+    else
+      ln -s "$script" "$dir/bin/${script##*/}"
+    fi
   done
   send_log="$dir/telegram.out"
   cat > "$dir/bin/fm-telegram-send.sh" <<'SH'
@@ -1988,7 +1992,7 @@ SH
     anchor_pid=$!
     printf '%s\n' "$anchor_pid" > "$state/.lock"
   fi
-  if [ "$mode" = cycle-close ] || [ "$mode" = happy ] || [ "$mode" = pipe-close ] || [ "$mode" = contention-pipe-close ]; then grace=0; fi
+  if [ "$mode" = cycle-close ] || [ "$mode" = actionable-gap ] || [ "$mode" = happy ] || [ "$mode" = pipe-close ] || [ "$mode" = contention-pipe-close ]; then grace=0; fi
   output=$armout
   if [ "$mode" = pipe ] || [ "$mode" = pipe-close ] || [ "$mode" = contention-pipe-close ]; then
     output="$dir/arm.pipe"
@@ -2002,12 +2006,17 @@ SH
     fi
     peer=$!
   fi
+  if [ "$mode" = happy ]; then
+    input="$dir/confirmation.pipe"
+    mkfifo "$input"
+    exec 9<> "$input"
+  fi
   PATH="$fakebin:$PATH" FM_HOME="$dir" FM_STATE_OVERRIDE="$state" \
     FM_WATCH_PRIMARY_PID="$primary" FM_POLL="$poll" FM_SIGNAL_GRACE="$grace" \
     FM_FAKE_TMUX_WINDOW='fixture:fixture' \
     FM_TEST_TELEGRAM_LOG="$send_log" FM_TEST_TELEGRAM_FAIL="$([ "$mode" = send-failure ] && echo 1 || echo 0)" \
     FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
-    "$dir/bin/fm-watch-arm.sh" > "$output" 2> "$armout.err" &
+    "$dir/bin/fm-watch-arm.sh" < "$input" > "$output" 2> "$armout.err" &
   ARM_PID=$!
   i=0
   while [ "$i" -lt 200 ]; do
@@ -2047,7 +2056,7 @@ SH
     done
     [ -e "$dir/alert-lock-ready" ] || fail "dedupe lock fixture did not acquire its lock"
   fi
-  if [ "$mode" = cycle-close ] || [ "$mode" = happy ] || [ "$mode" = pipe-close ] || [ "$mode" = contention-pipe-close ]; then
+  if [ "$mode" = cycle-close ] || [ "$mode" = actionable-gap ] || [ "$mode" = happy ] || [ "$mode" = pipe-close ] || [ "$mode" = contention-pipe-close ]; then
     watcher=$(cat "$state/.watch.lock/pid")
     kill -STOP "$ARM_PID"
     printf 'done: fixture completed while primary was alive\n' > "$state/live.status"
@@ -2064,16 +2073,61 @@ SH
     fi
     if [ "$mode" = happy ]; then
       kill -CONT "$ARM_PID"
+      wait_for_file_text "$armout" 'watcher: awaiting-successor' \
+        || fail "the finishing arm did not request a successor"
+      sleep "$((poll + 1))"
+      is_live_non_zombie "$ARM_PID" || fail "the finishing arm exited before confirmation"
+      PATH="$fakebin:$PATH" FM_HOME="$dir" FM_STATE_OVERRIDE="$state" \
+        FM_WATCH_PRIMARY_PID="$primary" FM_POLL="$poll" FM_SIGNAL_GRACE=999999 \
+        FM_FAKE_TMUX_WINDOW='fixture:fixture' FM_WATCH_PREDECESSOR_ARM_PID="$ARM_PID" \
+        FM_TEST_TELEGRAM_LOG="$send_log" FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
+        "$dir/bin/fm-watch-arm.sh" --restart > "$dir/replacement.out" 2>&1 &
+      replacement=$!
+      wait_for_file_text "$dir/replacement.out" 'watcher: started' \
+        || fail "the successor did not become ready"
+      printf 'successor-ready\n' >&9
+      exec 9>&-
+      wait_for_exit "$ARM_PID" 50 || fail "the confirmed arm did not retire"
       wait "$ARM_PID" || fail "a live primary's actionable close failed"
       grep -q '^signal:' "$armout" || fail "the live primary lost its actionable output"
       ! grep -q 'primary-supervision-lost' "$state/.wake-queue" \
         || fail "a live primary's ordinary close was misreported as an outage"
       [ ! -s "$send_log" ] || fail "an ordinary actionable close sent an outage message"
+      kill "$replacement"
+      wait "$replacement" 2>/dev/null || true
       kill "$primary"
       wait "$primary" 2>/dev/null || true
       pass "watch-arm: a live primary receives the completed cycle without an outage alert"
       return
     fi
+  fi
+  if [ "$mode" = actionable-gap ]; then
+    kill -CONT "$ARM_PID"
+    wait_for_file_text "$armout" 'signal:' || fail "the finishing arm did not publish its wake"
+    python3 - "$primary" "$poll" "$send_log" "$state/.wake-queue" <<'PYTEST' || fail "primary loss in the successor window was not alerted within one poll"
+import os
+from pathlib import Path
+import signal
+import sys
+import time
+primary, poll, send_log, queue = sys.argv[1:]
+started = time.monotonic()
+os.kill(int(primary), signal.SIGTERM)
+while time.monotonic() - started < float(poll):
+    if all(Path(p).exists() and 'primary-supervision-lost' in Path(p).read_text() for p in (send_log, queue)):
+        break
+    time.sleep(0.02)
+else:
+    raise SystemExit('missing external or durable alert before the poll deadline')
+PYTEST
+    wait "$primary" 2>/dev/null || true
+    wait_for_exit "$ARM_PID" 50
+    expect_code 1 "$?" "the alerting predecessor must exit with primary-loss status"
+    [ "$(wc -l < "$send_log" | tr -d '[:space:]')" -eq 1 ] || fail "successor-window loss sent duplicate alerts"
+    FM_HOME="$dir" FM_STATE_OVERRIDE="$state" "$DRAIN" > "$dir/drain.out" 2>/dev/null
+    grep -q 'primary-supervision-lost' "$dir/drain.out" || fail "the successor-window alert was not drainable"
+    pass "watch-arm: primary loss after actionable output alerts within one poll before successor confirmation"
+    return
   fi
   if [ "$mode" != handoff ] && [ "$mode" != handoff-new ] && [ "$mode" != orphaned ] && [ "$mode" != pipe-close ]; then
     kill "$primary"
@@ -2203,6 +2257,7 @@ test_primary_exit_alerts_with_live_work handoff-new 0 2
 test_primary_exit_alerts_with_live_work handoff 0.8 2
 test_primary_exit_alerts_with_live_work queue-contention
 test_primary_exit_alerts_with_live_work happy
+test_primary_exit_alerts_with_live_work actionable-gap
 test_primary_exit_alerts_with_live_work anchor
 test_primary_exit_alerts_with_live_work contention
 test_primary_exit_alerts_with_live_work pipe

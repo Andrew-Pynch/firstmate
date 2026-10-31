@@ -219,6 +219,7 @@ type ReplacementCoordinator = {
   // the counter naming generations; see "Session-generation ownership" above.
   activeGeneration?: SessionGeneration | null;
   nextGenerationId?: number;
+  awaitingSuccessors?: Map<string, ChildProcess>;
   // Watcher-wake texts already judged at a model request, mapped to the text
   // the model reads instead, or null to keep the original; see "Stalled alarms".
   stallDecisions?: Map<string, string | null>;
@@ -241,6 +242,7 @@ function replacementCoordinatorFor(handoff: string): ReplacementCoordinator {
   return created;
 }
 const replacementCoordinator = replacementCoordinatorFor(actionableHandoff);
+const awaitingSuccessors = replacementCoordinator.awaitingSuccessors ??= new Map<string, ChildProcess>();
 const armReadiness = new WeakMap<ChildProcess, Promise<boolean>>();
 const armClose = new WeakMap<ChildProcess, Promise<void>>();
 // Children the extension itself asked to exit; their close is not a failure
@@ -1046,6 +1048,7 @@ export default function (pi: ExtensionAPI) {
       const replacement = startArm(owner, predecessorArmPid);
       const successorChild = owner.child;
       if (replacement.ok && successorChild && await waitForReadiness(successorChild)) {
+        awaitingSuccessors.get(predecessorArmPid)?.stdin?.end("successor-ready\n");
         return { failure: "", recovery: armRecovery.get(successorChild) };
       }
       if (replacement.ok) {
@@ -1130,8 +1133,9 @@ export default function (pi: ExtensionAPI) {
     const armChild = spawn("bash", ["-lc", `config_dir="\${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"; [ -f "$config_dir/x-mode.env" ] && . "$config_dir/x-mode.env"; ${command}`], {
       cwd: fmRoot,
       env,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: [hostMode ? "ignore" : "pipe", "pipe", "pipe"],
     });
+    armChild.stdin?.on("error", () => {});
     armHostMode.set(armChild, hostMode);
     owner.child = armChild;
     let stdout = "";
@@ -1169,6 +1173,14 @@ export default function (pi: ExtensionAPI) {
         armPendingActionable.set(armChild, pending);
         enqueuePendingActionable(owner, pending);
       }
+      const predecessor = String(armChild.pid ?? "");
+      if (reason && /^watcher: awaiting-successor$/m.test(combined) && !awaitingSuccessors.has(predecessor)) {
+        awaitingSuccessors.set(predecessor, armChild);
+        settleReadiness(false);
+        releaseChild();
+        owner.retryFailures = 0;
+        void processPendingActionables(owner);
+      }
     };
     const releaseChild = (): void => {
       if (owner.child === armChild) owner.child = null;
@@ -1189,6 +1201,7 @@ export default function (pi: ExtensionAPI) {
       releaseChild();
       const classification = classifyClose(hostMode, stdout, stderr, code, signal);
       const predecessor = String(armChild.pid ?? "");
+      if (awaitingSuccessors.delete(predecessor)) return;
       if (classification.kind === "actionable") {
         const pending = armPendingActionable.get(armChild) ?? createPendingActionable(classification.message, predecessor);
         enqueuePendingActionable(owner, pending);

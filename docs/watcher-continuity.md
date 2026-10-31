@@ -75,7 +75,8 @@ omp's replacement follows its own generation-owner contract in `.omp/extensions/
 - It reports no shutdown reason, so every shutdown with a pending actionable close persists the handoff for the next owning `session_start` or orphaned-generation recovery to replay.
 - An in-process child session never owns the watch.
 
-The omp primary-loss alert and bounded shutdown handoff are owned by `bin/fm-watch-arm.sh`'s header and covered by `tests/fm-watch-arm.test.sh`.
+The omp primary-loss alert, actionable successor confirmation, and bounded shutdown handoff are owned by `bin/fm-watch-arm.sh`'s header and covered by `tests/fm-watch-arm.test.sh`.
+This alert covers plain arm mode only; optional `config/supervision-host` mode does not detect or alert when the omp primary exits, so live work can lose supervision silently in that mode.
 
 ### Cursor stop hook
 

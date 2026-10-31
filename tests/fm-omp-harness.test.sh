@@ -799,17 +799,22 @@ test_watch_extension_arms_and_delivers() {
   repo="$TMP_ROOT/watch/repo"; home="$TMP_ROOT/watch/home"
   install_omp_extension_fixture "$repo"
   mkdir -p "$home/state"
-  # The first arm child closes with one actionable reason; every successor
-  # stays up, so exactly one wake exists to consume.
   cat > "$repo/bin/fm-watch-arm.sh" <<'SH'
 #!/usr/bin/env bash
-printf 'watcher: started pid=%s (beacon 0s) recovery-generation=gen-1\n' "$$"
 if [ ! -e "${FM_HOME:?}/state/.e2e-fired" ]; then
   : > "$FM_HOME/state/.e2e-fired"
+  printf '%s\n' "$$" > "$FM_HOME/state/.predecessor-pid"
+  printf 'watcher: started pid=%s (beacon 0s) recovery-generation=gen-1\n' "$$"
   sleep 1
-  printf 'signal: omp-e2e done\n'
+  printf 'signal: omp-e2e done\nwatcher: awaiting-successor\n'
+  IFS= read -r confirmation
+  [ "$confirmation" = successor-ready ] || exit 1
+  touch "$FM_HOME/state/.confirmed"
   exit 0
 fi
+touch "$FM_HOME/state/.successor-started"
+while [ ! -e "$FM_HOME/state/.allow-successor" ]; do sleep 0.05; done
+printf 'watcher: started pid=%s (beacon 0s) recovery-generation=gen-1\n' "$$"
 sleep 30
 SH
   chmod +x "$repo/bin/fm-watch-arm.sh"
@@ -837,7 +842,21 @@ const marker = readFileSync(`${process.env.FM_HOME}/state/.omp-watch-extension-l
 if (marker[1] !== String(process.pid)) throw new Error("loaded marker must record the session pid");
 const again = await tool.execute();
 if (!/^watcher: unchanged - omp extension already owns an arm child/.test(again.content[0].text)) throw new Error(`redundant arm was not an ownership no-op: ${again.content[0].text}`);
-await new Promise((r) => setTimeout(r, 2500));
+const state = `${process.env.FM_HOME}/state`;
+const settle = async (predicate, message) => {
+  for (let i = 0; i < 100; i += 1) {
+    if (predicate()) return;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  throw new Error(message);
+};
+await settle(() => existsSync(`${state}/.successor-started`), "the open predecessor prevented successor launch");
+const predecessor = Number(readFileSync(`${state}/.predecessor-pid`, "utf8"));
+process.kill(predecessor, 0);
+if (sent.length || existsSync(`${state}/.confirmed`)) throw new Error("handoff completed before successor readiness");
+writeFileSync(`${state}/.allow-successor`, "ready\n");
+await settle(() => sent.length === 1 && existsSync(`${state}/.confirmed`), "verified successor did not release its predecessor and deliver the wake");
+await new Promise((r) => setTimeout(r, 100));
 if (sent.length !== 1) throw new Error(`expected one follow-up wake, saw ${sent.length}: ${JSON.stringify(sent)}`);
 if (sent[0].m.customType !== "firstmate-primary-omp-watcher-wake") throw new Error(`unexpected wake type: ${sent[0].m.customType}`);
 if (sent[0].m.display !== false) throw new Error("watcher wake must stay hidden from the captain transcript");

@@ -580,6 +580,8 @@ Before replay, stopping the arm while its watcher completed an actionable cycle,
 These smoke tests did not contact the external Telegram service.
 `bin/fm-test-run.sh tests/fm-watch-arm.test.sh tests/fm-watcher-lock.test.sh` covers primary shutdown and abrupt loss, immediate and delayed replacement at a two-second poll, single-attempt delivery under contention and output-reader loss, empty-home suppression, and next-drain persistence.
 `tests/fm-omp-harness.test.sh` also passed with the host's real omp ancestor outside the detector's eight-parent window.
+The actionable-close regressions in these suites cover primary loss after reason publication and hold the predecessor open until successor readiness is explicitly confirmed.
+The [plain-mode boundary](../watcher-continuity.md#omp-session-replacement) excludes optional supervision-host mode.
 Other harnesses retain their existing arm lifetime because they do not set the omp primary PID.
 
 Pi 0.81.1 repeated the continuity and clean-exit lifecycle on 2026-07-23 after the Calm presentation changes.

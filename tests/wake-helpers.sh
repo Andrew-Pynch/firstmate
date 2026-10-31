@@ -134,6 +134,37 @@ SH
   printf '%s\n' "$fakebin/fm-crew-state.sh"
 }
 
+# Opt-in cycle observation for real-watcher triage tests. Heartbeats now also
+# advance during backend waits, so their mtime cannot prove a scan completed.
+# Preserve touch's behavior and record only the watcher's top-level beacon
+# calls, excluding the watcher_heartbeat helper's in-operation refreshes.
+fm_test_observe_watch_cycles() {
+  touch() {
+    command touch "$@" || return $?
+    if [ "${FUNCNAME[1]:-}" = main ] \
+      && [ "${BASH_SOURCE[1]##*/}" = fm-watch.sh ] \
+      && [ "$#" -eq 1 ] && [[ "$1" == */.last-watcher-beat ]]; then
+      printf '%s\n' "$$" >> "${1%/*}/.test-watch-cycles"
+    fi
+  }
+  export -f touch
+}
+
+# Two new cycle starts from this watcher prove the intervening scan completed.
+# Match its PID so restarts cannot reuse evidence from a previous watcher.
+fm_test_wait_watch_cycle() {  # <state> <pid> [limit-ticks]
+  local state=$1 pid=$2 limit=${3:-300} before now i=0
+  before=$(grep -c -x "$pid" "$state/.test-watch-cycles" 2>/dev/null) || before=0
+  while [ "$i" -lt "$limit" ]; do
+    kill -0 "$pid" 2>/dev/null || return 1
+    now=$(grep -c -x "$pid" "$state/.test-watch-cycles" 2>/dev/null) || now=0
+    [ "$now" -lt "$((before + 2))" ] || return 0
+    sleep 0.1
+    i=$((i + 1))
+  done
+  return 1
+}
+
 # Prime <file>'s .seen-* marker to its CURRENT signature through the production
 # signature owner (bin/fm-wake-lib.sh), so a test can declare "everything in
 # this file was already surfaced or deliberately absorbed" before exercising

@@ -1081,7 +1081,7 @@ run_watcher_bounded() {
   perl -MPOSIX=WNOHANG -MTime::HiRes=time,sleep -e 'my $pause=shift; my $left=60; my $pid=fork; die unless defined $pid; if (!$pid) { exec @ARGV } my $last=time; while (waitpid($pid, WNOHANG) == 0) { my $now=time; $left -= $now - $last unless length $pause && -e $pause; $last=$now; if ($left <= 0) { kill "TERM", $pid; waitpid $pid, 0; exit 124 } sleep 0.02 } exit($? >> 8)' \
     "${FM_TEST_WATCH_BOUND_PAUSE:-}" env "${check_timeout_env[@]}" \
       FM_HOME="$home" FM_ROOT_OVERRIDE="$watch_root" FM_CHECK_INTERVAL="$check_interval" \
-      FM_POLL=0.02 FM_HEARTBEAT=999999 FM_SIGNAL_GRACE=0 PATH="$fakebin:$BASE_PATH" "$WATCH" "$@"
+      FM_POLL=1 FM_HEARTBEAT=999999 FM_SIGNAL_GRACE=0 PATH="$fakebin:$BASE_PATH" "$WATCH" "$@"
 }
 
 test_rejected_metacharacter_bytes_are_inert() {
@@ -1267,7 +1267,7 @@ SH
     [ "$direct_rc" -eq 0 ] || fail "concurrent direct arming failed"
     [ "$rc" -eq 0 ] || fail "concurrent watcher did not complete (rc=$rc): $(cat "$dir/watch.err")"
     grep -q '^check: .*: merged$' "$dir/watch.out" || fail "concurrent watcher never saw complete poll"
-    [ ! -s "$dir/watch.err" ] || fail "concurrent watcher observed a partial artifact error"
+    [ ! -s "$dir/watch.err" ] || fail "concurrent watcher observed a partial artifact error: $(cat "$dir/watch.err")"
     if [ -e "$dir/home/state/$id.check.sh" ]; then
       cmp -s "$POLL" "$dir/home/state/$id.check.sh" || fail "concurrent publication check bytes changed"
       [ "$(file_mode "$dir/home/state/$id.check.sh")" = 600 ] || fail "concurrent check mode was not private"

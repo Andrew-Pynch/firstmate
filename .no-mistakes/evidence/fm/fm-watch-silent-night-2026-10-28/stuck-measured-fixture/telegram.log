@@ -1,0 +1,1 @@
+--env-file=/tmp/fm-supervision-health.VTjypO/pending-stuck/.env /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M692QWG08DYNN8KR5QX8FBBQ/bin/fm-telegram-bridge.ts send check: primary-supervision-lost: home supervision stopped checking in while work is still live; restart firstmate to resume supervision

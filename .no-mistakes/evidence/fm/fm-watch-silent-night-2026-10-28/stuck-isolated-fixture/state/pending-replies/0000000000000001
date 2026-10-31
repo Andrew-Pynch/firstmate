@@ -1,0 +1,27 @@
+schema=fm-pending-reply.v1
+task_id=first
+parent_home=/tmp/fm-supervision-health.2wb8Ax/pending-stuck
+parent_status=/tmp/fm-supervision-health.2wb8Ax/pending-stuck/state/first.status
+request_summary=report first
+created_epoch=1793471491
+turn_seen_busy=0
+recovery_sent_epoch=
+recovery_delivery_outcome=
+recovery_turn_seen_busy=0
+recovery_turn_completed_epoch=
+escalated_epoch=
+resolved_epoch=
+resolved_via=
+wrong_home_hits=0
+wrong_home_first_sighting=
+wrong_home_sightings=
+wrong_home_scan_signature=
+corr_id=0000000000000001
+grace_secs=0
+delivered_epoch=1793471491
+request_turn_completed_epoch=1
+parent_status_scan_signature=missing
+recovery_sender_pid=1993948
+recovery_sender_identity=Sat Oct 31 13:31:34 2026 bash -c        . "$1/bin/fm-watch.sh"       WATCHER_PID=$$       mkdir "$WATCH_LOCK"       printf "%s\n" "$$" > "$WATCH_LOCK/pid"       fm_backend_busy_state() {         [ "$2" != stuck:0 ] || sleep 30         printf idle       }       started=$SECONDS       fm_pending_reply_tick "$STATE" watcher_pending_reply_operation       [ "$((SECONDS-started))" -lt 12 ] || exit 1       fm_pending_reply_reconcile_recovery "$STATE" 0000000000000001 || exit 1       touch "$FM_HOME/scan-completed"       while :; do watcher_waited sleep 2; done      _ /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M692QWG08DYNN8KR5QX8FBBQ
+recovery_attempted_epoch=1793471494
+phase=recovery_sending

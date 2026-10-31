@@ -1,0 +1,35 @@
+{
+  "observations": [
+    {
+      "transcript": "round2-live-watch-transcript.log",
+      "observed_outage_seconds": 2.96,
+      "lab_cleaned": true
+    },
+    {
+      "transcript": "round2-graceful-watch-transcript.log",
+      "observed_outage_seconds": 2.968,
+      "lab_cleaned": true
+    },
+    {
+      "transcript": "round2-slow-watch-transcript.log",
+      "observed_outage_seconds": 2.965,
+      "lab_cleaned": true
+    },
+    {
+      "transcript": "round2-live-independent-transcript.log",
+      "observed_outage_seconds": 0.329,
+      "lab_cleaned": true
+    },
+    {
+      "transcript": "round2-recovery-transcript.log",
+      "observed_outage_seconds": 0.361,
+      "lab_cleaned": true
+    },
+    {
+      "transcript": "round2-host-watch-transcript.log",
+      "observed_outage_seconds": 0.256,
+      "lab_cleaned": true
+    }
+  ],
+  "transport": "real Telegram CLI refused missing lab credentials; no external message attempted"
+}

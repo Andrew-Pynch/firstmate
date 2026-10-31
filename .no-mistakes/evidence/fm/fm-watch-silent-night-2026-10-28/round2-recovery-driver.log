@@ -1,0 +1,238 @@
+Lab /tmp/fm-lab.taw7ju9_; private tmux socket. omp version: omp/18.11.0
+Initial pane:
+
+                                                           ████████████
+                                                              ██  ██       ▄▀▀▄ █▀▄▀▄ █▀▀▄
+                                                              ██  ██       ▀▄▄▀ █ █ █ █▄▄▀
+                                                              ▒▒  ██                  █
+                                                                  ██       v18.11.0
+
+                                                       Tip: You can /btw to ask a side question
+
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Update Available
+ New version 18.14.2 is available. Run: omp update
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+ Connected to MCP servers: drive, chrome-devtools:chrome-devtools.
+
+❯                                                                                                                     Alt+⇧P to change thinking effort
+ π · ◒ Opus 5.5 👁 · 🌳 c8a5a98ff0d8/01M692QWG08DYNN8KR5QX8FBBQ · ⑂ detached · ◫ 3.9%/1M ⟲ · (sub)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Session lock acquired by real omp; no arm or watcher launched.
+Owning omp pane closed with no arm; surviving real local endpoint remains on private socket.
+health check rc=1: supervision-health: telegram: set FM_TELEGRAM_BOT_TOKEN and FM_TELEGRAM_CHAT_ID
+supervision-health: Telegram delivery failed or remains uncertain; automatic resend is suppressed
+Elapsed to observed durable alert: 0.361s
+Durable queue:
+1793472087	1	check	primary-supervision-lost	check: primary-supervision-lost: home supervision stopped checking in while work is still live; restart firstmate to resume supervision
+
+.primary-loss-alert:
+listener-health:3529561:1793472087
+delivery-failed
+
+.primary-loss-queued:
+listener-health:3529561:1793472087
+
+health check rc=1: supervision-health: supervision-health: Telegram delivery failed or remains uncertain; automatic resend is suppressed
+Repeated check queue:
+1793472087	1	check	primary-supervision-lost	check: primary-supervision-lost: home supervision stopped checking in while work is still live; restart firstmate to resume supervision
+
+Restored primary session-start output:
+
+================================================================================
+SESSION START - /tmp/fm-lab.taw7ju9_
+================================================================================
+
+LOCK
+--------------------------------------------------------------------------------
+lock acquired: harness pid 3532029
+
+HOME ROLE
+--------------------------------------------------------------------------------
+fm-role: user (default)
+
+BOOTSTRAP
+--------------------------------------------------------------------------------
+MISSING: supervision-health (install: FM_HOME=/tmp/fm-lab.taw7ju9_ FM_ROOT_OVERRIDE=/home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M692QWG08DYNN8KR5QX8FBBQ FM_STATE_OVERRIDE=/tmp/fm-lab.taw7ju9_/state FM_CONFIG_OVERRIDE=/tmp/fm-lab.taw7ju9_/config /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M692QWG08DYNN8KR5QX8FBBQ/bin/fm-supervision-health.sh install; reason: supervision-health: unit missing or outdated: /home/andrew/.config/systemd/user/firstmate-supervision-health-fcdcfabc6ac58f23.service; run install)
+
+WAKE QUEUE
+--------------------------------------------------------------------------------
+DRAIN COPY: /tmp/fm-lab.taw7ju9_/state/.last-drain.1793472097.3576514.txt
+1793472087	1	check	primary-supervision-lost	check: primary-supervision-lost: home supervision stopped checking in while work is still live; restart firstmate to resume supervision
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 1 --recovery-generation 3529561.1793472087.oD3nba
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+WARNING: queued wakes pending - drain them with bin/fm-wake-drain.sh before anything else.
+OMP_WATCH_EXTENSION: not loaded - exit omp and relaunch through `fm <project>` (the launcher sets FM_HOME and --cwd) so /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M692QWG08DYNN8KR5QX8FBBQ/.omp/extensions/fm-primary-turnend-guard.ts and /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M692QWG08DYNN8KR5QX8FBBQ/.omp/extensions/fm-primary-omp-watch.ts auto-load for this home; a bare omp or /resume from the firstmate checkout does not register the extensions for this home
+OMP_WATCH_CAUSE: the extension marker /tmp/fm-lab.taw7ju9_/state/.omp-watch-extension-loaded names pid 3535942, which is not this session (pid 3532029)
+================================================================================
+SUPERVISION OPERATING INSTRUCTIONS - primary harness: omp
+================================================================================
+Current state:
+- Lock: held by this session; this session owns normal supervision unless away mode says otherwise.
+- Away/quiet mode: inactive.
+- X mode: inactive; use the default watcher cadence.
+- Ordinary wake: the omp extension already owns watcher continuity; do not arm another cycle.
+
+Mode: omp (Oh My Pi) extension background wake.
+
+When this session owns supervision and away mode is not active:
+1. Drain first with `bin/fm-wake-drain.sh`.
+   After handling all emitted wakes and reconciling open decisions and unread status lines, run the exact `--ack-through` command printed as `WAKE_ACK_REQUIRED`; until then the work remains durable for idempotent re-handling after interruption.
+   A drain marks what it prints as read, so capture its output to a file or read the copy named on its first `DRAIN COPY:` line before acknowledging whenever you filter or truncate it.
+2. Confirm the omp primary auto-loaded both project extensions from `.omp/extensions/`; omp has no project-trust gate, so a plain `omp` started with this home as its working directory loads them with no dialog.
+   If `bin/fm-session-start.sh` reported the omp extensions as not loaded, exit omp and relaunch through `fm <project>`, which sets FM_HOME and --cwd; a bare omp or /resume from the firstmate checkout does not register the extensions for this home.
+3. Initial process cycle only: make the one required `fm_watch_arm_omp` call; if startup already owned the fleet lock, this is an ownership-based no-op.
+   Use `/fm-watch-arm-omp` only as a human-entered fallback.
+   Never run `bin/fm-watch-arm.sh` through omp's bash tool because that foreground arm can wedge the agent and bypasses extension-owned cleanup.
+4. If the extension says no live session holds the lock, run `bin/fm-session-start.sh` to reclaim the session lock, then call `fm_watch_arm_omp` again.
+5. The extension starts `bin/fm-watch-arm.sh --restart`, keeps the child attached to the live omp process, and owns every later successor launch.
+6. Ordinary same-process session replacement (`/new`, `/resume`, `/fork`), compaction, and in-process subagents keep watcher continuity without a model turn or another `fm_watch_arm_omp` call.
+   The generation-owner contract, the in-flight actionable-close handoff, and recovery after a `session_shutdown` that no `session_start` follows live in `.omp/extensions/fm-primary-omp-watch.ts`; a `fm_watch_arm_omp` refusal names the handoff tokens it could not replay.
+   `bin/fm-watch-arm.sh` owns the plain-mode fast-path alert, while the [independent health check](../watcher-continuity.md#independent-supervision-health) covers both launch modes and shutdown without process exit; drain the alert after restarting firstmate.
+7. After an actionable child close, the extension rechecks session-lock ownership and verifies one successor before it delivers the follow-up wake; its bounded fallback is defined in `docs/watcher-continuity.md`.
+8. Ordinary work, turn completion, and ordinary signal, stale, check, heartbeat, or other wake handling: do not call `fm_watch_arm_omp` again because continuity is extension-owned rather than model-memory-owned.
+9. An unexpected child close enters bounded exponential retry, and an exhausted retry or lost session lock is surfaced as a watcher failure instead of disappearing.
+10. Missing, failed, or unhealthy cycle only: if a later notification explicitly reports one of those repair conditions, drain queued wakes, inspect the failure text, call `fm_watch_arm_omp`, and exit omp and relaunch through `fm <project>` if the extensions are not loaded.
+   A redundant call while the extension owns an arm child or scheduled retry is an ownership-based `watcher: unchanged` no-op, not an independent health claim.
+11. Never use shell `&` for watcher supervision.
+   The arm mechanism above is extension-owned, not a model tool call, but a manual recovery probe that backgrounds, pipes, or bundles the arm is denied automatically by the pre-tool seatbelt (`bin/fm-arm-pretool-check.sh`, wired into the turn-end guard extension at `/home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M692QWG08DYNN8KR5QX8FBBQ/.omp/extensions/fm-primary-turnend-guard.ts`).
+
+The turn-end guard on omp is structural, not advisory: `/home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M692QWG08DYNN8KR5QX8FBBQ/.omp/extensions/fm-primary-turnend-guard.ts` answers omp's blocking `session_stop` hook, and when `bin/fm-turnend-guard.sh` returns 2 it forces one continuation carrying the guard text, bounded to one per turn by the `stop_hook_active` flag omp sets on the continuation's own stop.
+An interrupted turn never raises `session_stop`, so a supervisor-initiated interrupt is not guarded; `bin/fm-control.sh` owns that postcondition.
+
+The Pi supervision branch (`docs/pi-supervision-branch.md`) is Pi's in-process conversation and does not run on omp: without the supervision host every actionable wake is delivered to this conversation and the lease, outcome-store, and `fm_branch_processed` contracts do not apply here, while a home with `config/supervision-host` and no `config/supervision-host-off` runs the host's away session ([`supervision-host.md`](../supervision-host.md)).
+
+The turn-end guard extension lives at `/home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M692QWG08DYNN8KR5QX8FBBQ/.omp/extensions/fm-primary-turnend-guard.ts`.
+The watcher extension lives at `/home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M692QWG08DYNN8KR5QX8FBBQ/.omp/extensions/fm-primary-omp-watch.ts`.
+Both are tracked, project-local `.omp/extensions/*.ts` files that omp auto-discovers from this home with no trust dialog; `bin/fm-session-start.sh` reports when the running omp session has not loaded both required extensions.
+
+
+================================================================================
+READ-ONCE CONTRACT
+================================================================================
+Everything below is printed in full for this session start: every state/*.meta,
+a compact data/backlog.md listing, a bounded tail of every state/*.status,
+data/projects.md, data/secondmates.md, data/captain.md, data/captain-shared.md,
+and data/learnings.md.
+Do NOT re-read any of them after reading this digest, and do NOT bulk-read
+data/backlog.md or state/*.status: re-reading everything defeats the entire
+point of this command.
+
+Go to a source directly only when:
+  - this digest flagged it ABSENT (then rebuild or create it per AGENTS.md),
+  - its contents looked unparseable or corrupt,
+  - an individual full status log is needed for older wake-event history, or a
+    status line was capped and its tail matters (each task's full log path is
+    printed with its tail),
+  - a full task body is needed (bin/fm-tasks-axi.sh show <id> --full, or data/backlog.md),
+  - the backlog listing disclosed omitted queued items and this turn needs them,
+  - the NETWORK CHECKS section reported its checks still IN PROGRESS and this
+    turn needs their verdict (bin/fm-startup-network.sh report),
+  - or a STARTUP TRUNCATED banner named the stage that would have printed it, in
+    which case that stage's sources were never emitted and must be reconciled,
+  - or a context re-emit opened with a read cue because the
+    harness cut the digest short.
+
+================================================================================
+FLEET STATE
+================================================================================
+
+data/backlog.md
+--------------------------------------------------------------------------------
+ABSENT
+
+Work under way (state/*.meta)
+--------------------------------------------------------------------------------
+
+--- live ---
+backend=tmux
+window=primary:worker
+endpoint: alive (backend=tmux window=primary:worker)
+status tail: (no status file yet: /tmp/fm-lab.taw7ju9_/state/live.status)
+
+Orphan status logs (state/*.status without matching .meta)
+--------------------------------------------------------------------------------
+(none)
+
+Fleet resources (bin/fm-fleet-resources.sh)
+--------------------------------------------------------------------------------
+fleet resources (floor 8 GiB, 3 GiB per worker): big-ron 12/61 GiB free, load 0.28/core, 9 workers using 4.3 GiB, headroom 1
+
+AFK
+--------------------------------------------------------------------------------
+absent
+
+================================================================================
+NETWORK CHECKS
+================================================================================
+IN PROGRESS - the deferred network checks have not finished yet.
+NOT yet confirmed: GitHub authentication, dead-secondmate relaunch, secondmate convergence, pending handoff delivery, project clone refresh with its drift reporting, and inactive terminal-outcome reconciliation.
+Started 1s ago, bounded at 120s.
+Only a FAILED or otherwise actionable result arrives as a `check: startup-network` wake; a clean success stays silent.
+The durable result is readable on demand with /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M692QWG08DYNN8KR5QX8FBBQ/bin/fm-startup-network.sh report; until it finishes, treat none of it as confirmed.
+
+================================================================================
+CONTEXT
+================================================================================
+
+data/projects.md
+--------------------------------------------------------------------------------
+ABSENT
+
+data/secondmates.md
+--------------------------------------------------------------------------------
+ABSENT
+
+data/captain.md
+--------------------------------------------------------------------------------
+ABSENT
+
+data/captain-shared.md (shared, main-authoritative, read-only in secondmate homes)
+--------------------------------------------------------------------------------
+ABSENT
+
+data/learnings.md
+--------------------------------------------------------------------------------
+ABSENT
+
+================================================================================
+NEXT STEP
+================================================================================
+Follow the supervision operating instructions block above for harness 'omp'.
+This script never starts supervision itself.
+
+The digest above is complete for this session start. The READ-ONCE CONTRACT
+section near the top of it governs what may still be read from disk.
+
+health check rc=0: supervision-health: healthy
+Real replacement primary acquired the session and completed a drain; health cleared the incident.
+health check rc=0: supervision-health: no live work
+Private tmux server stopped and disposable home removed.

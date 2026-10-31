@@ -1,0 +1,94 @@
+ok - watch-arm: handling successor delivers fresh new inbox work after-ack (intact counter) without consuming or looping
+ok - watch-arm: handling successor delivers fresh new inbox work before-ack (intact counter) without consuming or looping
+ok - watch-arm: handling successor delivers fresh new inbox work after-ack (missing counter) without consuming or looping
+ok - watch-arm: handling successor delivers fresh new inbox work before-ack (missing counter) without consuming or looping
+ok - watch-arm: handling successor delivers fresh new inbox work after-ack (malformed counter) without consuming or looping
+ok - watch-arm: handling successor delivers fresh new inbox work before-ack (malformed counter) without consuming or looping
+ok - watch-arm: handling successor delivers identical new inbox work after-ack (missing counter) without consuming or looping
+ok - watch-arm: handling successor delivers identical new inbox work after-ack (malformed counter) without consuming or looping
+ok - watch-arm: primary contention-pipe-close with live work alerts within one poll and survives until drain
+ok - watch-arm: handoff shutdown does not report lost supervision
+ok - watch-arm: handoff-new shutdown does not report lost supervision
+ok - watch-arm: handoff shutdown does not report lost supervision
+ok - watch-arm: primary queue-contention with live work alerts within one poll and survives until drain
+ok - watch-arm: a live primary receives the completed cycle without an outage alert
+ok - watch-arm: primary loss after actionable output alerts within one poll before successor confirmation
+ok - watch-arm: primary anchor with live work alerts within one poll and survives until drain
+ok - watch-arm: primary contention with live work alerts within one poll and survives until drain
+ok - watch-arm: primary pipe with live work alerts within one poll and survives until drain
+ok - watch-arm: primary pipe-close with live work alerts within one poll and survives until drain
+ok - watch-arm: primary two-hup with live work alerts within one poll and survives until drain
+ok - watch-arm: primary cycle-close with live work alerts within one poll and survives until drain
+ok - watch-arm: primary shutdown with live work alerts within one poll and survives until drain
+ok - watch-arm: handoff-new shutdown does not report lost supervision
+ok - watch-arm: primary orphaned with live work alerts within one poll and survives until drain
+ok - watch-arm: primary send-failure with live work alerts within one poll and survives until drain
+ok - watch-arm: primary crash with live work alerts within one poll and survives until drain
+ok - watch-arm: empty shutdown does not report lost supervision
+ok - watch-arm: primary remote-alive with live work alerts within one poll and survives until drain
+ok - watch-arm: primary remote-delayed with live work alerts within one poll and survives until drain
+ok - watch-arm: primary slow-remote with live work alerts within one poll and survives until drain
+ok - watch-arm: primary slow-remote with live work alerts within one poll and survives until drain
+ok - watch-arm: primary remote-unknown with live work alerts within one poll and survives until drain
+ok - watch-arm: primary slow-remote with live work alerts within one poll and survives until drain
+ok - watch-arm: remote-dead shutdown does not report lost supervision
+ok - watch-arm: remote-missing shutdown does not report lost supervision
+ok - watch-arm: remote-stopped shutdown does not report lost supervision
+ok - watch-arm: handoff shutdown does not report lost supervision
+ok - watch-arm: primary attached with live work alerts within one poll and survives until drain
+ok - watch-arm: unreadable primary identity refuses by name without a false outage alert
+ok - watch-arm: unknown initial session anchor refuses before launching a watcher
+ok - watch-arm: an attached arm reports the wake its cycle delivered instead of a false failure
+ok - watch-arm: a delivered wake consumed by the handling turn still closes the attached arm cleanly
+ok - watch-arm: an unusable launch confirm window refuses to arm by name
+ok - watch-arm: a disposable validation checkout refuses to arm
+ok - watch-arm: a watcher exits when its state directory is removed
+ok - watch-arm: a watcher exits when its home is removed
+ok - watch-arm: an attached arm exits within its bound when its root is removed
+ok - watch-arm: the test reaper stops a watcher armed for a tracked temporary home
+ok - watch-arm: a cycle that delivered no wake of its own still fails loudly
+ok - watch-arm: an attached arm keeps following a slow live holder and reports its wake
+ok - watch-arm: an attached arm hands a holder stalled past the bound to its owner's replacement
+DRAIN COPY: /tmp/fm-watch-arm-tests.iHqNH6/rearm-resurface/state/.last-drain.1793472067.3446305.txt
+/home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M692QWG08DYNN8KR5QX8FBBQ/bin/fm-watch-arm.sh: line 1076: 3448046 Killed                     "$WATCH" > "$child_out"
+DRAIN COPY: /tmp/fm-watch-arm-tests.iHqNH6/rearm-resurface/state/.last-drain.1793472068.3451390.txt
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 2 --recovery-generation 3449730.1793472068.GLpCll
+ok - watch-arm: re-arm surfaces every queued wake and an open remote decision after downtime
+/home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M692QWG08DYNN8KR5QX8FBBQ/bin/fm-watch-arm.sh: line 1076: 3462901 Killed                     "$WATCH" > "$child_out"
+DRAIN COPY: /tmp/fm-watch-arm-tests.iHqNH6/slow-rearm-recovery/state/.last-drain.1793472087.3530428.txt
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 1 --recovery-generation 3464588.1793472073.NhiiPV
+ok - watch-arm: a re-arm whose recovery cycle runs slowly still surfaces it
+watcher: recovery state could not be persisted; retaining stale lock evidence
+ok - watch-arm: marker publication failure retains stale-lock recovery evidence
+DRAIN COPY: /tmp/fm-watch-arm-tests.iHqNH6/delivery-gap-recovery/state/.last-drain.1793472091.3556449.txt
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 2 --recovery-generation 3538267.1793472091.HqpnS5
+DRAIN COPY: /tmp/fm-watch-arm-tests.iHqNH6/delivery-gap-recovery/state/.last-drain.1793472093.3564284.txt
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 3 --recovery-generation 3562853.1793472092.Nrli1h
+ok - watch-arm: a wake queued after handling drain is recovered once at successor arm
+ok - watch-arm: interrupted handling leaves its wake durable for successor re-drain
+DRAIN COPY: /tmp/fm-watch-arm-tests.iHqNH6/malformed-downtime-marker/state/.last-drain.1793472098.3579908.txt
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 0 --recovery-generation 3578791.1793472098.775l1R
+ok - watch-arm: malformed recovery state is quarantined without a successor loop
+DRAIN COPY: /tmp/fm-watch-arm-tests.iHqNH6/recovery-consumption-race/state/.last-drain.1793472101.3585275.txt
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 1 --recovery-generation 3583240.1793472100.ckk95y
+ok - watch-arm: publication after recovery handoff is surfaced
+ok - watch-arm: restart publishes recovery before clearing a reused-pid watcher lock
+DRAIN COPY: /tmp/fm-watch-arm-tests.iHqNH6/markerless-legacy-arm/state/.last-drain.1793472103.3589166.txt
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 7 --recovery-generation 3588114.1793472103.ShU4FD
+ok - watch-arm: markerless legacy queues are adopted and recovered
+ok - watch-arm: an idle Lavish source stays quiet and its real result wakes promptly
+ok - watch-arm: appending work reopens an announced empty recovery
+ok - watch-arm: a watcher close during handling keeps the printed acknowledgement valid
+ok - watch-arm: a moved recovery generation consumes handled rows and names its remedy
+ok - watch-arm: downtime marker publication does not follow symlinks
+ok - watch-arm: --stop ends only this home's watcher, publishes downtime, and reports when none runs
+ok - watch-arm: an already-acknowledged handling confirmation succeeds as a no-op
+ok - watch-arm: a churned generation's handling confirmation reports a mismatch and an arm check keeps it
+ok - watch-arm: --take-over attaches to a cycle the named arm does not own and leaves it running
+ok - watch-arm: --take-over owns a fresh cycle without a recovery wake and still surfaces queued work
+watcher: secondmate liveness check failed
+ok - watch-arm: takeover preserves self-exit downtime and surfaces a recovery wake
+ok - watch-arm: --take-over of a watcher inside its herdr event wait confirms the stop and resurfaces nothing
+ok - watch-arm: the OpenCode arm plugin decides with the shared supervision predicate
+
+exit=0

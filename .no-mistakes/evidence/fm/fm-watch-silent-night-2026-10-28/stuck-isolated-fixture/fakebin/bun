@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$FM_HOME/telegram.log"
+case "$(cat "$FM_HOME/sender-mode" 2>/dev/null)" in
+  missing) echo 'missing Telegram credentials' >&2; exit 1 ;;
+  hang) sleep 12 ;;
+esac
+exit 0

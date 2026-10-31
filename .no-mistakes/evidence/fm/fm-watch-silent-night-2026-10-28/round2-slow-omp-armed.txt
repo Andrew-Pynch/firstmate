@@ -1,0 +1,49 @@
+
+                                                           ████████████
+                                                              ██  ██       ▄▀▀▄ █▀▄▀▄ █▀▀▄
+                                                              ██  ██       ▀▄▄▀ █ █ █ █▄▄▀
+                                                              ▒▒  ██                  █
+                                                                  ██       v18.11.0
+
+                                                Tip: Press ⇧⇥ to cycle through reasoning effort levels
+
+
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Update Available
+ New version 18.14.2 is available. Run: omp update
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+ Connected to MCP servers: drive, chrome-devtools:chrome-devtools.
+
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ $ bash bin/fm-session-start.sh
+
+ data/captain.md
+ --------------------------------------------------------------------------------
+ ABSENT
+
+ data/captain-shared.md (shared, main-authoritative, read-only in secondmate homes)
+ --------------------------------------------------------------------------------
+ ABSENT
+
+ data/learnings.md
+ --------------------------------------------------------------------------------
+ ABSENT
+
+ ================================================================================
+ NEXT STEP
+ ================================================================================
+ Follow the supervision operating instructions block above for harness 'omp'.
+ This script never starts supervision itself.
+
+ The digest above is complete for this session start. The READ-ONCE CONTRACT
+ section near the top of it governs what may still be read from disk.
+
+ … 169 more lines (Ctrl+O to expand)
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+ watcher: started omp extension arm child 1; future ordinary re-arms are automatic; call fm_watch_arm_omp again only after a later notification says
+ the cycle is missing, failed, or unhealthy
+
+❯
+ π · ◒ Opus 5.5 👁 · 🌳 c8a5a98ff0d8/01M692QWG08DYNN8KR5QX8FBBQ · ⑂ detached · ◫ 4.4%/1M ⟲ · (sub)

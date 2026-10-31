@@ -1,0 +1,66 @@
+[
+  {
+    "command": [
+      "bash",
+      "bin/fm-lab-home.sh",
+      "create",
+      "/home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M692QWG08DYNN8KR5QX8FBBQ/.validation-unknown-psftpm4m"
+    ],
+    "rc": 0,
+    "stdout": "/home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M692QWG08DYNN8KR5QX8FBBQ/.validation-unknown-psftpm4m\n",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "bash",
+      "bin/fm-supervision-health.sh",
+      "_probe",
+      "/home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M692QWG08DYNN8KR5QX8FBBQ/.validation-unknown-psftpm4m/state/sole.meta"
+    ],
+    "rc": 2,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "bash",
+      "bin/fm-supervision-health.sh",
+      "check"
+    ],
+    "rc": 1,
+    "stdout": "",
+    "stderr": "supervision-health: telegram: set FM_TELEGRAM_BOT_TOKEN and FM_TELEGRAM_CHAT_ID\nsupervision-health: Telegram delivery failed or remains uncertain; automatic resend is suppressed\n"
+  },
+  {
+    "elapsed_seconds": 0.35744455188978463,
+    "queue": "1793471946\t1\tcheck\tprimary-supervision-lost\tcheck: primary-supervision-lost: home supervision stopped checking in while work is still live; restart firstmate to resume supervision\n",
+    "receipt": "listener-health:3065332:1793471946\ndelivery-failed\n"
+  },
+  {
+    "command": [
+      "bash",
+      "bin/fm-supervision-health.sh",
+      "check"
+    ],
+    "rc": 1,
+    "stdout": "",
+    "stderr": "supervision-health: supervision-health: Telegram delivery failed or remains uncertain; automatic resend is suppressed\n"
+  },
+  {
+    "command": [
+      "bash",
+      "bin/fm-supervision-health.sh",
+      "check"
+    ],
+    "rc": 0,
+    "stdout": "supervision-health: no live work\n",
+    "stderr": ""
+  },
+  {
+    "result": "pass",
+    "detail": "Unconfigured sole T3 endpoint is unknown and alerts; repeated check deduplicates; empty home stays quiet."
+  },
+  {
+    "cleanup": "disposable home removed"
+  }
+]

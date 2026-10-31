@@ -1,0 +1,19 @@
+{
+  "scan_elapsed_seconds": 12,
+  "recovery_order": [
+    "first",
+    "later"
+  ],
+  "records": {
+    "0000000000000002": {
+      "task_id": "later",
+      "phase": "recovery_sent",
+      "recovery_attempted_epoch": "1793471524"
+    },
+    "0000000000000001": {
+      "task_id": "first",
+      "phase": "recovery_unknown",
+      "recovery_attempted_epoch": "1793471515"
+    }
+  }
+}

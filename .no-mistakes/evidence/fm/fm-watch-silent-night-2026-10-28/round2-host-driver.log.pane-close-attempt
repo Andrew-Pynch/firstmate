@@ -1,0 +1,167 @@
+Lab /tmp/fm-lab.e11nygbz; private tmux socket. omp version: omp/18.11.0
+Initial pane:
+
+                                                           ████████████
+                                                              ██  ██       ▄▀▀▄ █▀▄▀▄ █▀▀▄
+                                                              ██  ██       ▀▄▄▀ █ █ █ █▄▄▀
+                                                              ▒▒  ██                  █
+                                                                  ██       v18.11.0
+
+                                       Tip: Hit a Codex rate limit? `/usage reset` spends a saved reset credit
+                                                          to immediately restore your quota
+
+ Connecting to MCP servers: drive, chrome-devtools:chrome-devtools…
+
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Update Available
+ New version 18.14.2 is available. Run: omp update
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+ Connected to MCP servers: drive, chrome-devtools:chrome-devtools.
+
+❯                                                                                                                     Alt+⇧P to change thinking effort
+ π · ◒ Opus 5.5 👁 · 🌳 c8a5a98ff0d8/01M692QWG08DYNN8KR5QX8FBBQ · ⑂ detached · ◫ 3.9%/1M ⟲ · (sub)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Real omp armed watcher. Session lock: 3477140
+Watcher lock pid: 3551144
+health check rc=0: supervision-health: healthy
+Armed pane:
+
+                                                           ████████████
+                                                              ██  ██       ▄▀▀▄ █▀▄▀▄ █▀▀▄
+                                                              ██  ██       ▀▄▄▀ █ █ █ █▄▄▀
+                                                              ▒▒  ██                  █
+                                                                  ██       v18.11.0
+
+                                       Tip: Hit a Codex rate limit? `/usage reset` spends a saved reset credit
+                                                          to immediately restore your quota
+
+
+ Connecting to MCP servers: drive, chrome-devtools:chrome-devtools…
+
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Update Available
+ New version 18.14.2 is available. Run: omp update
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+ Connected to MCP servers: drive, chrome-devtools:chrome-devtools.
+
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ $ bash bin/fm-session-start.sh
+
+ data/captain.md
+ --------------------------------------------------------------------------------
+ ABSENT
+
+ data/captain-shared.md (shared, main-authoritative, read-only in secondmate homes)
+ --------------------------------------------------------------------------------
+ ABSENT
+
+ data/learnings.md
+ --------------------------------------------------------------------------------
+ ABSENT
+
+ ================================================================================
+ NEXT STEP
+ ================================================================================
+ Follow the supervision operating instructions block above for harness 'omp'.
+ This script never starts supervision itself.
+
+ The digest above is complete for this session start. The READ-ONCE CONTRACT
+ section near the top of it governs what may still be read from disk.
+
+ … 195 more lines (Ctrl+O to expand)
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+ watcher: started omp extension arm child 1; future ordinary re-arms are automatic; call fm_watch_arm_omp again only after a later notification says
+ the cycle is missing, failed, or unhealthy
+
+❯
+ π · ◒ Opus 5.5 👁 · 🌳 c8a5a98ff0d8/01M692QWG08DYNN8KR5QX8FBBQ · ⑂ detached · ◫ 4.5%/1M ⟲ · (sub)
+
+Real supervision-host record:
+host	3548877	linux-starttime=67480695 cmdline-hex=62617368002f686f6d652f616e647265772f2e6e6f2d6d697374616b65732f776f726b74726565732f6338613561393866663064382f30314d363932515747303844594e4e384b5235515838464242512f62696e2f666d2d7375706572766973696f6e2d686f73742e7368007061726b002d2d7265737461727400
+arm	3550625	linux-starttime=67480709 cmdline-hex=62617368002f686f6d652f616e647265772f2e6e6f2d6d697374616b65732f776f726b74726565732f6338613561393866663064382f30314d363932515747303844594e4e384b5235515838464242512f62696e2f666d2d77617463682d61726d2e7368002d2d7265737461727400
+
+Owning omp pane replaced; surviving local worker remains on private socket.
+health check rc=0: supervision-health: healthy
+Live driver stopped: TimeoutError('condition not observed')
+Final pane:
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Private tmux server stopped and disposable home removed.
+Traceback (most recent call last):
+  File "/home/andrew/.no-mistakes/evidence/01M692QWG08DYNN8KR5QX8FBBQ/round2-host-driver.py", line 53, in <module>
+    waitfor(lambda:(LAB/'state/.wake-queue').exists() and 'primary-supervision-lost' in (LAB/'state/.wake-queue').read_text(),15)
+    ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/andrew/.no-mistakes/evidence/01M692QWG08DYNN8KR5QX8FBBQ/round2-host-driver.py", line 21, in waitfor
+    raise TimeoutError('condition not observed')
+TimeoutError: condition not observed

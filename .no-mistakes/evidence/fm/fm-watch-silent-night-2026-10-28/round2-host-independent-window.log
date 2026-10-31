@@ -1,0 +1,2 @@
+supervision-health: telegram: set FM_TELEGRAM_BOT_TOKEN and FM_TELEGRAM_CHAT_ID
+supervision-health: Telegram delivery failed or remains uncertain; automatic resend is suppressed

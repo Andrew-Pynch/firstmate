@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$FM_HOME/systemctl.log"
+case "$*" in
+  *is-enabled*) echo enabled ;;
+  *is-active*) echo "${FM_FAKE_TIMER_STATE:-active}" ;;
+  *show*) echo success ;;
+esac

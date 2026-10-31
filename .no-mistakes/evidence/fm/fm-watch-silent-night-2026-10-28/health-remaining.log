@@ -1,0 +1,19 @@
+ok - supervision-health: delayed native event operation preserves request identity, failure accounting, and owner health
+ok - supervision-health: timeout native event operation preserves request identity, failure accounting, and owner health
+ok - supervision-health: ring doorbell completes without a false outage and owner death alerts
+ok - supervision-health: retry doorbell completes without a false outage and owner death alerts
+ok - supervision-health: secondmate doorbell completes without a false outage and owner death alerts
+ok - supervision-health: real fm-send recovery accounts for all four backend operations
+ok - supervision-health: real fm-send stuck accounts for all four backend operations
+ok - supervision-health: verified wedge reads refresh health, waits terminate, and reader death alerts
+ok - supervision-health: dead primary alerts while its real orphan host watcher still beats
+ok - supervision-health: mixed endpoint uncertainty cannot suppress an outage
+ok - supervision-health: sole endpoint uncertainty cannot suppress an outage
+ok - supervision-health: unknown endpoint uncertainty cannot suppress an outage
+ok - supervision-health: definitively missing sole endpoint stays quiet
+ok - supervision-health: live or unknown remote work alerts; absent endpoints stay quiet
+ok - supervision-health: queue contention retries durable missing outage without resending Telegram
+ok - supervision-health: queue contention retries durable hang outage without resending Telegram
+ok - supervision-health: missing sender remains diagnosed, respects cadence, and is not resent
+ok - supervision-health: hang sender remains diagnosed, respects cadence, and is not resent
+ok - supervision-health: bootstrap installs private units and doctor verifies active state

@@ -1,0 +1,45 @@
+
+                                                           ████████████
+                                                              ██  ██       ▄▀▀▄ █▀▄▀▄ █▀▀▄
+                                                              ██  ██       ▀▄▄▀ █ █ █ █▄▄▀
+                                                              ▒▒  ██                  █
+                                                                  ██       v18.11.0
+
+                                       Tip: Press ←← to drill into a running or finished agent and inspect its
+                                                              tool calls and transcript
+
+ Connecting to MCP servers: drive, chrome-devtools:chrome-devtools…
+
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Update Available
+ New version 18.14.2 is available. Run: omp update
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+ Connected to MCP servers: drive, chrome-devtools:chrome-devtools.
+
+❯                                                                                                                     Alt+⇧P to change thinking effort
+ π · ◒ Opus 5.5 👁 · 🌳 c8a5a98ff0d8/01M692QWG08DYNN8KR5QX8FBBQ · ⑂ detached · ◫ 3.9%/1M ⟲ · (sub)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

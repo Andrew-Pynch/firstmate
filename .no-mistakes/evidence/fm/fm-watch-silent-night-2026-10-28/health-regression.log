@@ -1,0 +1,12 @@
+ok - supervision-health: bootstrap forwards its default home and propagates installation failure
+ok - supervision-health: zero cadence is rejected
+ok - supervision-health: unused live entry points are rejected
+ok - supervision-health: watcher and drain freshness, incident dedupe, recovery, and empty-home suppression
+ok - supervision-health: real ordinary watcher stays healthy and its death alerts within one poll
+ok - supervision-health: real slow watcher stays healthy and its death alerts within one poll
+ok - supervision-health: real relaunch watcher stays healthy and its death alerts within one poll
+ok - supervision-health: real procevent watcher stays healthy and its death alerts within one poll
+ok - supervision-health: real capability watcher stays healthy and its death alerts within one poll
+ok - supervision-health: real capture-rpc watcher stays healthy and its death alerts within one poll
+ok - supervision-health: real pending-rpc watcher stays healthy and its death alerts within one poll
+not ok - stuck operation starved the scan: 

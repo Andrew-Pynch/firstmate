@@ -607,6 +607,8 @@ Its capture regression runs the real MCP helper against an isolated HTTP fixture
 The sourced watcher-function regression exercises both verified wedge reads against delayed HTTP replies, checks that an expired owned wait terminates, and requires a bounded alert after the reader dies.
 The pending-reply regression observes two successful twenty-second RPCs through the actual watcher before checking recovery of both that record and a later record.
 Its stuck-operation case bounds observation and recovery separately, retains uncertain recovery state, and proves later-record progress and an alert after watcher death.
+The native-event regression replaces an approval ID behind identical rendered text, delays environment verification and thread reading by twenty seconds each, and requires a fresh durable wake and request signature.
+A separate forced-deadline case requires consecutive event failures to disable the fast path while the owning watcher remains healthy; both cases require an outage alert after owner death.
 The arm regression uses a sole remote endpoint whose fake reply takes 0.8 seconds, requires publication within `FM_POLL=3`, and retains delayed healthy-replacement suppression at short polls.
 The arm regressions place a delayed remote endpoint before a live local one and require notification within both one-second and three-second poll intervals.
 The three omp lifecycle-gap cases continue to pass, including shutdown without primary-process exit; the generated-service smoke retains the real-manager activation limit above.

@@ -355,7 +355,9 @@ async function mcp(req, res) {
     res.writeHead(200, { "content-type": "text/event-stream", "mcp-session-id": "sess-fake" });
     return res.end();
   }
-  const delay = w.delayToolsMs?.[msg.params?.name] ?? 0;
+  const configuredDelay = w.delayToolsMs?.[msg.params?.name];
+  const delay = Array.isArray(configuredDelay) ? configuredDelay.shift() ?? 0 : configuredDelay ?? 0;
+  if (Array.isArray(configuredDelay)) saveWorld(w);
   if (delay > 0) {
     log(w, { ...entry, delayStarted: true });
     await sleep(delay);

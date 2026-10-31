@@ -3359,7 +3359,7 @@ heartbeat_scan_finds_actionable() {
 # supervision cycle: the reader is a short-lived subprocess of THIS watcher, not
 # a second watcher, so every guard/beacon/arm/turn-end mechanism is unchanged.
 event_wait_or_sleep() {
-  local w b session first_backend="" first_session="" rec rc capability_budget
+  local w b session first_backend="" first_session="" rec rc capability_budget wait_budget
   local windows=() t3_windows=()
   while IFS= read -r w; do
     b=$(window_backend "$w")
@@ -3420,7 +3420,11 @@ event_wait_or_sleep() {
   # signal for all of it (watcher_waited).
   fm_wait_tmp_cleanup
   WATCHER_WAIT_TMP=$(mktemp -d "${TMPDIR:-/tmp}/fm-watch-wait.XXXXXX") || WATCHER_WAIT_TMP=
-  TMPDIR=${WATCHER_WAIT_TMP:-${TMPDIR:-/tmp}} FM_BACKEND_EVENTS_CAPABILITY_CONFIRMED=1 watcher_waited \
+  wait_budget=$CHECK_TIMEOUT
+  if [ "$first_backend" = t3code ] && fm_backend_source t3code; then
+    wait_budget=$(fm_backend_t3code_wait_budget "$POLL" "${#windows[@]}")
+  fi
+  TMPDIR=${WATCHER_WAIT_TMP:-${TMPDIR:-/tmp}} FM_BACKEND_EVENTS_CAPABILITY_CONFIRMED=1 WATCHER_WAIT_BUDGET=$wait_budget watcher_waited \
     fm_backend_wait_transition "$first_backend" "$first_session" "$POLL" "$STATE" "${windows[@]}"
   rc=$?
   rec=$WATCHER_CAPTURE
@@ -3430,18 +3434,18 @@ event_wait_or_sleep() {
       _event_cap_fails=0
       handle_push_transition "$first_backend" "$first_session" "$rec"
       ;;
-    2)
+    1)
+      # 1: a clean full-budget wait with no actionable edge - the reader already
+      # blocked ~POLL, so just continue; the next cycle re-scans.
+      _event_cap_fails=0
+      ;;
+    *)
       # Event path unusable this cycle (connect/subscribe failure). Sleep the
       # budget and count toward the runtime-disable threshold; past it, drop to
       # pure polling for the rest of this watcher process.
       _event_cap_fails=$((_event_cap_fails + 1))
       [ "$_event_cap_fails" -ge "$EVENT_CAP_FAIL_MAX" ] && _event_cap_ok=0
       watcher_waited sleep "$POLL"
-      ;;
-    *)
-      # 1: a clean full-budget wait with no actionable edge - the reader already
-      # blocked ~POLL, so just continue; the next cycle re-scans.
-      _event_cap_fails=0
       ;;
   esac
 }

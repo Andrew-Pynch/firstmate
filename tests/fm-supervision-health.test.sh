@@ -683,6 +683,112 @@ PY
   pass 'supervision-health: stuck pending-reply operations are bounded without losing later records or uncertain recovery'
 }
 
+test_health_t3_event() {
+  local mode=$1 dir reader checker i cycles=26 check_timeout=30
+  [ "$mode" != timeout ] || check_timeout=1
+  dir=$(health_fixture "event-$mode")
+  printf 'kind=ship\nbackend=t3code\nwindow=event-thread\n' > "$dir/state/event.meta"
+  t3_fake_start "$dir/server"
+  t3_fake_case "$dir/server/world" '{"threads":{"event-thread":{"threadId":"event-thread","status":"completed","runtimeRequests":[{"id":"approval-old","kind":"approval","status":"pending"}],"items":[{"itemId":"approval-old","type":"approval_request","status":"waiting","text":"Allow the tool"}]}}}'
+  t3_fake_credential "$dir/config/t3code-token"
+  cat > "$dir/event-reader.sh" <<'SH'
+#!/usr/bin/env bash
+set -u
+. "$FM_ROOT_OVERRIDE/bin/fm-watch.sh"
+WATCHER_PID=$$
+mkdir "$WATCH_LOCK"
+printf '%s\n' "$$" > "$WATCH_LOCK/pid"
+wake() { printf '%s\n' "$1" >> "$FM_HOME/event-wakes"; }
+EVENT_CAP_FAIL_MAX=2
+event_wait_or_sleep
+touch "$FM_HOME/event-ready"
+while [ ! -e "$FM_HOME/event-start" ]; do watcher_waited sleep 0.1; done
+if [ "$FM_EVENT_TEST_MODE" = timeout ]; then
+  fm_backend_t3code_wait_budget() { printf 1; }
+fi
+event_wait_or_sleep
+printf '%s %s\n' "$_event_cap_fails" "$_event_cap_ok" >> "$FM_HOME/event-results"
+if [ "$FM_EVENT_TEST_MODE" = timeout ]; then
+  event_wait_or_sleep
+  printf '%s %s\n' "$_event_cap_fails" "$_event_cap_ok" >> "$FM_HOME/event-results"
+  event_wait_or_sleep
+  printf '%s %s\n' "$_event_cap_fails" "$_event_cap_ok" >> "$FM_HOME/event-results"
+fi
+touch "$FM_HOME/event-done"
+while :; do watcher_waited sleep 2; done
+SH
+  FM_HOME="$dir" FM_ROOT_OVERRIDE="$ROOT" FM_STATE_OVERRIDE="$dir/state" FM_CONFIG_OVERRIDE="$dir/config" \
+    FM_EVENT_TEST_MODE="$mode" FM_POLL=2 FM_SIGNAL_GRACE=0 FM_CHECK_TIMEOUT="$check_timeout" \
+    bash "$dir/event-reader.sh" > "$dir/reader.log" 2>&1 &
+  reader=$!
+  for i in $(seq 1 160); do [ -e "$dir/event-ready" ] && break; sleep 0.05; done
+  [ -e "$dir/event-ready" ] || fail "event consumer did not become ready: $(cat "$dir/reader.log")"
+  [ "$(cat "$dir/state/.t3code-escalated-event-thread")" = 'q:;a:1:approval-old' ] \
+    || fail 'event fixture did not identify the original native approval'
+  if [ "$mode" = delayed ]; then
+    node "$ROOT/bin/fm-t3-mcp.mjs" capture --thread event-thread --token-file "$dir/config/t3code-token" > "$dir/before"
+    t3_fake_set 'w.threads["event-thread"].runtimeRequests[0].id="approval-new"; w.threads["event-thread"].items[0].itemId="approval-new"'
+    node "$ROOT/bin/fm-t3-mcp.mjs" capture --thread event-thread --token-file "$dir/config/t3code-token" > "$dir/after"
+    cmp -s "$dir/before" "$dir/after" || fail 'replaced native approval unexpectedly changed its rendered text'
+    t3_fake_set 'w.delayToolsMs={t3_environment_read:[20000],t3_thread_read:[20000]}'
+  else
+    cycles=10
+    t3_fake_set 'w.delayToolsMs={t3_environment_read:[10000,10000]}'
+  fi
+  : > "$T3_FAKE_LOG"
+  (
+    for i in $(seq 1 "$cycles"); do HEALTH_TEST_POLL=2 health_run "$dir" run || exit 1; done
+  ) > "$dir/health.log" 2>&1 &
+  checker=$!
+  touch "$dir/event-start"
+  for i in $(seq 1 950); do [ -e "$dir/event-done" ] && break; sleep 0.05; done
+  [ -e "$dir/event-done" ] || fail "event operation did not finish: $(cat "$dir/reader.log")"
+  [ ! -e "$dir/telegram.log" ] || fail 'live event consumer incorrectly reported lost supervision'
+  if [ "$mode" = delayed ]; then
+    [ "$(cat "$dir/state/.t3code-escalated-event-thread")" = 'q:;a:1:approval-new' ] \
+      || fail 'delayed event consumer missed the replacement native approval'
+    [ "$(wc -l < "$dir/event-wakes")" -eq 2 ] || fail 'replacement approval did not produce exactly one new wake'
+    python3 - "$T3_FAKE_LOG" <<'PY' || fail 'event fixture did not complete both delayed RPCs'
+import json, sys
+rows=[json.loads(line) for line in open(sys.argv[1])]
+for tool in ('t3_environment_read','t3_thread_read'):
+    assert any(row.get('tool')==tool and row.get('delayStarted') for row in rows)
+    assert any(row.get('tool')==tool and not row.get('delayStarted') for row in rows)
+PY
+  else
+    [ "$(cat "$dir/event-results")" = "$(printf '1 1\n2 0\n2 0')" ] \
+      || fail "forced expiry reset event failure accounting: $(cat "$dir/event-results")"
+    python3 - "$T3_FAKE_LOG" <<'PY' || fail 'disabled event path still invoked the backend'
+import json, sys
+rows=[json.loads(line) for line in open(sys.argv[1])]
+assert sum(row.get('tool')=='t3_environment_read' and row.get('delayStarted') is True for row in rows)==2
+PY
+  fi
+  python3 - "$reader" "$dir" <<'PY' || fail 'event consumer death missed its poll deadline'
+from pathlib import Path
+import os, signal, subprocess, sys, time
+pid=int(sys.argv[1]); home=Path(sys.argv[2])
+groups=[]
+for row in subprocess.check_output(['ps','-eo','pid=,ppid=,pgid='],text=True).splitlines():
+    child,parent,group=map(int,row.split())
+    if parent==pid and child==group: groups.append(group)
+start=time.monotonic(); os.kill(pid,signal.SIGKILL)
+try:
+    while time.monotonic()-start < 2:
+        if all(p.exists() and 'primary-supervision-lost' in p.read_text() for p in (home/'telegram.log',home/'state/.wake-queue')): break
+        time.sleep(0.01)
+    else: raise SystemExit('no durable and external alert within FM_POLL=2')
+finally:
+    for group in groups:
+        try: os.killpg(group,signal.SIGTERM)
+        except ProcessLookupError: pass
+PY
+  wait "$reader" 2>/dev/null || true
+  wait "$checker" || fail "event health monitor failed: $(cat "$dir/health.log")"
+  t3_fake_stop
+  pass "supervision-health: $mode native event operation preserves request identity, failure accounting, and owner health"
+}
+
 test_health_bootstrap_default_home
 test_health_rejects_zero_poll
 test_health_rejects_unused_live
@@ -695,6 +801,8 @@ test_health_real_watcher capability
 test_health_real_watcher capture-rpc
 test_health_real_watcher pending-rpc
 test_health_pending_stuck
+test_health_t3_event delayed
+test_health_t3_event timeout
 test_health_wedge_reads
 test_health_orphan_host
 test_health_slow_endpoint

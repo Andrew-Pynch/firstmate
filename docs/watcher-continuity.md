@@ -90,6 +90,7 @@ A fresh orphan watcher cannot suppress an alert after its owning session disappe
 The watcher refreshes its beacon during owned bounded checks and waits, including its poll sleep, each secondmate probe/relaunch, process-event confirmation, inactive reconciliation, backend reads, and external guards, so supported slow checks do not look like lost supervision.
 An owned wait terminates when its configured work budget expires; a stopped or dead watcher cannot keep the beacon fresh.
 T3 state reads allow the full verified-session sequence, and captures also allow the activity pagination budget; additional backward-page retries share that aggregate deadline.
+The native T3 event wait additionally budgets pending-request classification for every watched thread before its final event wait; forced expiry follows the event-failure path rather than counting as an empty successful poll.
 Pending-reply reconciliation applies these waits to each backend observation and recovery operation, preserving later-record progress when an operation times out.
 During shutdown, the arm probes endpoints within its existing replacement grace period and reserves the final half-second of the poll for publication.
 The freshness deadline reserves half of `FM_POLL` for endpoint proof and alert publication.

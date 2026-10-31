@@ -51,6 +51,22 @@ health_run() {
     FM_FAKE_TMUX_WINDOW=fixture:fixture FM_POLL="${HEALTH_TEST_POLL:-3}" PATH="$dir/fakebin:$PATH" "$HEALTH" "$@"
 }
 
+health_pending_records() {
+  FM_HOME="$1" FM_STATE_OVERRIDE="$1/state" bash -c '
+    . "$1/bin/fm-pending-reply-lib.sh"
+    for task in first later; do
+      case "$task" in first) corr=0000000000000001 ;; later) corr=0000000000000002 ;; esac
+      made=$(fm_pending_reply_create "$FM_HOME" "$FM_STATE_OVERRIDE" "$task" "report $task")
+      mv "$(fm_pending_reply_path "$FM_STATE_OVERRIDE" "$made")" "$(fm_pending_reply_path "$FM_STATE_OVERRIDE" "$corr")"
+      rec=$(fm_pending_reply_path "$FM_STATE_OVERRIDE" "$corr")
+      fm_pending_reply_set "$rec" corr_id "$corr"
+      fm_pending_reply_set "$rec" grace_secs 0
+      fm_pending_reply_mark_delivered "$FM_STATE_OVERRIDE" "$corr"
+      fm_pending_reply_set "$rec" request_turn_completed_epoch 1
+    done
+  ' _ "$ROOT"
+}
+
 stale_health() {
   python3 - "$1/state/.last-watcher-beat" <<'PY'
 import os
@@ -87,7 +103,7 @@ test_health_incidents() {
 }
 
 test_health_real_watcher() {
-  local mode=$1 dir watcher checker i code check_timeout=30 health_cycles=6 healthy_seconds=6
+  local mode=$1 dir watcher checker i code check_timeout=30 health_cycles=6 healthy_seconds=6 pending_hook=''
   dir=$(health_fixture "real-$mode")
   code=$ROOT
   touch "$dir/state/.last-heartbeat"
@@ -155,6 +171,27 @@ SH
     health_cycles=26
     healthy_seconds=46
   fi
+  if [ "$mode" = pending-rpc ]; then
+    health_pending_records "$dir"
+    printf 'kind=secondmate\nbackend=t3code\nwindow=read-thread\n' > "$dir/state/first.meta"
+    printf 'kind=secondmate\nbackend=tmux\nwindow=fixture:0\nharness=codex\n' > "$dir/state/later.meta"
+    t3_fake_start "$dir/server"
+    t3_fake_case "$dir/server/world" '{"delayToolsMs":{"t3_environment_read":20000,"t3_thread_read":20000},"threads":{"read-thread":{"threadId":"read-thread","status":"completed"}}}'
+    t3_fake_credential "$dir/config/t3code-token"
+    cat > "$dir/recover" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$1" >> "$FM_HOME/recovery.log"
+SH
+    cat > "$dir/fakebin/node" <<'SH'
+#!/usr/bin/env bash
+case "$1 ${2:-}" in *fm-t3-mcp.mjs\ state) touch "$FM_HOME/observation-started" ;; esac
+exec "$FM_REAL_NODE" "$@"
+SH
+    chmod +x "$dir/recover" "$dir/fakebin/node"
+    pending_hook="$dir/recover"
+    health_cycles=26
+    healthy_seconds=46
+  fi
   if [ "$mode" = procevent ]; then
     fm_test_track_procevent_home "$dir"
     FM_HOME="$dir" FM_ROOT_OVERRIDE="$ROOT" FM_PROCEVENT_CLAIM_ROOT="$dir/claims" \
@@ -183,6 +220,7 @@ SH
   FM_HOME="$dir" FM_ROOT_OVERRIDE="$code" FM_STATE_OVERRIDE="$dir/state" FM_POLL=2 FM_SIGNAL_GRACE=0 \
     FM_CHECK_INTERVAL=999999 FM_CHECK_TIMEOUT="$check_timeout" FM_HEARTBEAT=999999 \
     FM_PROCEVENT_CLAIM_ROOT="$dir/claims" FM_PROCEVENT_LAUNCH_CONFIRM_SECONDS=20 \
+    FM_PENDING_REPLY_SEND_HOOK="$pending_hook" \
     FM_REAL_NODE="$(command -v node)" FM_STALE_SECS=999999 FM_FAKE_TMUX_WINDOW=fixture:fixture PATH="$dir/fakebin:$PATH" \
     bash "$ROOT/bin/fm-watch.sh" > "$dir/watcher.log" 2>&1 &
   watcher=$!
@@ -211,6 +249,10 @@ SH
     for i in $(seq 1 160); do [ -e "$dir/capture-started" ] && break; sleep 0.05; done
     [ -e "$dir/capture-started" ] || fail "capture never started: $(cat "$dir/watcher.log")"
   fi
+  if [ "$mode" = pending-rpc ]; then
+    for i in $(seq 1 160); do [ -e "$dir/observation-started" ] && break; sleep 0.05; done
+    [ -e "$dir/observation-started" ] || fail 'pending-reply observation never started'
+  fi
   (
     for i in $(seq 1 "$health_cycles"); do
       HEALTH_TEST_POLL=2 health_run "$dir" run || exit 1
@@ -230,6 +272,20 @@ SH
 import json, sys
 rows=[json.loads(row) for row in open(sys.argv[1])]
 assert sum(row.get('tool') == 't3_thread_read' and not row.get('delayStarted') for row in rows) >= 2
+PY
+  fi
+  if [ "$mode" = pending-rpc ]; then
+    python3 - "$dir" <<'PY' || fail 'multi-RPC observation prevented pending-reply progress'
+from pathlib import Path
+import json, sys
+home=Path(sys.argv[1])
+assert home.joinpath('recovery.log').read_text().splitlines() == ['first','later']
+for corr in ('0000000000000001','0000000000000002'):
+    record=dict(line.split('=',1) for line in (home/'state/pending-replies'/corr).read_text().splitlines() if '=' in line)
+    assert record['phase'] == 'recovery_sent'
+rows=[json.loads(row) for row in (home/'server/world/requests.jsonl').read_text().splitlines()]
+assert any(row.get('tool') == 't3_environment_read' and not row.get('delayStarted') for row in rows)
+assert any(row.get('tool') == 't3_thread_read' and not row.get('delayStarted') for row in rows)
 PY
   fi
   python3 - "$watcher" "$dir" <<'PYTEST' || fail "real $mode watcher death missed its poll deadline"
@@ -271,7 +327,7 @@ PYTEST
   fi
   wait "$checker" || fail "real watcher health monitor failed: $(cat "$dir/health.log")"
   [ "$(wc -l < "$dir/telegram.log")" -eq 1 ] || fail 'real watcher death alerted more than once'
-  if [ "$mode" = capture-rpc ]; then t3_fake_stop; fi
+  if [ "$mode" = capture-rpc ] || [ "$mode" = pending-rpc ]; then t3_fake_stop; fi
   pass "supervision-health: real $mode watcher stays healthy and its death alerts within one poll"
 }
 
@@ -561,6 +617,72 @@ PY
   pass 'supervision-health: verified wedge reads refresh health, waits terminate, and reader death alerts'
 }
 
+test_health_pending_stuck() {
+  local dir watcher checker i
+  dir=$(health_fixture pending-stuck)
+  health_pending_records "$dir"
+  printf 'backend=tmux\nwindow=stuck:0\n' > "$dir/state/first.meta"
+  printf 'backend=tmux\nwindow=fixture:0\n' > "$dir/state/later.meta"
+  cat > "$dir/recover" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$1" >> "$FM_HOME/recovery.log"
+[ "$1" != first ] || sleep 30
+SH
+  chmod +x "$dir/recover"
+  FM_HOME="$dir" FM_ROOT_OVERRIDE="$ROOT" FM_STATE_OVERRIDE="$dir/state" PATH="$dir/fakebin:$PATH" \
+    FM_PENDING_REPLY_SEND_HOOK="$dir/recover" FM_POLL=2 FM_CHECK_TIMEOUT=1 FM_SIGNAL_GRACE=0 \
+    bash -c '
+      . "$1/bin/fm-watch.sh"
+      WATCHER_PID=$$
+      mkdir "$WATCH_LOCK"
+      printf "%s\n" "$$" > "$WATCH_LOCK/pid"
+      fm_backend_busy_state() {
+        [ "$2" != stuck:0 ] || sleep 30
+        printf idle
+      }
+      started=$SECONDS
+      fm_pending_reply_tick "$STATE" watcher_pending_reply_operation
+      [ "$((SECONDS-started))" -lt 12 ] || exit 1
+      fm_pending_reply_reconcile_recovery "$STATE" 0000000000000001 || exit 1
+      touch "$FM_HOME/scan-completed"
+      while :; do watcher_waited sleep 2; done
+    ' _ "$ROOT" > "$dir/watcher.log" 2>&1 &
+  watcher=$!
+  for i in $(seq 1 100); do [ -e "$dir/state/.last-watcher-beat" ] && break; sleep 0.05; done
+  (
+    for i in $(seq 1 9); do HEALTH_TEST_POLL=2 health_run "$dir" run || exit 1; done
+  ) > "$dir/health.log" 2>&1 &
+  checker=$!
+  for i in $(seq 1 220); do [ -e "$dir/scan-completed" ] && break; sleep 0.05; done
+  [ -e "$dir/scan-completed" ] || fail "stuck operation starved the scan: $(cat "$dir/watcher.log")"
+  [ ! -e "$dir/telegram.log" ] || fail 'bounded pending-reply operations caused a false outage'
+  python3 - "$dir" <<'PY' || fail 'stuck operation lost recovery state or later work'
+from pathlib import Path
+import sys
+home=Path(sys.argv[1])
+assert home.joinpath('recovery.log').read_text().splitlines() == ['first','later']
+def record(corr):
+    return dict(line.split('=',1) for line in (home/'state/pending-replies'/corr).read_text().splitlines() if '=' in line)
+first=record('0000000000000001')
+assert first['phase'] == 'recovery_unknown' and first['recovery_attempted_epoch']
+assert record('0000000000000002')['phase'] == 'recovery_sent'
+PY
+  python3 - "$watcher" "$dir" <<'PY' || fail 'pending-reply owner death missed its poll deadline'
+from pathlib import Path
+import os, signal, sys, time
+pid=int(sys.argv[1]); home=Path(sys.argv[2])
+start=time.monotonic(); os.kill(pid,signal.SIGKILL)
+while time.monotonic()-start < 2:
+    if all(p.exists() and 'primary-supervision-lost' in p.read_text() for p in (home/'telegram.log',home/'state/.wake-queue')):
+        break
+    time.sleep(0.01)
+else: raise SystemExit('no durable and external alert within FM_POLL=2')
+PY
+  wait "$watcher" 2>/dev/null || true
+  wait "$checker" || fail "pending-reply health check failed: $(cat "$dir/health.log")"
+  pass 'supervision-health: stuck pending-reply operations are bounded without losing later records or uncertain recovery'
+}
+
 test_health_bootstrap_default_home
 test_health_rejects_zero_poll
 test_health_rejects_unused_live
@@ -571,6 +693,8 @@ test_health_real_watcher relaunch
 test_health_real_watcher procevent
 test_health_real_watcher capability
 test_health_real_watcher capture-rpc
+test_health_real_watcher pending-rpc
+test_health_pending_stuck
 test_health_wedge_reads
 test_health_orphan_host
 test_health_slow_endpoint

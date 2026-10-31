@@ -3190,9 +3190,34 @@ watcher_output() {
   return "$rc"
 }
 
-watcher_pending_reply_tick() {
-  fm_pending_reply_tick "$STATE"
-} 2>&3
+watcher_pending_reply_operation() {
+  local budget=$CHECK_TIMEOUT meta backend remote_budget
+  case "$1" in
+    fm_backend_capture)
+      watcher_capture "${@:2}" || return $?
+      printf '%s' "$WATCHER_CAPTURE"
+      return 0
+      ;;
+    fm_pending_reply_send_recovery)
+      meta="$2/$(fm_pending_reply_get "$(fm_pending_reply_path "$2" "$3")" task_id).meta"
+      backend=$(fm_backend_of_meta "$meta")
+      if [ -n "$(fm_meta_get "$meta" remote_host)" ]; then
+        remote_budget=${FM_SEND_REMOTE_BUDGET:-30}
+        case "$remote_budget" in ''|0*|*[!0-9]*) return 2 ;; esac
+        budget=$((3 * remote_budget + CHECK_TIMEOUT))
+      elif [ "$backend" = t3code ] && fm_backend_source t3code; then
+        budget=$((3 * FM_BACKEND_T3CODE_STATE_BUDGET + CHECK_TIMEOUT))
+      else
+        budget=$((3 * CHECK_TIMEOUT))
+      fi
+      ;;
+    */fm-on.sh)
+      budget=${FM_SEND_REMOTE_BUDGET:-30}
+      case "$budget" in ''|0*|*[!0-9]*) return 2 ;; esac
+      ;;
+  esac
+  WATCHER_WAIT_BUDGET=$budget watcher_output "$@"
+}
 
 # watcher_capture: fm_backend_capture through watcher_waited.
 watcher_capture() {  # <backend> <target> <lines> [expected-label]
@@ -3795,7 +3820,7 @@ while :; do
   # parent reports, observe backend busy/idle turn completion, send one recovery
   # repost after grace, and escalate once if the recovery turn is also missed.
   # No conversation scraping; unresolved records are never silently expired.
-  watcher_output watcher_pending_reply_tick 3>&2 || true
+  fm_pending_reply_tick "$STATE" watcher_pending_reply_operation >/dev/null || true
 
   open_decision_reminder_tick || {
     echo 'watcher: open-decision reminder check failed' >&2

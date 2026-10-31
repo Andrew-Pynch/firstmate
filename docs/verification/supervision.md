@@ -605,6 +605,8 @@ The ownership regression runs a real supervision host and watcher under an isola
 The same suite covers a twenty-second fake T3 capability response with a two-second ordinary check budget, requiring healthy suppression during the request and a bounded alert after watcher death.
 Its capture regression runs the real MCP helper against an isolated HTTP fixture with two sequential twenty-second thread-read replies, requires the returned activity text, and checks that the actual watcher stays healthy before detecting its death.
 The sourced watcher-function regression exercises both verified wedge reads against delayed HTTP replies, checks that an expired owned wait terminates, and requires a bounded alert after the reader dies.
+The pending-reply regression observes two successful twenty-second RPCs through the actual watcher before checking recovery of both that record and a later record.
+Its stuck-operation case bounds observation and recovery separately, retains uncertain recovery state, and proves later-record progress and an alert after watcher death.
 The arm regression uses a sole remote endpoint whose fake reply takes 0.8 seconds, requires publication within `FM_POLL=3`, and retains delayed healthy-replacement suppression at short polls.
 The arm regressions place a delayed remote endpoint before a live local one and require notification within both one-second and three-second poll intervals.
 The three omp lifecycle-gap cases continue to pass, including shutdown without primary-process exit; the generated-service smoke retains the real-manager activation limit above.

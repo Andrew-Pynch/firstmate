@@ -62,8 +62,10 @@
 #
 # An omp arm receives FM_WATCH_PRIMARY_PID. It checks that process identity
 # while waiting, so an abruptly lost primary cannot leave an unread cycle.
-# On omp's shutdown HUP, this same arm retires its watcher but remains for at
-# most FM_POLL seconds to allow a replacement to establish supervision.
+# On omp's shutdown HUP, this same arm retires its watcher, then allows
+# FM_POLL minus half a second for replacement and endpoint probes.
+# Cleanup and alert-lock contention can delay notification beyond one poll;
+# sender completion can also extend the arm's lifetime beyond that window.
 # Without a healthy successor and with a recorded live endpoint it starts the
 # Telegram send independently and queues primary-supervision-lost for the next
 # drain, so queue-lock contention cannot suppress the external alert.

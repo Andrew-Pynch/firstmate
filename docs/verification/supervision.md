@@ -574,9 +574,8 @@ grok 0.2.103 (89c3d36fb6f1) [stable]
 | Grok | `FM_GROK_LIVE_E2E=1 tests/fm-grok-continuity-live-e2e.test.sh` | Native task completion surfaced the actionable close and the cycle ledger recorded `reason=actionable-signal`. |
 
 On 2026-10-29, omp 18.11.0 supervised an isolated live tmux endpoint through its real RPC session and `/fm-watch-arm-omp`.
-After replay onto the frozen reanchor source, SIGKILL reached the durable `primary-supervision-lost` alert and the actual Telegram sender with a private fake transport in 0.151 seconds with `FM_POLL=2`.
+SIGKILL reached the durable `primary-supervision-lost` alert and the actual Telegram sender with a private fake transport in 0.151 seconds with `FM_POLL=2`.
 Closing RPC stdin exercised the installed runtime's normal session disposal and independently started the actual sender while recording the durable alert; both outputs arrived in 1.754 seconds, with omp exiting zero.
-Before replay, stopping the arm while its watcher completed an actionable cycle, killing omp, then resuming the arm reached a private sender recorder in 0.100 seconds with `FM_POLL=2`; the deterministic cycle-close regression also covers the replayed tree.
 These smoke tests did not contact the external Telegram service.
 `bin/fm-test-run.sh tests/fm-watch-arm.test.sh tests/fm-watcher-lock.test.sh` covers primary shutdown and abrupt loss, immediate and delayed replacement at a two-second poll, single-attempt delivery under contention and output-reader loss, empty-home suppression, and next-drain persistence.
 `tests/fm-omp-harness.test.sh` also passed with the host's real omp ancestor outside the detector's eight-parent window.
@@ -588,9 +587,7 @@ The installed systemd 262.1 parser accepted the generated units, and a bounded s
 Installation and doctor control calls used a private systemctl fixture; no real user-manager timer activation was performed, so live timer scheduling and activation remain unverified.
 No real Herdr lifecycle, browser, or external Telegram service was used.
 
-The 2026-10-31 health-check corrections were verified with the same CLI suite against both the corrected executables and preserved pre-correction executables.
-The controls reproduced windowless metadata hiding a later live endpoint, a false alert during a supported slow check, an immediate failed-check retry, and a timed-out send whose subsequent doctor incorrectly reported ready.
-The corrected `bash tests/fm-supervision-health.test.sh` runs the real watcher at `FM_POLL=2` through ordinary cycles and a registered five-second check, then kills it and requires the queued alert and sender invocation within two seconds.
+`bash tests/fm-supervision-health.test.sh` runs the real watcher at `FM_POLL=2` through ordinary cycles and a registered five-second check, then kills it and requires the queued alert and sender invocation within two seconds.
 It also runs the emitted service command through missing credentials and a hung sender, checking the poll-duration failure floor, persistent diagnostics, and exactly one send attempt.
 The isolated unit/parser smoke retains the real-manager activation limitation above.
 The queue-lock regressions hold the real queue lock through the initial send attempt, release it, and prove that later checks publish exactly one outage row while preserving failed or uncertain transport diagnostics and never repeating the send.
@@ -615,8 +612,6 @@ Recovery-delivery cases run the real `fm-send.sh` path with reduced operation bu
 The arm regression uses a sole remote endpoint whose fake reply takes 0.8 seconds, requires publication within `FM_POLL=3`, and retains delayed healthy-replacement suppression at short polls.
 The arm regressions place a delayed remote endpoint before a live local one and require notification within both one-second and three-second poll intervals.
 The three omp lifecycle-gap cases continue to pass, including shutdown without primary-process exit; the generated-service smoke retains the real-manager activation limit above.
-
-Other harnesses retain their existing arm lifetime because they do not set the omp primary PID.
 
 Pi 0.81.1 repeated the continuity and clean-exit lifecycle on 2026-07-23 after the Calm presentation changes.
 

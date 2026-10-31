@@ -206,12 +206,8 @@ With `state/.afk` absent the daemon lock proves nothing and the strict watcher p
 
 ### Guard grace and the poll cadence
 
-`bin/fm-watch.sh` touches `state/.last-watcher-beat` once per cycle, immediately before its terminal wait (`event_wait_or_sleep`) as well as at the top of the next cycle.
-A healthy watcher's beacon can therefore legitimately age up to `FM_POLL` seconds between touches.
-
-A fixed 300-second grace default stops correctly bounding staleness once a home's `FM_POLL` reaches or exceeds it.
-A perfectly healthy watcher mid-wait would then read stale at the edge of every full poll cycle by definition.
-That is exactly what a long-poll home (`FM_POLL=300`) hit against the Claude Stop-hook auto-arm (`bin/fm-claude-stop-autoarm.sh`).
+The [watcher heartbeat contract](watcher-continuity.md#independent-supervision-health) covers refreshes during cycles and their owned bounded waits, including the poll sleep.
+The guard retains its broader poll-derived grace independently of the health check's shorter freshness deadline.
 
 Two readers derive their default grace from the configured poll instead of a bare constant:
 

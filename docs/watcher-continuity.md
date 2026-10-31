@@ -10,6 +10,7 @@ In this document, an arm is one run of `bin/fm-watch-arm.sh`, which starts a wat
 | Topic | Section |
 | --- | --- |
 | Which component re-arms the watcher on each harness | [Ownership](#ownership) |
+| How Linux detects lost primary supervision independently | [Independent supervision health](#independent-supervision-health) |
 | What happens between an actionable close and the wake reaching the model | [Actionable wake ordering](#actionable-wake-ordering) |
 | How a watcher-downtime episode is announced and retired | [Recovery episode acknowledgement](#recovery-episode-acknowledgement) |
 | How each actor consumes the wake queue | [Per-actor acknowledgement](#per-actor-acknowledgement) |
@@ -69,11 +70,7 @@ The extension header owns how consumption is observed and why it only decides wh
 
 ### omp session replacement
 
-omp's replacement follows its own generation-owner contract in `.omp/extensions/fm-primary-omp-watch.ts`, whose header owns its differences from Pi:
-
-- It retires the predecessor arm at replacement shutdown instead of retaining it across the handoff.
-- It reports no shutdown reason, so every shutdown with a pending actionable close persists the handoff for the next owning `session_start` or orphaned-generation recovery to replay.
-- An in-process child session never owns the watch.
+omp's replacement, pending-actionable replay, and child-session isolation follow the generation-owner contract in `.omp/extensions/fm-primary-omp-watch.ts`, whose header owns its differences from Pi.
 
 The omp primary-loss alert, actionable successor confirmation, and bounded shutdown handoff are owned by `bin/fm-watch-arm.sh`'s header and covered by `tests/fm-watch-arm.test.sh`.
 The independent health check below covers both plain arm and supervision-host mode, including a primary process that remains alive after its supervision generation stops.
@@ -81,9 +78,8 @@ The independent health check below covers both plain arm and supervision-host mo
 ### Independent supervision health
 
 On Linux, a per-home systemd user timer runs `bin/fm-supervision-health.sh` independently of the primary and its watcher children.
-Install it through `bin/fm-bootstrap.sh install supervision-health`, and inspect it through `bin/fm-bootstrap.sh doctor supervision-health`.
+See [Toolchain configuration](configuration.md#toolchain) for installation, upgrade ordering, and diagnosis.
 The command header owns its flags, unit paths, and cadence configuration.
-Bootstrap reports missing, inactive, failed, or outdated units; the Linux remote doctor includes the same check and its `--fix` installs the units.
 
 The check requires a live session owner from the existing session-lock inspection alongside the newest watcher heartbeat or successful drain timestamp.
 A fresh orphan watcher cannot suppress an alert after its owning session disappears.
@@ -93,12 +89,12 @@ T3 state reads allow the full verified-session sequence, and captures also allow
 The native T3 event wait additionally budgets pending-request classification for every watched thread before its final event wait; forced expiry follows the event-failure path rather than counting as an empty successful poll.
 Pending-reply reconciliation applies these waits to each backend observation and recovery operation, preserving later-record progress when an operation times out.
 Ordinary, retry, and secondmate doorbells share a bounded heartbeat-aware ring; T3 recovery delivery uses that same four-operation budget for the agent read, both composer reads, and native send.
-During shutdown, the arm probes endpoints within its existing replacement grace period and reserves the final half-second of the poll for publication.
+The arm header owns shutdown grace and endpoint-probe timing.
 The freshness deadline reserves half of `FM_POLL` for endpoint proof and alert publication.
 With a recorded live task endpoint and an expired freshness deadline, it queues `primary-supervision-lost` and invokes the existing Telegram sender once per incident.
 A fresh check-in clears the incident, permitting another alert after a later outage.
 The incident marker is shared with the arm's fast-path alert to avoid duplicate notifications.
-Recorded remote secondmates use the existing scoped remote state command; only its `alive` verdict counts as live work.
+Recorded remote secondmates use the existing scoped remote state command.
 The independent check and arm run endpoint probes concurrently with individual deadlines, so an unavailable backend cannot prevent another recorded endpoint from triggering the alert.
 Timed-out or unknown endpoint results count as live work for this alert decision; only definitively absent endpoints stay quiet.
 Arm cleanup and alert-lock contention can delay shutdown notification beyond one poll interval.
@@ -147,7 +143,7 @@ The stale-owner claim occurs only after the existing AFK and supervision-need ga
 ### Claude arm failures
 
 After each non-actionable arm close, the hook rechecks the identity-matched watcher lock and fresh beacon before retrying a bounded number of times.
-The beacon is `state/.last-watcher-beat`, which only the watcher process touches.
+The [watcher heartbeat contract](#independent-supervision-health) defines how `state/.last-watcher-beat` stays fresh.
 
 - A cycle-end failure is benign when that live-watcher predicate is true.
   In that case the hook suppresses the arm output and continues silently.
@@ -171,12 +167,14 @@ This section covers what each re-arm owner does between an actionable close and 
 
 ### Pi, omp, and OpenCode successor start
 
-After an actionable Pi, omp, or OpenCode child close, the adapter:
+After an actionable Pi, omp, or OpenCode watcher cycle, the adapter:
 
-1. Waits for the predecessor process to close.
+1. Waits for the predecessor cycle to finish; a plain omp arm can remain open to monitor primary loss during successor startup.
 2. Starts and verifies one singleton successor.
 3. Confirms the handling handoff before scheduling the follow-up: Pi confirms against the restoration's own recovery token, while omp and OpenCode confirm against the current successor.
 4. Delivers the original wake.
+
+The plain omp arm's successor-readiness confirmation is owned by `bin/fm-watch-arm.sh`'s header.
 
 A complete Pi reason line can be observed while the predecessor is still finishing durable cleanup.
 That line is retained for replacement handoff, but the adapter never treats that already-ready predecessor as its own successor.
@@ -470,8 +468,7 @@ The file is size-capped through `FM_WATCH_CYCLE_LOG_MAX_BYTES` and `FM_WATCH_CYC
 ### Grace, beacon, and stop signals
 
 The default 300-second grace is unchanged.
-Only the watcher process touches `state/.last-watcher-beat`.
-No helper process can make a wedged watcher appear healthy.
+The [watcher heartbeat contract](#independent-supervision-health) covers cycle-owned waits and stops refreshes when their owning watcher stops or dies.
 An arm whose own script path sits under a disposable no-mistakes validation checkout (`.no-mistakes/worktrees/`) refuses with the typed failure line before touching any state, because a watcher started there outlives the validation step and keeps writing the real home's state from a checkout about to be deleted.
 Once per poll the watcher checks that its home, its state directory, and its own code root still exist, and exits with a logged reason when one is gone, scoped to itself alone, so a torn-down temporary home or a discarded checkout never leaves an orphan watcher behind.
 The arm applies the same rule to its own ground: when its script, its state directory, or an `FM_HOME` that existed at start disappears, it fails with `watcher: FAILED - arm ground removed: <path> no longer exists` instead of polling on; the `bin/fm-watch-arm.sh` header owns the timing bound.

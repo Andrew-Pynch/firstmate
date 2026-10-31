@@ -17,10 +17,10 @@
 //     main has already drained, or a status file cleanup has since removed,
 //     never reaches main again. Losing an owed one across a session
 //     replacement is still worse than repeating it.
-//   - Replacement shutdown retires the established predecessor arm before the
-//     successor arms; unlike Pi, it is not retained until a distinct active
-//     successor generation commits its own arm, so omp keeps the plain
-//     teardown-and-rearm replacement shape.
+//   - Replacement shutdown sends HUP to a plain arm, retiring its watcher
+//     without waiting for the arm's bounded primary-loss handoff before the
+//     successor starts. A supervision host receives TERM and is awaited.
+//     bin/fm-watch-arm.sh owns the plain arm's shutdown grace and alert contract.
 //   - The Pi supervision branch is out of scope for omp: every actionable wake
 //     is delivered to main, so no branch offer is made and no calm presentation
 //     hooks exist.

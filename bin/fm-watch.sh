@@ -3324,7 +3324,7 @@ heartbeat_scan_finds_actionable() {
 # supervision cycle: the reader is a short-lived subprocess of THIS watcher, not
 # a second watcher, so every guard/beacon/arm/turn-end mechanism is unchanged.
 event_wait_or_sleep() {
-  local w b session first_backend="" first_session="" rec rc
+  local w b session first_backend="" first_session="" rec rc capability_budget
   local windows=() t3_windows=()
   while IFS= read -r w; do
     b=$(window_backend "$w")
@@ -3365,7 +3365,11 @@ event_wait_or_sleep() {
   # read); re-probed only when the backend/session key changes.
   if [ "$_event_cap_key" != "$first_backend:$first_session" ]; then
     _event_cap_key="$first_backend:$first_session"
-    if fm_backend_events_capable "$first_backend" "$first_session"; then
+    capability_budget=$CHECK_TIMEOUT
+    if [ "$first_backend" = t3code ] && fm_backend_source t3code; then
+      capability_budget=$FM_BACKEND_T3CODE_CAPABILITY_BUDGET
+    fi
+    if WATCHER_WAIT_BUDGET=$capability_budget watcher_waited fm_backend_events_capable "$first_backend" "$first_session"; then
       _event_cap_ok=1
     else
       _event_cap_ok=0

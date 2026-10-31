@@ -1959,7 +1959,7 @@ test_append_wakes_handling_successor after-ack malformed identical
 test_primary_exit_alerts_with_live_work() {
   local mode=$1 dir state fakebin primary i armout script replacement='' peer='' send_log grace=999999 watcher output
   local handoff_delay=${2:-0.8} poll=${3:-3}
-  local anchor_pid='' arm_source=${4:-$WATCH_ARM} input=/dev/null
+  local anchor_pid='' arm_source=${4:-$WATCH_ARM} input=/dev/null alert_started=''
   dir=$(make_supercase "primary-exit-$mode-$handoff_delay-$poll")
   state="$dir/state"
   fakebin="$dir/fakebin"
@@ -1986,6 +1986,19 @@ SH
   case "$mode" in
     remote-*) make_remote_liveness_fixture "$dir" "${mode#remote-}" ;;
   esac
+  if [ "$mode" = slow-remote ]; then
+    mv "$state/live.meta" "$state/z-worker.meta"
+    make_remote_liveness_fixture "$dir" alive
+    mv "$state/mate.meta" "$state/a-remote.meta"
+    cat > "$fakebin/ssh" <<'SH'
+#!/usr/bin/env bash
+printf 'started\n' > "$FM_HOME/remote-probe-started"
+sleep 20
+exit 255
+SH
+    chmod +x "$fakebin/ssh"
+    printf '%s\n' "- a-remote - Fixture (host: fixture-host; root: $ROOT; home: $dir/remote-home; scope: fixture; projects: test; added 2026-10-31)" > "$dir/data/secondmates.md"
+  fi
   ln -s /bin/sleep "$dir/omp"
   "$dir/omp" 60 &
   primary=$!
@@ -2132,13 +2145,16 @@ PYTEST
     pass "watch-arm: primary loss after actionable output alerts within one poll before successor confirmation"
     return
   fi
+  if [ "$mode" = slow-remote ]; then
+    alert_started=$(python3 -c 'import time; print(time.monotonic())')
+  fi
   if [ "$mode" != handoff ] && [ "$mode" != handoff-new ] && [ "$mode" != orphaned ] && [ "$mode" != pipe-close ]; then
     kill "$primary"
     wait "$primary" 2>/dev/null || true
   fi
   if [ "$mode" = cycle-close ] || [ "$mode" = pipe-close ] || [ "$mode" = contention-pipe-close ]; then
     kill -CONT "$ARM_PID"
-  elif [ "$mode" != crash ] && [ "$mode" != pipe ] && [ "$mode" != anchor ] && [ "$mode" != contention ] && [ "$mode" != queue-contention ]; then
+  elif [ "$mode" != crash ] && [ "$mode" != slow-remote ] && [ "$mode" != pipe ] && [ "$mode" != anchor ] && [ "$mode" != contention ] && [ "$mode" != queue-contention ]; then
     # omp shutdown retires the arm before its process disappears.
     kill -HUP "$ARM_PID"
     if [ "$mode" = two-hup ]; then
@@ -2201,6 +2217,13 @@ PYTEST
     kill "$ARM_PID" 2>/dev/null || true
     wait "$ARM_PID" 2>/dev/null || true
     fail "dead primary with live work left no durable alert within one poll"
+  fi
+  if [ "$mode" = slow-remote ]; then
+    [ -e "$dir/remote-probe-started" ] || fail 'slow remote probe never started'
+    python3 - "$alert_started" "$poll" <<'PY' || fail 'slow remote exceeded one poll before alerting'
+import sys, time
+assert time.monotonic()-float(sys.argv[1]) < float(sys.argv[2])
+PY
   fi
   wait "$ARM_PID" 2>/dev/null || true
   if [ "$mode" = contention ] || [ "$mode" = contention-pipe-close ]; then
@@ -2274,6 +2297,8 @@ test_primary_exit_alerts_with_live_work send-failure
 test_primary_exit_alerts_with_live_work crash
 test_primary_exit_alerts_with_live_work empty
 test_primary_exit_alerts_with_live_work remote-alive
+test_primary_exit_alerts_with_live_work slow-remote
+test_primary_exit_alerts_with_live_work slow-remote 0.8 1
 test_primary_exit_alerts_with_live_work remote-dead
 test_primary_exit_alerts_with_live_work remote-missing
 test_primary_exit_alerts_with_live_work remote-stopped

@@ -33,8 +33,10 @@ case "${1:-}" in
     . "$SCRIPT_DIR/fm-backend.sh"
     fm_backend_recorded_target_exists "$2"
     ;;
-  _live)
-    exec python3 "$SCRIPT_DIR/fm-supervision-health.py" live
+  _owner)
+    . "$SCRIPT_DIR/fm-session-lock-lib.sh"
+    fm_session_lock_inspect "$FM_STATE_OVERRIDE"
+    [ "$FM_LOCK_INSPECT_STATE" = held ]
     ;;
   _incident|_clear)
     # shellcheck source=bin/fm-wake-lib.sh

@@ -466,6 +466,8 @@ fm_backend_t3code_escalation_marker() {  # <state_dir> <thread-id>
   printf '%s/%s%s' "$1" "$FM_BACKEND_T3CODE_ESCALATED_PREFIX" "$(printf '%s' "$2" | tr ':/.' '___')"
 }
 
+FM_BACKEND_T3CODE_CAPABILITY_BUDGET=122
+
 fm_backend_t3code_events_capable() {  # <session>
   fm_backend_t3code_mcp status >/dev/null 2>&1
 }

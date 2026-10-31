@@ -3,11 +3,21 @@ set -u
 . "$(dirname "${BASH_SOURCE[0]}")/wake-helpers.sh"
 TMP_ROOT=$(fm_test_tmproot fm-supervision-health)
 HEALTH="$ROOT/bin/fm-supervision-health.sh"
+ln -s /bin/sleep "$TMP_ROOT/omp"
+"$TMP_ROOT/omp" 600 &
+HEALTH_OWNER_PID=$!
+health_cleanup() {
+  kill "$HEALTH_OWNER_PID" 2>/dev/null || true
+  wait "$HEALTH_OWNER_PID" 2>/dev/null || true
+  fm_test_cleanup
+}
+trap health_cleanup EXIT
 
 health_fixture() {
   local dir
   dir=$(make_supercase "$1")
   mkdir -p "$dir/config" "$dir/units"
+  printf '%s\n' "$HEALTH_OWNER_PID" > "$dir/state/.lock"
   printf 'backend=tmux\nwindow=fixture:0\n' > "$dir/state/live.meta"
   cat > "$dir/fakebin/bun" <<'SH'
 #!/usr/bin/env bash
@@ -106,6 +116,20 @@ SH
     printf 'kind=secondmate\nharness=codex\nbackend=tmux\nwindow=fixture:missing\n' > "$dir/state/mate.meta"
     check_timeout=2
   fi
+  if [ "$mode" = capability ]; then
+    printf 'backend=t3code\nwindow=capability-thread\n' > "$dir/state/a-t3.meta"
+    cat > "$dir/fakebin/node" <<'SH'
+#!/usr/bin/env bash
+case "$1 ${2:-}" in
+  *fm-t3-mcp.mjs\ status) touch "$FM_HOME/capability-started"; sleep 20; exit 1 ;;
+  *fm-t3-mcp.mjs\ state) printf '{"ok":true,"status":"running"}\n'; exit 0 ;;
+  *fm-t3-mcp.mjs\ capture) printf 'working %s\n' "$(date +%s%N)"; exit 0 ;;
+esac
+exec "$FM_REAL_NODE" "$@"
+SH
+    chmod +x "$dir/fakebin/node"
+    check_timeout=2
+  fi
   if [ "$mode" = procevent ]; then
     fm_test_track_procevent_home "$dir"
     FM_HOME="$dir" FM_ROOT_OVERRIDE="$ROOT" FM_PROCEVENT_CLAIM_ROOT="$dir/claims" \
@@ -134,7 +158,7 @@ SH
   FM_HOME="$dir" FM_ROOT_OVERRIDE="$code" FM_STATE_OVERRIDE="$dir/state" FM_POLL=2 FM_SIGNAL_GRACE=0 \
     FM_CHECK_INTERVAL=999999 FM_CHECK_TIMEOUT="$check_timeout" FM_HEARTBEAT=999999 \
     FM_PROCEVENT_CLAIM_ROOT="$dir/claims" FM_PROCEVENT_LAUNCH_CONFIRM_SECONDS=20 \
-    FM_STALE_SECS=999999 FM_FAKE_TMUX_WINDOW=fixture:fixture PATH="$dir/fakebin:$PATH" \
+    FM_REAL_NODE="$(command -v node)" FM_STALE_SECS=999999 FM_FAKE_TMUX_WINDOW=fixture:fixture PATH="$dir/fakebin:$PATH" \
     bash "$ROOT/bin/fm-watch.sh" > "$dir/watcher.log" 2>&1 &
   watcher=$!
   for i in $(seq 1 100); do
@@ -153,6 +177,10 @@ SH
   if [ "$mode" = procevent ]; then
     for i in $(seq 1 100); do [ -e "$dir/state/procevent/.owner-lease" ] && break; sleep 0.05; done
     [ -e "$dir/state/procevent/.owner-lease" ] || fail 'process-event reconciliation did not start'
+  fi
+  if [ "$mode" = capability ]; then
+    for i in $(seq 1 160); do [ -e "$dir/capability-started" ] && break; sleep 0.05; done
+    [ -e "$dir/capability-started" ] || fail "capability probe never started: $(cat "$dir/watcher.log")"
   fi
   (
     for i in $(seq 1 6); do
@@ -315,6 +343,53 @@ PYTEST
   pass "supervision-health: queue contention retries durable $mode outage without resending Telegram"
 }
 
+test_health_orphan_host() {
+  local dir primary host watcher
+  dir=$(health_fixture orphan-host)
+  ln -s /bin/bash "$dir/omp"
+  touch "$dir/state/.last-heartbeat" "$dir/state/.last-check" "$dir/config/supervision-host"
+  FM_HOME="$dir" FM_ROOT_OVERRIDE="$ROOT" FM_STATE_OVERRIDE="$dir/state" \
+    FM_CONFIG_OVERRIDE="$dir/config" FM_POLL=3 FM_SIGNAL_GRACE=0 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 FM_STALE_SECS=999999 \
+    FM_FAKE_TMUX_WINDOW=fixture:fixture FM_SUPERVISION_HOST_PRIMARY=omp \
+    FM_SUPERVISION_ENGINE_COMMAND=/bin/false PATH="$dir/fakebin:$PATH" \
+    "$dir/omp" -c 'printf "%s\n" "$$" > "$FM_HOME/state/.lock"; "$1" park > "$FM_HOME/host.log" 2>&1 & echo "$!" > "$FM_HOME/host.pid"; wait "$!"' _ "$ROOT/bin/fm-supervision-host.sh" &
+  primary=$!
+  for _ in $(seq 1 200); do [ -s "$dir/state/.watch.lock/pid" ] && [ -e "$dir/state/.last-watcher-beat" ] && break; sleep 0.05; done
+  [ -e "$dir/state/.last-watcher-beat" ] || fail "real host never armed: $(cat "$dir/host.log")"
+  host=$(cat "$dir/host.pid")
+  watcher=$(cat "$dir/state/.watch.lock/pid")
+  health_run "$dir" check >/dev/null || fail 'healthy real host was rejected'
+  [ ! -e "$dir/telegram.log" ] || fail 'healthy real host raised an alert'
+  FM_HOME="$dir" FM_ROOT_OVERRIDE="$ROOT" FM_STATE_OVERRIDE="$dir/state" \
+    FM_CONFIG_OVERRIDE="$dir/config" FM_POLL=3 PATH="$dir/fakebin:$PATH" \
+    python3 - "$primary" "$host" "$watcher" "$HEALTH" <<'PY' || fail 'orphan host hid the dead primary'
+from pathlib import Path
+import os, signal, subprocess, sys, time
+primary,host,watcher=map(int,sys.argv[1:4]); health=sys.argv[4]
+home=Path(os.environ['FM_HOME']); beat=home/'state/.last-watcher-beat'
+before=beat.stat().st_mtime_ns; started=time.monotonic()
+os.kill(primary,signal.SIGKILL)
+try:
+    while beat.stat().st_mtime_ns==before:
+        assert time.monotonic()-started<1.5, 'orphan watcher did not keep beating'
+        time.sleep(0.02)
+    os.kill(host,0); os.kill(watcher,0)
+    result=subprocess.run([health,'check'],capture_output=True,text=True,timeout=3)
+    assert result.returncode==0, result.stderr
+    assert time.monotonic()-started<3, 'outage exceeded one poll'
+    assert (home/'telegram.log').exists(), 'fresh orphan was treated as healthy'
+    assert 'primary-supervision-lost' in (home/'telegram.log').read_text()
+    assert 'primary-supervision-lost' in (home/'state/.wake-queue').read_text()
+finally:
+    for pid in (host,watcher):
+        try: os.kill(pid,signal.SIGTERM)
+        except ProcessLookupError: pass
+PY
+  wait "$primary" 2>/dev/null || true
+  pass 'supervision-health: dead primary alerts while its real orphan host watcher still beats'
+}
+
 test_health_remote_work() {
   local verdict dir
   for verdict in alive dead missing stopped; do
@@ -377,6 +452,19 @@ test_health_bootstrap_default_home() {
   pass 'supervision-health: bootstrap forwards its default home and propagates installation failure'
 }
 
+test_health_rejects_unused_live() {
+  local dir rc
+  dir=$(health_fixture unused-live)
+  health_run "$dir" _live >/dev/null 2>&1
+  rc=$?
+  [ "$rc" -eq 2 ] || fail 'removed shell live entry remained callable'
+  FM_HOME="$dir" FM_STATE_OVERRIDE="$dir/state" FM_POLL=3 \
+    python3 "$ROOT/bin/fm-supervision-health.py" live >/dev/null 2>&1
+  rc=$?
+  [ "$rc" -eq 2 ] || fail 'removed Python live entry remained callable'
+  pass 'supervision-health: unused live entry points are rejected'
+}
+
 test_health_rejects_zero_poll() {
   local dir rc
   dir=$(health_fixture zero-poll)
@@ -388,11 +476,14 @@ test_health_rejects_zero_poll() {
 
 test_health_bootstrap_default_home
 test_health_rejects_zero_poll
+test_health_rejects_unused_live
 test_health_incidents
 test_health_real_watcher ordinary
 test_health_real_watcher slow
 test_health_real_watcher relaunch
 test_health_real_watcher procevent
+test_health_real_watcher capability
+test_health_orphan_host
 test_health_slow_endpoint
 test_health_remote_work
 test_health_queue_retry missing

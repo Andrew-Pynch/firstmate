@@ -1875,6 +1875,7 @@ SH
 import { pathToFileURL } from 'node:url';
 import { writeFileSync, readFileSync, existsSync } from 'node:fs';
 const state = `${process.env.FM_HOME}/state`;
+process.title = 'omp';
 const handlers = new Map();
 const mod = await import(pathToFileURL(process.env.EXT).href);
 writeFileSync(`${state}/.lock`, `${process.pid}\n`);

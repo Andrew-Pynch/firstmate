@@ -251,6 +251,8 @@ primary_send_alert() {
 # passive and scoped on every supported backend; no shared inventory scan.
 primary_loss_alert() {
   local meta reason alert_locked=0 sender_pid sender_status=0 queue_status=0
+  local probe_result probe_budget pid pending live=0
+  local -a probes=()
   [ "$PRIMARY_ALERTED" -eq 0 ] || return 0
   if healthy_watcher && replacement_primary_alive; then return 0; fi
   if [ "$PRIMARY_BACKEND_LOADED" -eq 0 ]; then
@@ -258,41 +260,68 @@ primary_loss_alert() {
     . "$SCRIPT_DIR/fm-backend.sh"
     PRIMARY_BACKEND_LOADED=1
   fi
+  _fm_wake_require_timeout || return 1
+  probe_result=$(mktemp "$STATE/.primary-loss-probe.XXXXXX") || return 1
+  probe_budget=$(awk -v poll="${FM_POLL:-15}" 'BEGIN { n=int(poll/3); if (n<1) n=1; if (n>5) n=5; print n }')
   for meta in "$STATE"/*.meta; do
-    [ -f "$meta" ] || continue
-    fm_backend_recorded_target_exists "$meta" || continue
-    reason="check: primary-supervision-lost: primary supervision stopped without a healthy replacement while work is still live; restart firstmate to resume supervision"
-    if fm_lock_acquire_wait_max "$PRIMARY_ALERT_LOCK" 1; then
-      if [ -s "$PRIMARY_ALERT_MARKER" ]; then
-        fm_lock_release "$PRIMARY_ALERT_LOCK"
-        PRIMARY_ALERTED=1
-        return 0
+    [ -f "$meta" ] && [ ! -L "$meta" ] || continue
+    (
+      if fm_run_timed "$probe_budget" env FM_HOME="$FM_HOME" FM_ROOT_OVERRIDE="$FM_ROOT" \
+        FM_STATE_OVERRIDE="$STATE" bash -c '. "$1"; fm_backend_recorded_target_exists "$2"' \
+        _ "$SCRIPT_DIR/fm-backend.sh" "$meta" >/dev/null 2>&1; then
+        printf x >> "$probe_result"
       fi
-      alert_locked=1
-    else
-      reason="$reason (alert dedupe lock unavailable)"
-    fi
-    # A live queue-lock holder must not prevent the independent alert channel
-    # from seeing primary loss. This bounded sender remains our waited child.
-    PRIMARY_ALERTED=1
-    primary_send_alert "$reason" &
-    sender_pid=$!
-    fm_wake_append check primary-supervision-lost "$reason" || queue_status=1
-    if [ "$alert_locked" -eq 1 ]; then
-      if [ "$queue_status" -eq 0 ]; then
-        printf '%s\n' "$PRIMARY_PID:$PRIMARY_IDENTITY" > "$PRIMARY_ALERT_MARKER" || queue_status=1
-      fi
-      fm_lock_release "$PRIMARY_ALERT_LOCK"
-    fi
-    wait "$sender_pid" || sender_status=$?
-    [ "$queue_status" -eq 0 ] || return 1
-    case "$sender_status" in
-      0) ;;
-      127) fm_wake_append check primary-supervision-lost "$reason (Telegram sender unavailable)" || return 1 ;;
-      *) fm_wake_append check primary-supervision-lost "$reason (Telegram delivery failed)" || return 1 ;;
-    esac
-    return 0
+    ) &
+    probes+=("$!")
   done
+  while :; do
+    if [ -s "$probe_result" ]; then live=1; break; fi
+    pending=0
+    for pid in ${probes[@]+"${probes[@]}"}; do
+      if kill -0 "$pid" 2>/dev/null; then pending=1; fi
+    done
+    [ "$pending" -eq 1 ] || break
+    sleep 0.02 &
+    wait "$!" || true
+  done
+  for pid in ${probes[@]+"${probes[@]}"}; do kill -TERM "$pid" 2>/dev/null || true; done
+  rm -f "$probe_result"
+  if [ "$live" -ne 1 ]; then
+    for pid in ${probes[@]+"${probes[@]}"}; do wait "$pid" 2>/dev/null || true; done
+    return 0
+  fi
+  reason="check: primary-supervision-lost: primary supervision stopped without a healthy replacement while work is still live; restart firstmate to resume supervision"
+  if fm_lock_acquire_wait_max "$PRIMARY_ALERT_LOCK" 1; then
+    if [ -s "$PRIMARY_ALERT_MARKER" ]; then
+      fm_lock_release "$PRIMARY_ALERT_LOCK"
+      PRIMARY_ALERTED=1
+      return 0
+    fi
+    alert_locked=1
+  else
+    reason="$reason (alert dedupe lock unavailable)"
+  fi
+  # A live queue-lock holder must not prevent the independent alert channel
+  # from seeing primary loss. This bounded sender remains our waited child.
+  PRIMARY_ALERTED=1
+  primary_send_alert "$reason" &
+  sender_pid=$!
+  fm_wake_append check primary-supervision-lost "$reason" || queue_status=1
+  if [ "$alert_locked" -eq 1 ]; then
+    if [ "$queue_status" -eq 0 ]; then
+      printf '%s\n' "$PRIMARY_PID:$PRIMARY_IDENTITY" > "$PRIMARY_ALERT_MARKER" || queue_status=1
+    fi
+    fm_lock_release "$PRIMARY_ALERT_LOCK"
+  fi
+  wait "$sender_pid" || sender_status=$?
+  for pid in ${probes[@]+"${probes[@]}"}; do wait "$pid" 2>/dev/null || true; done
+  [ "$queue_status" -eq 0 ] || return 1
+  case "$sender_status" in
+    0) ;;
+    127) fm_wake_append check primary-supervision-lost "$reason (Telegram sender unavailable)" || return 1 ;;
+    *) fm_wake_append check primary-supervision-lost "$reason (Telegram delivery failed)" || return 1 ;;
+  esac
+  return 0
 }
 
 primary_actionable_handoff() {

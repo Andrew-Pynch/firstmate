@@ -72,6 +72,10 @@ def freshness():
         path = STATE / name
         if path.is_file() and not path.is_symlink():
             stamps.append(path.stat().st_mtime)
+    if stamps:
+        rc, _, _ = command([str(SCRIPT), '_owner'], timeout=min(POLL / 3, 5))
+        if rc:
+            return 0
     return max(stamps, default=0)
 
 
@@ -198,8 +202,6 @@ def manage(install):
 
 
 try:
-    if sys.argv[1] == 'live':
-        sys.exit(0 if live_work() else 1)
     if sys.argv[1] == 'delivery':
         problem = delivery_problem()
         if problem:
@@ -209,8 +211,10 @@ try:
         sys.exit(0 if freshness() + CHECK_IN_GRACE > time.time() else 1)
     if sys.argv[1] in ('check', 'run'):
         check(sys.argv[1] == 'run')
-    else:
+    elif sys.argv[1] in ('install', 'doctor'):
         manage(sys.argv[1] == 'install')
+    else:
+        sys.exit(2)
 except (OSError, RuntimeError, ValueError) as error:
     print(f'supervision-health: {error}', file=sys.stderr)
     sys.exit(CADENCED_FAILURE if sys.argv[1] == 'run' else 1)

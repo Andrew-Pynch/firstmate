@@ -601,6 +601,10 @@ The health suite also exercises a real twenty-second process-event launch-confir
 It requires healthy suppression during confirmation and an alert within a two-second poll after watcher death.
 The remote cases require an alert only for `alive`, with `dead`, `missing`, and `stopped` remaining quiet; focused arm tests cover the same states through the shared endpoint predicate.
 All remote and T3 transport in these cases is fake, with no server or remote mutation.
+The ownership regression runs a real supervision host and watcher under an isolated harness process, kills that primary while the watcher still updates its beacon, and requires an outage within one poll.
+The same suite covers a twenty-second fake T3 capability response with a two-second ordinary check budget, requiring healthy suppression during the request and a bounded alert after watcher death.
+The arm regressions place a delayed remote endpoint before a live local one and require notification within both one-second and three-second poll intervals.
+The three omp lifecycle-gap cases continue to pass, including shutdown without primary-process exit; the generated-service smoke retains the real-manager activation limit above.
 
 Other harnesses retain their existing arm lifetime because they do not set the omp primary PID.
 

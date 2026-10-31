@@ -75,8 +75,9 @@ test_health_incidents() {
 }
 
 test_health_real_watcher() {
-  local mode=$1 dir watcher checker i
+  local mode=$1 dir watcher checker i code check_timeout=30
   dir=$(health_fixture "real-$mode")
+  code=$ROOT
   touch "$dir/state/.last-heartbeat"
   mv "$dir/fakebin/tmux" "$dir/fakebin/tmux-base"
   cat > "$dir/fakebin/tmux" <<'SH'
@@ -88,6 +89,23 @@ else
 fi
 SH
   chmod +x "$dir/fakebin/tmux"
+  if [ "$mode" = relaunch ]; then
+    code="$dir/code"
+    mkdir -p "$code/bin"
+    for entry in "$ROOT/bin/"*; do
+      [ "${entry##*/}" = fm-spawn.sh ] || ln -s "$entry" "$code/bin/${entry##*/}"
+    done
+    cat > "$code/bin/fm-spawn.sh" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$$" > "$FM_HOME/relaunch-pid"
+touch "$FM_HOME/relaunch-started"
+sleep 20
+touch "$FM_HOME/relaunch-finished"
+SH
+    chmod +x "$code/bin/fm-spawn.sh"
+    printf 'kind=secondmate\nharness=codex\nbackend=tmux\nwindow=fixture:missing\n' > "$dir/state/mate.meta"
+    check_timeout=2
+  fi
   if [ "$mode" = slow ]; then
     cat > "$dir/state/slow.check.sh" <<'SH'
 #!/usr/bin/env bash
@@ -100,8 +118,8 @@ SH
   else
     touch "$dir/state/.last-check"
   fi
-  FM_HOME="$dir" FM_STATE_OVERRIDE="$dir/state" FM_POLL=2 FM_SIGNAL_GRACE=0 \
-    FM_CHECK_INTERVAL=999999 FM_CHECK_TIMEOUT=30 FM_HEARTBEAT=999999 \
+  FM_HOME="$dir" FM_ROOT_OVERRIDE="$code" FM_STATE_OVERRIDE="$dir/state" FM_POLL=2 FM_SIGNAL_GRACE=0 \
+    FM_CHECK_INTERVAL=999999 FM_CHECK_TIMEOUT="$check_timeout" FM_HEARTBEAT=999999 \
     FM_STALE_SECS=999999 FM_FAKE_TMUX_WINDOW=fixture:fixture PATH="$dir/fakebin:$PATH" \
     bash "$ROOT/bin/fm-watch.sh" > "$dir/watcher.log" 2>&1 &
   watcher=$!
@@ -113,6 +131,10 @@ SH
   if [ "$mode" = slow ]; then
     for i in $(seq 1 100); do [ -e "$dir/slow-started" ] && break; sleep 0.05; done
     [ -e "$dir/slow-started" ] || fail "slow check never started: $(cat "$dir/watcher.log")"
+  fi
+  if [ "$mode" = relaunch ]; then
+    for i in $(seq 1 100); do [ -e "$dir/relaunch-started" ] && break; sleep 0.05; done
+    [ -e "$dir/relaunch-started" ] || fail "secondmate relaunch never started: $(cat "$dir/watcher.log")"
   fi
   (
     for i in $(seq 1 6); do
@@ -144,6 +166,15 @@ while time.monotonic()-started < 2:
 else: raise SystemExit('no durable and external alert within FM_POLL=2')
 PYTEST
   wait "$watcher" 2>/dev/null || true
+  if [ "$mode" = relaunch ]; then
+    [ ! -e "$dir/relaunch-finished" ] || fail 'delayed relaunch finished before watcher death'
+    python3 - "$dir/relaunch-pid" <<'PYTEST'
+import os, signal, sys
+pid=int(open(sys.argv[1]).read())
+try: os.killpg(os.getpgid(pid), signal.SIGTERM)
+except ProcessLookupError: pass
+PYTEST
+  fi
   wait "$checker" || fail "real watcher health monitor failed: $(cat "$dir/health.log")"
   [ "$(wc -l < "$dir/telegram.log")" -eq 1 ] || fail 'real watcher death alerted more than once'
   pass "supervision-health: real $mode watcher stays healthy and its death alerts within one poll"
@@ -217,6 +248,45 @@ PYTEST
   pass "supervision-health: $mode sender remains diagnosed, respects cadence, and is not resent"
 }
 
+test_health_queue_retry() {
+  local mode=$1 dir
+  dir=$(health_fixture "queue-$mode")
+  printf '%s\n' "$mode" > "$dir/sender-mode"
+  HEALTH_TEST_POLL=1 health_run "$dir" install >/dev/null || fail 'could not install queue fixture units'
+  FM_HOME="$dir" FM_ROOT_OVERRIDE="$ROOT" FM_STATE_OVERRIDE="$dir/state" \
+    FM_CONFIG_OVERRIDE="$dir/config" FM_SUPERVISION_UNIT_DIR="$dir/units" \
+    FM_FAKE_TMUX_WINDOW=fixture:fixture FM_POLL=1 PATH="$dir/fakebin:$PATH" \
+    python3 - "$HEALTH" "$ROOT" "$mode" <<'PYTEST' || fail "queue contention lost $mode incident"
+from pathlib import Path
+import os, subprocess, sys, time
+health,root,mode=sys.argv[1:]; home=Path(os.environ['FM_HOME'])
+locker=subprocess.Popen(['bash','-c', '. "$1/bin/fm-wake-lib.sh"; fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK"; echo ready; read -r release; fm_lock_release "$FM_WAKE_QUEUE_LOCK"', '_',root],stdin=subprocess.PIPE,stdout=subprocess.PIPE,text=True)
+try:
+    assert locker.stdout.readline().strip()=='ready'
+    first=subprocess.run([health,'run'],capture_output=True,text=True,timeout=10)
+    assert first.returncode != 0
+    queue=home/'state/.wake-queue'
+    assert not queue.exists() or not queue.read_text(), 'lock did not prevent initial publication'
+    assert len((home/'telegram.log').read_text().splitlines())==1
+finally:
+    locker.communicate('release\n',timeout=5)
+for _ in range(2):
+    result=subprocess.run([health,'run'],capture_output=True,text=True,timeout=10)
+    assert result.returncode != 0, 'lost failed or uncertain delivery diagnosis'
+    assert 'uncertain' in result.stderr, result.stderr
+    assert 'publication remains pending' not in result.stderr, result.stderr
+rows=(home/'state/.wake-queue').read_text().splitlines()
+assert len(rows)==1 and rows[0].split('\t')[3]=='primary-supervision-lost', rows
+assert len((home/'telegram.log').read_text().splitlines())==1, 'transport retried after contention'
+receipt=(home/'state/.primary-loss-alert').read_text()
+assert ('delivery-uncertain' if mode=='hang' else 'delivery-failed') in receipt, receipt
+assert (home/'state/.primary-loss-queued').read_text().strip()==receipt.splitlines()[0]
+doctor=subprocess.run([health,'doctor'],capture_output=True,text=True)
+assert doctor.returncode != 0 and 'uncertain' in doctor.stderr, doctor
+PYTEST
+  pass "supervision-health: queue contention retries durable $mode outage without resending Telegram"
+}
+
 test_health_bootstrap_default_home() {
   local dir rc
   dir=$(health_fixture default-home)
@@ -247,6 +317,9 @@ test_health_rejects_zero_poll
 test_health_incidents
 test_health_real_watcher ordinary
 test_health_real_watcher slow
+test_health_real_watcher relaunch
+test_health_queue_retry missing
+test_health_queue_retry hang
 test_health_failed_delivery missing
 test_health_failed_delivery hang
 test_health_install_doctor

@@ -45,9 +45,14 @@ def delivery_problem():
     if not marker.is_file():
         return ''
     lines = marker.read_text().splitlines()
-    if lines and lines[0].startswith('listener-health:') and lines[1:] != ['delivery-sent']:
-        return 'Telegram delivery failed or remains uncertain; automatic resend is suppressed'
-    return ''
+    problems = []
+    if lines and lines[0].startswith('listener-health:'):
+        if lines[1:] != ['delivery-sent']:
+            problems.append('Telegram delivery failed or remains uncertain; automatic resend is suppressed')
+        queued = STATE / '.primary-loss-queued'
+        if not queued.is_file() or queued.read_text().strip() != lines[0]:
+            problems.append('durable outage publication remains pending')
+    return '; '.join(problems)
 
 
 def check_window(wait, deadline):
@@ -62,9 +67,6 @@ def check_window(wait, deadline):
                 if rc:
                     raise RuntimeError(err or 'could not clear recovered incident')
         else:
-            problem = delivery_problem()
-            if problem:
-                raise RuntimeError(problem)
             rc, _, err = command([str(SCRIPT), '_live'], timeout=min(POLL, 5))
             if rc not in (0, 1):
                 raise RuntimeError(err or 'endpoint check failed')

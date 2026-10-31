@@ -1170,7 +1170,7 @@ secondmate_liveness_tick() {
   [ "$(age_of "$tick_marker")" -ge "$SECONDMATE_LIVENESS_SECS" ] || return 0
   touch "$tick_marker" || return 1
   local now=$(( $(date +%s) )) meta id kind
-  local bound_marker attempts notify_key reason queued err first_reason='' failed=0
+  local first_reason='' failed=0
   for meta in "$STATE"/*.meta; do
     [ -e "$meta" ] || continue
     kind=$(fm_meta_get "$meta" kind 2>/dev/null || true)
@@ -1178,67 +1178,76 @@ secondmate_liveness_tick() {
     id=${meta##*/}
     id=${id%.meta}
     case "$id" in ''|*[!A-Za-z0-9._-]*) continue ;; esac
-    fm_secondmate_liveness_lock "$id" || continue
-    fm_secondmate_liveness_probe "$meta" "$id" poll
-    bound_marker="$STATE/.secondmate-relaunch-bound-$id"
-    reason='' notify_key='' err=''
-    case "$FM_SM_LIVE_STATUS" in
-      relaunchable)
-        if [ -e "$bound_marker" ] || [ -L "$bound_marker" ]; then
-          :
-        elif ! attempts=$(fm_secondmate_liveness_recent_attempts "$id" "$SECONDMATE_LIVENESS_WINDOW_SECS"); then
-          err="relaunch ledger is unreadable; endpoint left $FM_SM_LIVE_STATE"
-        elif [ "$attempts" -ge "$SECONDMATE_LIVENESS_MAX_ATTEMPTS" ]; then
-          if printf '%s\t%s\n' "$now" "$FM_SM_LIVE_STATE" > "$bound_marker"; then
-            reason="check: secondmate $id auto-relaunch paused after $SECONDMATE_LIVENESS_MAX_ATTEMPTS attempts in ${SECONDMATE_LIVENESS_WINDOW_SECS}s; endpoint still $FM_SM_LIVE_STATE - relaunch it manually or retire the route"
-            notify_key="secondmate-relaunch-bound-$id"
-          else
-            err="relaunch park marker could not be written; endpoint left $FM_SM_LIVE_STATE"
-          fi
-        elif fm_secondmate_liveness_relaunch "$meta" "$id" "$SECONDMATE_LIVENESS_TIMEOUT"; then
-          reason="check: secondmate $id auto-relaunched after $FM_SM_LIVE_CAUSE ($FM_SM_LIVE_WHERE)"
-          notify_key="secondmate-relaunch-$id-$now"
-        elif [ "$FM_SM_LIVE_STATUS" = skipped ]; then
-          err=$FM_SM_LIVE_REASON
-        else
-          reason="check: secondmate $id auto-relaunch failed after $FM_SM_LIVE_CAUSE: $(fm_sm_live_first_line "$FM_SM_LIVE_OUT")"
-          notify_key="secondmate-relaunch-failed-$id-$now"
-        fi
-        ;;
-      alive)
-        if [ -e "$bound_marker" ] || [ -L "$bound_marker" ]; then
-          if ! fm_secondmate_liveness_ledger_add "$id" rearmed; then
-            err="relaunch ledger is unwritable; auto-relaunch stays paused"
-          elif ! rm -f "$bound_marker"; then
-            err="relaunch park marker could not be cleared; auto-relaunch stays paused"
-          else
-            triage_log "secondmate $id live again; auto-relaunch pause cleared"
-          fi
-        fi
-        ;;
-      skipped)
-        triage_log "secondmate $id liveness: $FM_SM_LIVE_REASON"
-        ;;
-    esac
-    if [ -n "$reason" ]; then
-      queued=$(fm_wake_queued_keys check)
-      if printf '%s\n' "$queued" | grep -Fx "$notify_key" >/dev/null 2>&1 \
-        || fm_wake_append check "$notify_key" "$reason"; then
-        [ -n "$first_reason" ] || first_reason=$reason
-      else
-        err="check wake row could not be queued: $reason"
-      fi
-    fi
-    fm_secondmate_liveness_unlock "$id"
-    if [ -n "$err" ]; then
-      echo "watcher: secondmate $id liveness: $err" >&2
-      triage_log "secondmate $id liveness error: $err" || true
+    if ! WATCHER_WAIT_BUDGET=$((2 * SECONDMATE_LIVENESS_TIMEOUT + 60)) watcher_waited secondmate_liveness_one "$meta" "$id" "$now" 3>&2; then
       failed=1
     fi
+    [ -n "$first_reason" ] || first_reason=$WATCHER_CAPTURE
   done
   [ -z "$first_reason" ] || wake "$first_reason"
   [ "$failed" -eq 0 ]
 }
+
+secondmate_liveness_one() {
+  local meta=$1 id=$2 now=$3 bound_marker attempts notify_key reason queued err
+  fm_secondmate_liveness_lock "$id" || return 0
+  fm_secondmate_liveness_probe "$meta" "$id" poll
+  bound_marker="$STATE/.secondmate-relaunch-bound-$id"
+  reason='' notify_key='' err=''
+  case "$FM_SM_LIVE_STATUS" in
+    relaunchable)
+      if [ -e "$bound_marker" ] || [ -L "$bound_marker" ]; then
+        :
+      elif ! attempts=$(fm_secondmate_liveness_recent_attempts "$id" "$SECONDMATE_LIVENESS_WINDOW_SECS"); then
+        err="relaunch ledger is unreadable; endpoint left $FM_SM_LIVE_STATE"
+      elif [ "$attempts" -ge "$SECONDMATE_LIVENESS_MAX_ATTEMPTS" ]; then
+        if printf '%s\t%s\n' "$now" "$FM_SM_LIVE_STATE" > "$bound_marker"; then
+          reason="check: secondmate $id auto-relaunch paused after $SECONDMATE_LIVENESS_MAX_ATTEMPTS attempts in ${SECONDMATE_LIVENESS_WINDOW_SECS}s; endpoint still $FM_SM_LIVE_STATE - relaunch it manually or retire the route"
+          notify_key="secondmate-relaunch-bound-$id"
+        else
+          err="relaunch park marker could not be written; endpoint left $FM_SM_LIVE_STATE"
+        fi
+      elif fm_secondmate_liveness_relaunch "$meta" "$id" "$SECONDMATE_LIVENESS_TIMEOUT"; then
+        reason="check: secondmate $id auto-relaunched after $FM_SM_LIVE_CAUSE ($FM_SM_LIVE_WHERE)"
+        notify_key="secondmate-relaunch-$id-$now"
+      elif [ "$FM_SM_LIVE_STATUS" = skipped ]; then
+        err=$FM_SM_LIVE_REASON
+      else
+        reason="check: secondmate $id auto-relaunch failed after $FM_SM_LIVE_CAUSE: $(fm_sm_live_first_line "$FM_SM_LIVE_OUT")"
+        notify_key="secondmate-relaunch-failed-$id-$now"
+      fi
+      ;;
+    alive)
+      if [ -e "$bound_marker" ] || [ -L "$bound_marker" ]; then
+        if ! fm_secondmate_liveness_ledger_add "$id" rearmed; then
+          err="relaunch ledger is unwritable; auto-relaunch stays paused"
+        elif ! rm -f "$bound_marker"; then
+          err="relaunch park marker could not be cleared; auto-relaunch stays paused"
+        else
+          triage_log "secondmate $id live again; auto-relaunch pause cleared"
+        fi
+      fi
+      ;;
+    skipped)
+      triage_log "secondmate $id liveness: $FM_SM_LIVE_REASON"
+      ;;
+  esac
+  if [ -n "$reason" ]; then
+    queued=$(fm_wake_queued_keys check)
+    if printf '%s\n' "$queued" | grep -Fx "$notify_key" >/dev/null 2>&1 \
+      || fm_wake_append check "$notify_key" "$reason"; then
+      printf '%s\n' "$reason"
+    else
+      err="check wake row could not be queued: $reason"
+    fi
+  fi
+  fm_secondmate_liveness_unlock "$id"
+  if [ -n "$err" ]; then
+    echo "watcher: secondmate $id liveness: $err" >&2
+    triage_log "secondmate $id liveness error: $err" || true
+    return 1
+  fi
+  return 0
+} 2>&3
 
 # Consecutive wedge-escalation count for a window past FM_WEDGE_DEMAND_INSPECT_COUNT
 # (default 3): a pane that keeps re-wedging on the SAME stale hash - each
@@ -3072,7 +3081,7 @@ watcher_heartbeat() {
 }
 
 watcher_wait() {
-  local pid=$1 ticks=0 budget=$CHECK_TIMEOUT until
+  local pid=$1 ticks=0 budget=${WATCHER_WAIT_BUDGET:-$CHECK_TIMEOUT} until
   [ "$budget" -ge "$POLL" ] || budget=$POLL
   [ "$budget" -ge "$SIGNAL_GRACE" ] || budget=$SIGNAL_GRACE
   until=$((SECONDS + budget + 1))

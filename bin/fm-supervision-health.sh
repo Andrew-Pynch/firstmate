@@ -48,6 +48,7 @@ case "${1:-}" in
     . "$SCRIPT_DIR/fm-wake-lib.sh"
     lock="$STATE/.primary-loss-alert.lock"
     marker="$STATE/.primary-loss-alert"
+    queued_marker="$STATE/.primary-loss-queued"
     write_incident_receipt() {
       local tmp
       tmp=$(mktemp "$STATE/.primary-loss-receipt.XXXXXX") || return 1
@@ -59,42 +60,54 @@ case "${1:-}" in
     fm_lock_acquire_wait_bounded "$lock" 1 || exit 1
     trap 'fm_lock_release "$lock"' EXIT
     if python3 "$SCRIPT_DIR/fm-supervision-health.py" fresh; then
-      rm -f "$marker"
+      rm -f "$marker" "$queued_marker"
       exit 0
     fi
     [ "$1" != _clear ] || exit 0
     [ ! -L "$marker" ] && [ ! -d "$marker" ] || { echo 'supervision-health: unsafe incident marker' >&2; exit 1; }
-    if [ -s "$marker" ]; then
-      python3 "$SCRIPT_DIR/fm-supervision-health.py" delivery
-      exit $?
-    fi
-    incident="listener-health:$$:$(date +%s)"
     reason='check: primary-supervision-lost: home supervision stopped checking in while work is still live; restart firstmate to resume supervision'
-    write_incident_receipt delivery-uncertain
-    "$SCRIPT_DIR/fm-telegram-send.sh" "$reason" &
-    sender=$!
-    if fm_lock_acquire_wait_bounded "$FM_WAKE_QUEUE_LOCK" 1; then
-      fm_wake_append_locked check primary-supervision-lost "$reason"
-      fm_lock_release "$FM_WAKE_QUEUE_LOCK"
+    [ ! -L "$queued_marker" ] && [ ! -d "$queued_marker" ] || { echo 'supervision-health: unsafe queue marker' >&2; exit 1; }
+    sender=
+    if [ -s "$marker" ]; then
+      incident=$(head -n 1 "$marker")
+      case "$incident" in
+        listener-health:*) ;;
+        *) exit 0 ;;
+      esac
     else
-      wait "$sender" || true
-      echo 'supervision-health: could not queue primary-supervision-lost' >&2
-      exit 1
+      incident="listener-health:$$:$(date +%s)"
+      write_incident_receipt delivery-uncertain
+      "$SCRIPT_DIR/fm-telegram-send.sh" "$reason" &
+      sender=$!
+    fi
+    queued=0
+    if [ "$(cat "$queued_marker" 2>/dev/null || true)" = "$incident" ]; then
+      queued=1
+    elif fm_lock_acquire_wait_bounded "$FM_WAKE_QUEUE_LOCK" 1; then
+      if fm_wake_queued_keys_locked check | grep -Fx primary-supervision-lost >/dev/null \
+        || fm_wake_append_locked check primary-supervision-lost "$reason"; then
+        if printf '%s\n' "$incident" > "$queued_marker"; then
+          queued=1
+        fi
+      fi
+      fm_lock_release "$FM_WAKE_QUEUE_LOCK"
     fi
     fm_lock_release "$lock"
     trap - EXIT
-    delivery=delivery-sent
-    wait "$sender" || delivery=delivery-failed
-    if fm_lock_acquire_wait_bounded "$lock" 1; then
-      if [ "$(head -n 1 "$marker" 2>/dev/null || true)" = "$incident" ]; then
-        write_incident_receipt "$delivery"
+    if [ -n "$sender" ]; then
+      delivery=delivery-sent
+      wait "$sender" || delivery=delivery-failed
+      if fm_lock_acquire_wait_bounded "$lock" 1; then
+        if [ "$(head -n 1 "$marker" 2>/dev/null || true)" = "$incident" ]; then
+          write_incident_receipt "$delivery"
+        fi
+        fm_lock_release "$lock"
       fi
-      fm_lock_release "$lock"
     fi
-    if [ "$delivery" = delivery-failed ]; then
-      echo 'supervision-health: Telegram delivery failed; durable alert remains queued' >&2
-      exit 1
+    if [ "$queued" -ne 1 ]; then
+      echo 'supervision-health: could not queue primary-supervision-lost; publication remains pending' >&2
     fi
+    python3 "$SCRIPT_DIR/fm-supervision-health.py" delivery
     ;;
   check|run|install|doctor)
     exec python3 "$SCRIPT_DIR/fm-supervision-health.py" "$1"

@@ -593,6 +593,10 @@ The controls reproduced windowless metadata hiding a later live endpoint, a fals
 The corrected `bash tests/fm-supervision-health.test.sh` runs the real watcher at `FM_POLL=2` through ordinary cycles and a registered five-second check, then kills it and requires the queued alert and sender invocation within two seconds.
 It also runs the emitted service command through missing credentials and a hung sender, checking the poll-duration failure floor, persistent diagnostics, and exactly one send attempt.
 The isolated unit/parser smoke retains the real-manager activation limitation above.
+The queue-lock regressions hold the real queue lock through the initial send attempt, release it, and prove that later checks publish exactly one outage row while preserving failed or uncertain transport diagnostics and never repeating the send.
+The real-watcher recovery case starts a twenty-second fake secondmate relaunch with `FM_POLL=2` and an ordinary check timeout of two seconds, observes healthy suppression during recovery, then kills the watcher and requires the durable alert and sender invocation within two seconds.
+These tests use isolated metadata and fake backend/launch commands, without a live secondmate lifecycle.
+Focused existing liveness cases also pass for multiple recoveries before one wake, a failed relaunch, and a per-mate ledger error that retains stderr and does not prevent later recovery.
 
 Other harnesses retain their existing arm lifetime because they do not set the omp primary PID.
 

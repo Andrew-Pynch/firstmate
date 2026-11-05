@@ -346,7 +346,8 @@ fm_host_probe_candidates() {
 }
 
 # _fm_host_probe_one <prefix> <id> <host> <home> <remote> <nucleus>: writes
-# <prefix>.report and <prefix>.reason (empty when the host was read).
+# <prefix>.report, <prefix>.reason (empty when the host was read), and
+# <prefix>.received when the host's probe returns, using this home's clock.
 _fm_host_probe_one() {
   local prefix=$1 id=$2 host=$3 home=$4 remote=$5 nucleus=$6 report rc reason=
   : > "$prefix.report"
@@ -366,6 +367,7 @@ _fm_host_probe_one() {
       report=$(fm_host_probe_local "$home" "$nucleus" 2>"$prefix.err")
     fi
     rc=$?
+    fm_host_probe_now_ms > "$prefix.received"
     if [ "$rc" -ne 0 ] || [ -z "$report" ]; then
       if [ "$id" = local ]; then
         if [ -s "$prefix.err" ]; then
@@ -390,12 +392,11 @@ _fm_host_probe_one() {
 # fm_host_probe_run <dir> <mate-nucleus 0|1> <candidates>: probes every
 # candidate line (fm_host_probe_candidates format) concurrently, so the whole
 # read is bounded by one host's timeout rather than their sum. For the Nth line
-# it writes <dir>/<N>.candidate, <dir>/<N>.report, and <dir>/<N>.reason; it
-# writes <dir>/received, this home's clock in epoch milliseconds when the last
-# host answered; and it prints the candidate count. That one receipt time
-# dates every report, the way the pinned T3 Code client dates a sample by its
-# own receipt rather than by the host's clock: the fleet is read as one unit
-# for one decision, so a slow host never ages the others' reports. This home
+# it writes <dir>/<N>.candidate, <dir>/<N>.report, <dir>/<N>.reason, and
+# <dir>/<N>.received for each probe that returns; it prints the candidate count.
+# Each receipt time uses this home's clock in epoch milliseconds, the way the
+# pinned T3 Code client dates a sample by its own receipt rather than by the
+# host's clock. A slow host can age the other hosts' reports. This home
 # never runs the Nucleus gate: the captain's rule binds new remote placement,
 # and its own core cap is the local lever.
 fm_host_probe_run() {
@@ -415,6 +416,5 @@ EOF
   for pid in "${pids[@]+"${pids[@]}"}"; do
     wait "$pid" 2>/dev/null || true
   done
-  fm_host_probe_now_ms > "$dir/received"
   printf '%s' "$n"
 }

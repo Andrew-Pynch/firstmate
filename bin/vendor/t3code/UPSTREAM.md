@@ -28,7 +28,7 @@ Check the copy with `git hash-object` and `sha256sum` on the files above; both m
 
 Firstmate does not take the sampler's 5-second cache, the client's polling hook, or the settings UI.
 Every Firstmate admission gate still runs first, and the selector only ranks the candidates that passed them.
-The selector's 15-second staleness and 5-second future rules are ported but rarely fire: Firstmate reads the fleet fresh for each decision and dates every report by when that read finished, and the whole-probe timeout bounds how old a read can be.
+The selector's 15-second staleness and 5-second future rules use each host report's own receipt time on Firstmate's clock, so waiting for a slow host can make earlier reports stale.
 
 ## Updating the pin
 

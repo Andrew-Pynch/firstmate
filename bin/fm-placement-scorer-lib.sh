@@ -24,10 +24,10 @@
 #             upstream's `score > bestScore` does, so candidate order (this
 #             home, then registry order) breaks a tie. A fact the probe could
 #             not read rejects the candidate, as a missing upstream snapshot
-#             does. The sample time is when this home finished the fleet
-#             read (bin/fm-host-probe-lib.sh dates every report in one read
-#             together), so the freshness window measures the time from that
-#             read to the decision. One deliberate difference: a malformed
+#             does. The sample time is when this home received that host's
+#             report (bin/fm-host-probe-lib.sh dates each report separately),
+#             so the freshness window measures the time from that receipt to
+#             the decision. One deliberate difference: a malformed
 #             receipt time is rejected here, where upstream's NaN comparison
 #             would pass it; Firstmate stamps that time itself, so no host can
 #             supply one.

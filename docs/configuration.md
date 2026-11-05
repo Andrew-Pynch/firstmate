@@ -1195,7 +1195,7 @@ An existing linked-worktree home that predates this rule advances through its ma
 A local standalone-clone home cannot receive a primary-local commit through that no-fetch sync, so it receives the rule through `/updatefirstmate`'s origin refresh instead.
 ## Resource-aware placement
 
-Each host's worker headroom decides where new work runs: how many more workers its available memory can hold above a floor the host keeps for itself.
+Each host's worker headroom limits whether it can take new work: how many more workers its available memory can hold above a floor the host keeps for itself.
 `bin/fm-host-probe-lib.sh` owns the rule, `headroom_workers = floor((available GiB - FM_PLACE_MIN_FREE_GIB) / FM_PLACE_PER_WORKER_GIB)`, and its measured defaults: an 8 GiB floor, because big-ron froze with 3 GiB available, and 3 GiB per worker, because omp workers there sit at 0.8 to 4.3 GiB resident.
 `bin/fm-fleet-resources.sh` is the fact command.
 It reads this host and every host in `data/secondmates.md` at once, and prints each one's available and total memory, load per core, live omp workers and their resident memory, headroom, a 200 ms CPU utilization sample, and byte-precise available and total memory, or why that host could not be read.
@@ -1219,7 +1219,9 @@ t3 local=50 bertha=100 timmy=25
 ```
 
 Each `<candidate-id>=<weight>` gives this home (`local`) or a registered secondmate a weight from 0 through 100; an omitted one weighs 50, and 0 keeps that home out of the ranking.
-The score is `weight * cpus * (1 - cpu_util) * (available bytes / total bytes)`, and the T3 Code selector also drops a home whose sample is stale, whose CPU is at least 95% busy, whose available memory is at most 5% of total, or whose CPU sample was not observed.
+T3 ranks weighted idle CPU capacity and available-memory ratio; the [scoring contract](../bin/fm-placement-scorer-lib.sh) owns its rejection thresholds and tie order.
+A slow or unreachable mate can leave earlier reports too old to rank; [probe receipt timing](../bin/fm-host-probe-lib.sh) determines each report's age independently.
+On macOS, T3 placement needs Node.js or Bun to observe CPU utilization; the [probe contract](../bin/fm-host-probe-lib.sh) owns runtime lookup and timeout behavior.
 A weight changes ranking only: every gate, including the one-worker headroom floor, still runs first, so a scorer can drop an eligible home and never admits a refused one.
 A `t3` placement line names the scorer, every weight, and the score ranking, and a refusal adds each T3 Code rejection to the gate reasons.
 A malformed file exits 2 before any host is probed.

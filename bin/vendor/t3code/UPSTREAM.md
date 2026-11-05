@@ -2,7 +2,7 @@
 
 This directory is an unmodified copy of the T3 Code host selector and its resource sampler, pinned to one stable upstream release.
 Firstmate never executes these files at placement time.
-`bin/fm-placement-scorer-lib.sh` owns the Firstmate adapter that ports the selector, and `bin/fm-host-probe-lib.sh` owns the probe that ports the sampler's CPU and memory facts.
+The [Firstmate adapter](../../fm-placement-scorer-lib.sh) owns the scoring contract, and the [host probe](../../fm-host-probe-lib.sh) owns CPU and memory sampling and per-host receipt timing.
 `tests/fm-place.test.sh` runs the vendored selector under Bun against the same vectors as the adapter, so the port cannot drift from this copy unnoticed.
 
 ## Pin
@@ -18,17 +18,14 @@ Firstmate never executes these files at placement time.
 | `resourceTelemetry.ts.lines-9-16` | lines 9-16 of `packages/contracts/src/resourceTelemetry.ts` (the `HostResourcesSnapshot` contract) | `5e7045515f1f4639667ab619d554da9709852191` (whole file) | `07515932a6b9352e14eaa8759a2518e32776773d909766b44c8d0a6a529c38de` (excerpt) |
 | `LICENSE` | `LICENSE` | `55ee675bb1de9e580b69f3dd68684df2a4dffba7` | `935d8f2af0c703f9c39517ee57cc4930b19d02d533be930b63f0e82f93614b43` |
 
-Check the copy with `git hash-object` and `sha256sum` on the files above; both must print the values in the table.
+Check the complete files with `git hash-object` and `sha256sum`; both must print the values in the table.
+For `resourceTelemetry.ts.lines-9-16`, check only its SHA-256 locally: its listed Git blob identifies the complete upstream source file, not the excerpt.
 
-## What Firstmate takes from it
-
-- The selector's rejection rules and score, `weight * cpuCount * (1 - cpuUtilization) * (availableMemoryBytes / totalMemoryBytes)`, with its strict `>` comparison, so the first of equal scores in candidate order wins.
-- The sampler's CPU utilization: two per-CPU counter reads 200 ms apart, `1 - idle delta / (user + nice + sys + idle + irq) delta`, unobserved when the CPU count changed or no time passed.
-- The sampler's available memory: `MemAvailable` on Linux, and free plus inactive plus speculative pages on macOS.
+## Integration boundaries
 
 Firstmate does not take the sampler's 5-second cache, the client's polling hook, or the settings UI.
 Every Firstmate admission gate still runs first, and the selector only ranks the candidates that passed them.
-The selector's 15-second staleness and 5-second future rules use each host report's own receipt time on Firstmate's clock, so waiting for a slow host can make earlier reports stale.
+The adapter applies its freshness limits to the probe's per-host receipt times; see the contracts linked above rather than dating all reports when the fleet read finishes.
 
 ## Updating the pin
 

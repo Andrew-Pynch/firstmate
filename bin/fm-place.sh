@@ -384,7 +384,7 @@ LIVE_UNKNOWN=0
 # (always first), then registry order. The t3 scorer hands the same eligible
 # candidates, in the same order, to fm_place_t3_rank.
 fm_place_decide() {
-  local dir n i id host home remote headroom best=-1 ranked='' tied='' mates=0
+  local dir n i id host headroom best=-1 ranked='' tied='' mates=0
   local t3_records='' received
   T3_IDS=()
   T3_HOSTS=()
@@ -398,7 +398,7 @@ fm_place_decide() {
   i=0
   while [ "$i" -lt "$n" ]; do
     i=$((i + 1))
-    read -r id host home remote < "$dir/$i.candidate"
+    read -r id host _ < "$dir/$i.candidate"
     [ "$id" = local ] || mates=$((mates + 1))
     REASONS=$(cat "$dir/$i.reason")
     PLACE_REPORT=$(cat "$dir/$i.report")
@@ -456,10 +456,15 @@ fm_place_live_detail() {
   printf ' live=%s/%s (alive=%s unknown=%s)' "$LIVE_COUNTED" "$CAP_VALUE" "$LIVE_ALIVE" "$LIVE_UNKNOWN"
 }
 
-# fm_place_fact <key> <report>: the report's value, or `unobserved` when absent.
+# fm_place_fact <key> <report>: the report's value, `unobserved` when absent, or
+# `malformed` when it holds whitespace, so a host's value is always exactly one
+# field of the scorer's record and the scorer rejects what it cannot read.
 fm_place_fact() {
   local value
   value=$(fm_host_probe_field "$1" "$2")
+  case "$value" in
+    *[[:space:]]*) value=malformed ;;
+  esac
   printf '%s' "${value:-unobserved}"
 }
 

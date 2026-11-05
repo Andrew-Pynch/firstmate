@@ -19,6 +19,19 @@
 #   mem_total_gib     installed memory, whole GiB, rounded down
 #   load_1m           the 1-minute load average
 #   cpus              online logical CPUs
+#   cpu_util          CPU utilization from 0 to 1 over a 200 ms sample, read
+#                     the way the pinned T3 Code sampler reads it
+#                     (bin/vendor/t3code/HostResources.ts): per-CPU counters
+#                     twice, 1 - idle delta / (user+nice+sys+idle+irq) delta,
+#                     unobserved when the CPU count changed or no time passed.
+#                     Linux reads /proc/stat; macOS runs that same os.cpus()
+#                     sample in node or bun (on PATH, or ~/.bun/bin/bun where
+#                     omp was installed through Bun), and with neither it is
+#                     unobserved.
+#   mem_avail_bytes   available memory in bytes, as the pinned sampler reads it:
+#                     MemAvailable on Linux, free + inactive + speculative pages
+#                     on macOS, clamped to mem_total_bytes
+#   mem_total_bytes   installed memory in bytes
 #   workers           live omp worker processes on the host, across every
 #                     home there: each process launched with the tracked
 #                     .omp/fm-worker-overlay.yml worker overlay, which
@@ -43,10 +56,12 @@
 #   FM_PLACE_MIN_FREE_GIB         memory floor in GiB (default 8)
 #   FM_PLACE_PER_WORKER_GIB       memory budget per worker in GiB (default 3)
 #   FM_PLACE_PROC_DIR             read memory, load, and CPUs for LOCAL probes
-#                                 from <dir>/meminfo, <dir>/loadavg, and
-#                                 <dir>/cpuinfo in Linux procfs format on every
-#                                 platform (test seam; remote probes always read
-#                                 their own host)
+#                                 from <dir>/meminfo, <dir>/loadavg,
+#                                 <dir>/cpuinfo, and <dir>/stat in Linux procfs
+#                                 format on every platform, taking the second
+#                                 CPU read from <dir>/stat.next when it exists
+#                                 (test seam; remote probes always read their
+#                                 own host)
 # fm_host_probe_config_valid checks them; callers refuse before probing.
 #
 # Requires bin/fm-timeout-lib.sh and bin/fm-secondmate-registry-lib.sh to be
@@ -141,8 +156,12 @@ if [ "$place_nucleus" = 1 ]; then
   fi
 fi
 
+cpu_util=
+avail_bytes=
+total_bytes=
 if [ "$platform" = Darwin ] && [ -z "$place_proc" ]; then
-  mem=$(vm_stat 2>/dev/null | awk '
+  vm=$(vm_stat 2>/dev/null)
+  mem=$(printf '%s\n' "$vm" | awk '
     /page size of/ && !size { for (i = 1; i <= NF; i++) if ($i == "of") size = $(i + 1) + 0 }
     /^Pages free/ { free = $3 + 0 }
     /^Pages inactive/ { inactive = $3 + 0 }
@@ -152,18 +171,58 @@ if [ "$platform" = Darwin ] && [ -z "$place_proc" ]; then
   total=$(sysctl -n hw.memsize 2>/dev/null | awk '{ printf "%d", $1 / 1073741824 }')
   load=$(sysctl -n vm.loadavg 2>/dev/null | awk '{ print $2 }')
   cpus=$(sysctl -n hw.ncpu 2>/dev/null)
+  avail_bytes=$(printf '%s\n' "$vm" | awk '
+    /page size of/ && !size { for (i = 1; i <= NF; i++) if ($i == "of") size = $(i + 1) + 0 }
+    /^Pages free:/ && $3 ~ /^[0-9]+\.$/ { free = $3 + 0; f = 1 }
+    /^Pages inactive:/ && $3 ~ /^[0-9]+\.$/ { inactive = $3 + 0; n = 1 }
+    /^Pages speculative:/ && $3 ~ /^[0-9]+\.$/ { speculative = $3 + 0; s = 1 }
+    END { if (size > 0 && f && n && s) printf "%.0f", (free + inactive + speculative) * size }')
+  total_bytes=$(sysctl -n hw.memsize 2>/dev/null)
+  runtime=
+  for candidate in node bun "$HOME/.bun/bin/bun"; do
+    if command -v "$candidate" >/dev/null 2>&1; then
+      runtime=$(command -v "$candidate")
+      break
+    fi
+  done
+  if [ -n "$runtime" ]; then
+    cpu_util=$("$runtime" -e 'const o=require("os");const r=()=>{let i=0,t=0;const c=o.cpus();for(const{times:x}of c){i+=x.idle;t+=x.user+x.nice+x.sys+x.idle+x.irq}return[i,t,c.length]};const a=r();setTimeout(()=>{const b=r(),td=b[1]-a[1],id=b[0]-a[0];if(a[2]===b[2]&&td>0&&id>=0)console.log(Math.min(1,Math.max(0,1-id/td)).toFixed(6))},200)' 2>/dev/null </dev/null)
+  fi
 else
   proc=${place_proc:-/proc}
   mem=$(awk '/^MemAvailable:/ { printf "%d", $2 / 1048576; exit }' "$proc/meminfo" 2>/dev/null)
   total=$(awk '/^MemTotal:/ { printf "%d", $2 / 1048576; exit }' "$proc/meminfo" 2>/dev/null)
   load=$(awk '{ print $1; exit }' "$proc/loadavg" 2>/dev/null)
   cpus=$(grep -c '^processor' "$proc/cpuinfo" 2>/dev/null)
+  avail_bytes=$(awk '/^MemAvailable:/ && $2 ~ /^[0-9]+$/ && $3 == "kB" { printf "%.0f", $2 * 1024; exit }' "$proc/meminfo" 2>/dev/null)
+  total_bytes=$(awk '/^MemTotal:/ && $2 ~ /^[0-9]+$/ && $3 == "kB" { printf "%.0f", $2 * 1024; exit }' "$proc/meminfo" 2>/dev/null)
+  cpu_first=$(awk '/^cpu[0-9]/ { idle += $5; total += $2 + $3 + $4 + $5 + $7; n++ } END { if (n) printf "%.0f %.0f %d", idle, total, n }' "$proc/stat" 2>/dev/null)
+  if [ -n "$cpu_first" ]; then
+    sleep 0.2
+    cpu_next=$proc/stat
+    [ -z "$place_proc" ] || [ ! -f "$proc/stat.next" ] || cpu_next=$proc/stat.next
+    cpu_util=$(awk -v first="$cpu_first" '/^cpu[0-9]/ { idle += $5; total += $2 + $3 + $4 + $5 + $7; n++ }
+      END {
+        split(first, a, " ")
+        td = total - a[2]; id = idle - a[1]
+        if (n == a[3] && td > 0 && id >= 0) { u = 1 - id / td; if (u < 0) u = 0; if (u > 1) u = 1; printf "%.6f", u }
+      }' "$cpu_next" 2>/dev/null)
+  fi
 fi
 case "$cpus" in ''|*[!0-9]*|0) cpus= ;; esac
+case "$cpu_util" in ''|*[!0-9.]*) cpu_util= ;; esac
+case "$avail_bytes" in ''|*[!0-9]*) avail_bytes= ;; esac
+case "$total_bytes" in ''|*[!0-9]*) total_bytes= ;; esac
+if [ -n "$avail_bytes" ] && [ -n "$total_bytes" ]; then
+  avail_bytes=$(awk -v a="$avail_bytes" -v t="$total_bytes" 'BEGIN { printf "%.0f", (a + 0 > t + 0) ? t : a }')
+fi
 printf 'mem_gib=%s\n' "${mem:-unobserved}"
 printf 'mem_total_gib=%s\n' "${total:-unobserved}"
 printf 'load_1m=%s\n' "${load:-unobserved}"
 printf 'cpus=%s\n' "${cpus:-unobserved}"
+printf 'cpu_util=%s\n' "${cpu_util:-unobserved}"
+printf 'mem_avail_bytes=%s\n' "${avail_bytes:-unobserved}"
+printf 'mem_total_bytes=%s\n' "${total_bytes:-unobserved}"
 
 workers=$(ps -A -o rss= -o args= 2>/dev/null | awk '
   BEGIN { overlay = "/fm-worker-overlay.yml" }

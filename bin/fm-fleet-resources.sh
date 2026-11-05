@@ -14,12 +14,15 @@
 # refuses a local ship or scout spawn when this host's is below 1.
 #
 # Output, one line per host (plain, the default):
-#   RESOURCES home=<local|mate-id> host=<host> avail_gib=<n> total_gib=<n> load_1m=<x> cpus=<n> load_per_core=<x> workers=<n> worker_rss_gib=<x> headroom_workers=<n>
+#   RESOURCES home=<local|mate-id> host=<host> avail_gib=<n> total_gib=<n> load_1m=<x> cpus=<n> load_per_core=<x> workers=<n> worker_rss_gib=<x> headroom_workers=<n> cpu_util=<x> avail_bytes=<n> total_bytes=<n>
 #   RESOURCES home=<mate-id> host=<host> headroom_workers=unknown error=<why the host could not be read>
 #   POLICY floor_gib=<n> per_worker_gib=<n>
 # A fact the host could not read prints `?`. workers is the host's live omp
 # worker processes and worker_rss_gib their resident memory, across every home
-# on that host (bin/fm-host-probe-lib.sh owns how they are counted).
+# on that host (bin/fm-host-probe-lib.sh owns how they are counted). cpu_util is
+# a 200 ms CPU utilization sample from 0 to 1, and avail_bytes and total_bytes
+# are byte-precise memory; bin/fm-host-probe-lib.sh owns how each is read, and
+# only the opt-in T3 Code scorer (bin/fm-placement-scorer-lib.sh) ranks by them.
 #
 #   --local       read only this home's host
 #   --mate <id>   read only that registered mate's host
@@ -131,7 +134,7 @@ while [ "$i" -lt "$N" ]; do
     PLAIN="${PLAIN}RESOURCES home=$id host=$host headroom_workers=unknown error=$reason
 "
     SUMMARY="${SUMMARY}${SUMMARY:+ | }$label unreadable: $reason"
-    JSON_HOSTS="${JSON_HOSTS}${JSON_HOSTS:+,}{\"home\":$(json_str "$id"),\"host\":$(json_str "$host"),\"avail_gib\":null,\"total_gib\":null,\"load_1m\":null,\"cpus\":null,\"load_per_core\":null,\"workers\":null,\"worker_rss_gib\":null,\"headroom_workers\":null,\"error\":$(json_str "$reason")}"
+    JSON_HOSTS="${JSON_HOSTS}${JSON_HOSTS:+,}{\"home\":$(json_str "$id"),\"host\":$(json_str "$host"),\"avail_gib\":null,\"total_gib\":null,\"load_1m\":null,\"cpus\":null,\"load_per_core\":null,\"workers\":null,\"worker_rss_gib\":null,\"headroom_workers\":null,\"cpu_util\":null,\"avail_bytes\":null,\"total_bytes\":null,\"error\":$(json_str "$reason")}"
     continue
   fi
   avail=$(fm_host_probe_field mem_gib "$report")
@@ -140,13 +143,16 @@ while [ "$i" -lt "$N" ]; do
   cpus=$(fm_host_probe_field cpus "$report")
   workers=$(fm_host_probe_field workers "$report")
   rss=$(fm_host_probe_field worker_rss_gib "$report")
+  cpu_util=$(fm_host_probe_field cpu_util "$report")
+  avail_bytes=$(fm_host_probe_field mem_avail_bytes "$report")
+  total_bytes=$(fm_host_probe_field mem_total_bytes "$report")
   per_core=$(fm_host_probe_load_per_core "$load" "$cpus")
   headroom=$(fm_host_probe_headroom "$avail")
   [ -n "$headroom" ] || RC=3
-  PLAIN="${PLAIN}RESOURCES home=$id host=$host avail_gib=$(shown "$avail") total_gib=$(shown "$total") load_1m=$(shown "$load") cpus=$(shown "$cpus") load_per_core=$(shown "$per_core") workers=$(shown "$workers") worker_rss_gib=$(shown "$rss") headroom_workers=$(shown "$headroom")
+  PLAIN="${PLAIN}RESOURCES home=$id host=$host avail_gib=$(shown "$avail") total_gib=$(shown "$total") load_1m=$(shown "$load") cpus=$(shown "$cpus") load_per_core=$(shown "$per_core") workers=$(shown "$workers") worker_rss_gib=$(shown "$rss") headroom_workers=$(shown "$headroom") cpu_util=$(shown "$cpu_util") avail_bytes=$(shown "$avail_bytes") total_bytes=$(shown "$total_bytes")
 "
   SUMMARY="${SUMMARY}${SUMMARY:+ | }$label $(shown "$avail")/$(shown "$total") GiB free, load $(shown "$per_core")/core, $(shown "$workers") workers using $(shown "$rss") GiB, headroom $(shown "$headroom")"
-  JSON_HOSTS="${JSON_HOSTS}${JSON_HOSTS:+,}{\"home\":$(json_str "$id"),\"host\":$(json_str "$host"),\"avail_gib\":$(json_num "$avail"),\"total_gib\":$(json_num "$total"),\"load_1m\":$(json_num "$load"),\"cpus\":$(json_num "$cpus"),\"load_per_core\":$(json_num "$per_core"),\"workers\":$(json_num "$workers"),\"worker_rss_gib\":$(json_num "$rss"),\"headroom_workers\":$(json_num "$headroom"),\"error\":null}"
+  JSON_HOSTS="${JSON_HOSTS}${JSON_HOSTS:+,}{\"home\":$(json_str "$id"),\"host\":$(json_str "$host"),\"avail_gib\":$(json_num "$avail"),\"total_gib\":$(json_num "$total"),\"load_1m\":$(json_num "$load"),\"cpus\":$(json_num "$cpus"),\"load_per_core\":$(json_num "$per_core"),\"workers\":$(json_num "$workers"),\"worker_rss_gib\":$(json_num "$rss"),\"headroom_workers\":$(json_num "$headroom"),\"cpu_util\":$(json_num "$cpu_util"),\"avail_bytes\":$(json_num "$avail_bytes"),\"total_bytes\":$(json_num "$total_bytes"),\"error\":null}"
 done
 
 case "$FORMAT" in

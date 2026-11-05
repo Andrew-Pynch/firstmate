@@ -414,6 +414,30 @@ fm_test_proc_fixture() {
   done
 }
 
+# fm_test_proc_cpu_fixture <dir> <cpus> <busy-percent> [next-cpus]: writes the
+# two /proc/stat reads the probe's 200 ms CPU sample takes for FM_PLACE_PROC_DIR
+# (<dir>/stat, then <dir>/stat.next), so the sample measures <busy-percent>
+# utilization. iowait and the aggregate `cpu` line advance too, and the sample
+# must ignore both. A different [next-cpus] count stands for a CPU going
+# offline between the two reads.
+fm_test_proc_cpu_fixture() {
+  local dir=$1 cpus=$2 busy=$3 next=${4:-$2} i
+  mkdir -p "$dir" || return 1
+  printf 'cpu  900000 0 0 1 0 0 0 0 0 0\n' > "$dir/stat" || return 1
+  printf 'cpu  990000 0 0 1 0 0 0 0 0 0\n' > "$dir/stat.next" || return 1
+  i=0
+  while [ "$i" -lt "$cpus" ]; do
+    printf 'cpu%s 1000 10 500 4000 300 20 5 0 0 0\n' "$i" >> "$dir/stat" || return 1
+    i=$((i + 1))
+  done
+  i=0
+  while [ "$i" -lt "$next" ]; do
+    printf 'cpu%s %s 10 500 %s 900 20 5 0 0 0\n' "$i" "$((1000 + busy * 2))" "$((4000 + (100 - busy) * 2))" \
+      >> "$dir/stat.next" || return 1
+    i=$((i + 1))
+  done
+}
+
 # Every suite reads this host's memory through a roomy fixture by default, so
 # the worker-headroom checks in bin/fm-spawn.sh and bin/fm-place.sh decide the
 # same way whatever the machine running the suite has free. A case that tests

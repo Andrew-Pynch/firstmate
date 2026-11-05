@@ -5,9 +5,11 @@
 #
 # What this suite pins: headroom_workers at and around the memory floor, that
 # both policy knobs move it, that every registered host gets a row and an
-# unreachable one says why instead of disappearing, and the one-line summary and
-# JSON forms. Local memory is driven through FM_PLACE_PROC_DIR and remote hosts
-# through a fake ssh, so no real machine's load decides a verdict.
+# unreachable one says why instead of disappearing, the one-line summary and
+# JSON forms, and the T3 Code facts (200 ms CPU utilization and byte-precise
+# memory) on Linux and macOS, unobserved rather than invented when missing.
+# Local memory is driven through FM_PLACE_PROC_DIR and remote hosts through a
+# fake ssh, so no real machine's load decides a verdict.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -34,7 +36,11 @@ make_home() {  # <name>
 }
 
 # A fake ssh answering from per-host report files; an absent report is an
-# unresolvable host.
+# unresolvable host. A host with a directory under FM_FAKE_DARWIN_ROOT instead
+# runs the real probe snippet against that directory's stand-in macOS tools
+# (uname, vm_stat, sysctl, and optionally a JavaScript runtime), the few POSIX
+# tools the snippet needs, and its own home, with nothing else of this
+# machine's PATH or environment, the way a near-bare macOS ssh session runs it.
 FAKEBIN=$(fm_fakebin "$TMP_ROOT/fakes")
 cat > "$FAKEBIN/ssh" <<'SH'
 #!/usr/bin/env bash
@@ -45,6 +51,10 @@ for arg in "$@"; do
   host=$last
   last=$arg
 done
+darwin=${FM_FAKE_DARWIN_ROOT:-}/$host
+if [ -n "${FM_FAKE_DARWIN_ROOT:-}" ] && [ -d "$darwin" ]; then
+  exec env -i HOME="$darwin/home" PATH="$darwin/bin:/opt/homebrew/bin" sh -c "$last"
+fi
 report=${FM_FAKE_SSH_REPORTS:-}/$host.report
 [ -f "$report" ] || {
   printf 'ssh: Could not resolve hostname %s\n' "$host" >&2
@@ -53,6 +63,53 @@ report=${FM_FAKE_SSH_REPORTS:-}/$host.report
 cat "$report"
 SH
 chmod +x "$FAKEBIN/ssh"
+
+DARWIN_ROOT="$TMP_ROOT/darwin"
+
+# write_darwin_host <host> <runtime: real|none|hang> <vm_stat: full|no-speculative>:
+# stand-in macOS tools for one host. lil-timmy's own vm_stat output is the
+# fixture: 16 KiB pages, 48 GiB installed, 16 CPUs.
+write_darwin_host() {
+  local dir="$DARWIN_ROOT/$1" runtime=$2 vm=$3 real tool
+  mkdir -p "$dir/bin" "$dir/home"
+  for tool in sh awk sed head grep ps cat sleep; do
+    ln -sf "$(command -v "$tool")" "$dir/bin/$tool"
+  done
+  printf '#!/bin/sh\necho Darwin\n' > "$dir/bin/uname"
+  {
+    printf '#!/bin/sh\ncat <<EOF\n'
+    printf 'Mach Virtual Memory Statistics: (page size of 16384 bytes)\n'
+    printf 'Pages free:                                    32263.\n'
+    printf 'Pages active:                                 790438.\n'
+    printf 'Pages inactive:                               792906.\n'
+    [ "$vm" = no-speculative ] || printf 'Pages speculative:                              1959.\n'
+    printf 'Pages throttled:                                   0.\n'
+    printf 'Pages wired down:                             582927.\n'
+    printf 'Pages purgeable:                                3748.\n'
+    printf 'EOF\n'
+  } > "$dir/bin/vm_stat"
+  cat > "$dir/bin/sysctl" <<'SH'
+#!/bin/sh
+case "$*" in
+  *hw.memsize*) echo 51539607552 ;;
+  *vm.loadavg*) echo '{ 1.60 1.40 1.20 }' ;;
+  *hw.ncpu*) echo 16 ;;
+esac
+SH
+  case "$runtime" in
+    real)
+      real=$(command -v node || command -v bun || true)
+      [ -n "$real" ] || [ ! -x "$HOME/.bun/bin/bun" ] || real=$HOME/.bun/bin/bun
+      [ -n "$real" ] || return 1
+      mkdir -p "$dir/home/.bun/bin"
+      printf '#!/bin/sh\nexec %s "$@"\n' "$real" > "$dir/home/.bun/bin/bun"
+      chmod +x "$dir/home/.bun/bin/bun"
+      ;;
+    hang) printf '#!/bin/sh\nsleep 30\n' > "$dir/bin/node" ;;
+  esac
+  chmod +x "$dir/bin/uname" "$dir/bin/vm_stat" "$dir/bin/sysctl"
+  [ "$runtime" != hang ] || chmod +x "$dir/bin/node"
+}
 
 write_report() {  # <host> <avail-gib> <total-gib>
   mkdir -p "$TMP_ROOT/reports"
@@ -143,8 +200,80 @@ test_every_registered_host_gets_a_row() {
   pass "every registered host is read; an unreadable one reports why"
 }
 
+# The probe's T3 Code facts on Linux: a 200 ms CPU sample read the pinned
+# sampler's way and byte-precise memory, alongside unchanged headroom facts.
+test_linux_probe_samples_cpu_and_bytes() {
+  local home proc
+  home=$(make_home linux-cpu)
+  proc="$TMP_ROOT/proc-linux-cpu"
+  fm_test_proc_fixture "$proc" 20 61 2.00 4
+  fm_test_proc_cpu_fixture "$proc" 4 25
+  run_fleet "$home" "$proc" --local
+  expect_code 0 "$STATUS" "a readable host should exit 0"
+  assert_contains "$OUT" 'avail_gib=20 total_gib=61 load_1m=2.00 cpus=4 load_per_core=0.50 workers=' \
+    "the existing facts should be unchanged"
+  assert_contains "$OUT" 'headroom_workers=4 cpu_util=0.250000 avail_bytes=21474836480 total_bytes=65498251264' \
+    "a 25% busy sample and MemAvailable/MemTotal in bytes should be reported, ignoring iowait and the aggregate line"
+  if command -v jq >/dev/null 2>&1; then
+    run_fleet "$home" "$proc" --local --json
+    assert_equals 'true' \
+      "$(printf '%s' "$OUT" | jq -r '.hosts[0] | .cpu_util == 0.25 and .avail_bytes == 21474836480 and .total_bytes == 65498251264')" \
+      "the JSON form should carry the same facts as numbers"
+  fi
+
+  fm_test_proc_cpu_fixture "$proc" 4 25 3
+  run_fleet "$home" "$proc" --local
+  assert_contains "$OUT" 'headroom_workers=4 cpu_util=? ' "a CPU count that changed between reads is no sample"
+
+  proc="$TMP_ROOT/proc-linux-nocpu"
+  fm_test_proc_fixture "$proc" 20 61 2.00 4
+  run_fleet "$home" "$proc" --local
+  expect_code 0 "$STATUS" "a host with no CPU counters is still read"
+  assert_contains "$OUT" 'headroom_workers=4 cpu_util=? avail_bytes=21474836480' \
+    "missing CPU counters are unobserved, never invented, and leave headroom unchanged"
+  pass "the Linux probe reports a 200 ms CPU sample and byte-precise memory"
+}
+
+# The probe's T3 Code facts on macOS, run through the real snippet against
+# stand-in macOS tools: valid, missing, and a host that never answers.
+test_macos_probe_reads_cpu_and_bytes() {
+  local home proc row
+  home=$(make_home darwin-cpu)
+  proc="$TMP_ROOT/proc-darwin"
+  fm_test_proc_fixture "$proc" 20 61
+  register_remote_mate "$home" timmy mac-valid
+  register_remote_mate "$home" tina mac-missing
+  register_remote_mate "$home" slow mac-slow
+  write_darwin_host mac-missing none no-speculative
+  write_darwin_host mac-slow hang full
+  if write_darwin_host mac-valid real full; then
+    FM_FAKE_DARWIN_ROOT=$DARWIN_ROOT FM_PLACE_HOST_TIMEOUT=3 run_fleet "$home" "$proc"
+    row=$(printf '%s\n' "$OUT" | grep '^RESOURCES home=timmy ')
+    assert_contains "$row" 'avail_gib=12 total_gib=48 load_1m=1.60 cpus=16 ' "the macOS memory and load facts should be unchanged"
+    assert_contains "$row" ' avail_bytes=13551665152 total_bytes=51539607552' \
+      "available bytes should be free + inactive + speculative pages, without purgeable"
+    printf '%s\n' "$row" | grep -Eq ' cpu_util=(0\.[0-9]{6}|1\.000000) ' || \
+      fail "a JavaScript runtime in ~/.bun/bin should give a 0-1 CPU sample (row: $row)"
+  else
+    printf '# no node or bun on this host: the valid macOS CPU sample is not exercised\n'
+    rm -rf "${DARWIN_ROOT:?}/mac-valid"
+    FM_FAKE_DARWIN_ROOT=$DARWIN_ROOT FM_PLACE_HOST_TIMEOUT=3 run_fleet "$home" "$proc"
+  fi
+  expect_code 3 "$STATUS" "a host that never answers makes the read exit 3"
+  row=$(printf '%s\n' "$OUT" | grep '^RESOURCES home=tina ')
+  assert_contains "$row" 'avail_gib=12 total_gib=48 ' "missing T3 facts must not change the memory reading"
+  assert_contains "$row" ' headroom_workers=1 ' "missing T3 facts must not change headroom"
+  assert_contains "$row" ' avail_bytes=? total_bytes=51539607552' "a vm_stat without speculative pages leaves available bytes unobserved"
+  assert_contains "$row" ' cpu_util=? ' "a macOS host with no JavaScript runtime has no CPU sample"
+  assert_contains "$OUT" 'RESOURCES home=slow host=mac-slow headroom_workers=unknown error=reach: the host did not answer within 3s, so its state is unknown' \
+    "a CPU sample that hangs is bounded by the whole-probe timeout and reported unknown"
+  pass "the macOS probe reports the pinned sampler's facts, unobserved when missing, and is bounded"
+}
+
 test_headroom_counts_whole_workers_above_the_floor
 test_both_policy_knobs_move_the_headroom
 test_every_registered_host_gets_a_row
+test_linux_probe_samples_cpu_and_bytes
+test_macos_probe_reads_cpu_and_bytes
 
 echo "ALL TESTS PASSED"

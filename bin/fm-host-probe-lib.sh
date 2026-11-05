@@ -295,6 +295,20 @@ fm_host_probe_this_host() {
   hostname -s 2>/dev/null || hostname 2>/dev/null || printf 'this-home'
 }
 
+# fm_host_probe_now_ms: this home's clock in epoch milliseconds. Bash 5's
+# EPOCHREALTIME gives milliseconds; elsewhere (stock macOS Bash 3.2) it is
+# whole seconds times 1000.
+fm_host_probe_now_ms() {
+  local t=${EPOCHREALTIME:-}
+  t=${t/,/.}
+  case "$t" in
+    [0-9]*.[0-9][0-9][0-9]*)
+      printf '%s%s' "${t%%.*}" "$(printf '%s' "${t#*.}" | cut -c1-3)"
+      ;;
+    *) printf '%s000' "$(date +%s)" ;;
+  esac
+}
+
 # fm_host_probe_candidates <home> <registry>: prints "<id> <host> <home> <remote>"
 # for this home (id `local`) and then every registered mate in registry order.
 fm_host_probe_candidates() {
@@ -313,7 +327,10 @@ fm_host_probe_candidates() {
 }
 
 # _fm_host_probe_one <prefix> <id> <host> <home> <remote> <nucleus>: writes
-# <prefix>.report and <prefix>.reason (empty when the host was read).
+# <prefix>.report, <prefix>.reason (empty when the host was read), and
+# <prefix>.received, this home's clock in epoch milliseconds when the report
+# arrived. The receipt time, not the host's own clock, dates the sample, as the
+# pinned T3 Code client does, so clocks on different machines never compare.
 _fm_host_probe_one() {
   local prefix=$1 id=$2 host=$3 home=$4 remote=$5 nucleus=$6 report rc reason=
   : > "$prefix.report"
@@ -349,6 +366,7 @@ _fm_host_probe_one() {
       fi
     else
       printf '%s\n' "$report" > "$prefix.report"
+      fm_host_probe_now_ms > "$prefix.received"
     fi
   fi
   printf '%s' "$reason" > "$prefix.reason"
@@ -357,7 +375,8 @@ _fm_host_probe_one() {
 # fm_host_probe_run <dir> <mate-nucleus 0|1> <candidates>: probes every
 # candidate line (fm_host_probe_candidates format) concurrently, so the whole
 # read is bounded by one host's timeout rather than their sum. For the Nth line
-# it writes <dir>/<N>.candidate, <dir>/<N>.report, and <dir>/<N>.reason, and
+# it writes <dir>/<N>.candidate, <dir>/<N>.report, <dir>/<N>.reason, and, for a
+# host that was read, <dir>/<N>.received, and
 # prints the candidate count. This home never runs the Nucleus gate: the
 # captain's rule binds new remote placement, and its own core cap is the local
 # lever.

@@ -8,11 +8,16 @@
 # (the local firstmate home) and every registered secondmate in
 # data/secondmates.md - is probed concurrently, and:
 #
-#   1. Among the candidates that pass every admission gate, the one with the
-#      most worker headroom wins (bin/fm-host-probe-lib.sh owns the headroom
-#      rule). A tie prefers this home, then registry order.
+#   1. Among the candidates that pass every admission gate, the placement
+#      scorer chooses. The default, headroom, picks the most worker headroom
+#      (bin/fm-host-probe-lib.sh owns the headroom rule), and a tie prefers
+#      this home, then registry order. The opt-in t3 scorer ranks the same
+#      candidates by the pinned T3 Code v0.1.7 score instead.
+#      config/placement-scorer selects the scorer and bin/fm-placement-scorer-lib.sh
+#      owns that file and the T3 Code port; a malformed file exits 2 before
+#      any host is probed.
 #   2. When none passes, a refusal names every gate that failed on every
-#      candidate.
+#      candidate, and under t3 every T3 Code rejection too.
 #
 # The captain's shape: the primary coordinates, idle machines take work, and
 # eligibility gates the choice. The captain never names a host, so no gate here
@@ -58,11 +63,14 @@
 # Output is one line:
 #
 #   PLACE home=<local|mate-id> host=<host> <facts> headroom_workers=<n> ranked=<id>:<n>... reason=<what passed>
+#   PLACE home=<local|mate-id> host=<host> <facts> headroom_workers=<n> scorer=t3code-v0.1.7 weights=<id>:<w>,... score=<s> ranked=<id>:<s>... reason=<what passed>[; not ranked: <id>(t3: <why>)...]
 #   REFUSE <candidate>(<failed gates>); <candidate>(<failed gates>) ...
 #
-# ranked= lists every eligible candidate with its headroom, best first.
-# Exit status: 0 placed, 3 refused (every gate reason is printed), 2 usage or a
-# missing prerequisite to decide.
+# ranked= lists every eligible candidate with its headroom (or, under t3, every
+# candidate the T3 Code score accepted with its score), best first. Under t3,
+# weights= lists every candidate's weight.
+# Exit status: 0 placed, 3 refused (every gate reason is printed), 2 usage, a
+# malformed config/placement-scorer, or a missing prerequisite to decide.
 #
 # --handoff applies the decision for a mate: it moves the queued row to that
 # mate's own backlog through bin/fm-backlog-handoff.sh, which owns the move and
@@ -81,8 +89,8 @@
 # FM_PLACE_* probe settings bin/fm-host-probe-lib.sh documents, plus
 #   FM_PLACE_CAPTAIN_FILE         captain preference file owning the cap
 #   FM_PLACE_STATE_DIR            state directory holding task metadata
-# FM_ROOT_OVERRIDE, FM_HOME, FM_DATA_OVERRIDE and FM_STATE_OVERRIDE resolve the
-# home exactly as the rest of bin/ does.
+# FM_ROOT_OVERRIDE, FM_HOME, FM_DATA_OVERRIDE, FM_STATE_OVERRIDE and
+# FM_CONFIG_OVERRIDE resolve the home exactly as the rest of bin/ does.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -90,10 +98,12 @@ FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
+CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 
 CAPTAIN_FILE="${FM_PLACE_CAPTAIN_FILE:-$DATA/captain.md}"
 REGISTRY="$DATA/secondmates.md"
 LOCAL_STATE="${FM_PLACE_STATE_DIR:-$STATE}"
+SCORER_FILE="$CONFIG/placement-scorer"
 HANDOFF_CMD="$SCRIPT_DIR/fm-backlog-handoff.sh"
 SEND_CMD="$SCRIPT_DIR/fm-send.sh"
 TASKS_AXI="$SCRIPT_DIR/fm-tasks-axi.sh"
@@ -113,6 +123,9 @@ TASKS_AXI="$SCRIPT_DIR/fm-tasks-axi.sh"
 # shellcheck source=bin/fm-host-probe-lib.sh
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/fm-host-probe-lib.sh"
+# shellcheck source=bin/fm-placement-scorer-lib.sh
+# shellcheck disable=SC1091
+. "$SCRIPT_DIR/fm-placement-scorer-lib.sh"
 
 ITEM=
 HANDOFF=0
@@ -157,6 +170,14 @@ while [ "$#" -gt 0 ]; do
 done
 
 fm_host_probe_config_valid || die_usage "$FM_HOST_PROBE_ERROR"
+
+# The candidate list needs no probe, so the scorer configuration that names its
+# ids is checked here, before any host is read.
+CANDIDATES=$(fm_host_probe_candidates "$FM_HOME" "$REGISTRY")
+if ! fm_placement_scorer_load "$SCORER_FILE" "$(printf '%s\n' "$CANDIDATES" | awk '{ printf "%s ", $1 }')"; then
+  printf 'fm-place: placement scorer: %s\n' "$FM_PLACEMENT_SCORER_ERROR" >&2
+  exit 2
+fi
 
 # --- the row under consideration -------------------------------------------
 
@@ -357,17 +378,22 @@ LIVE_COUNTED=0
 LIVE_ALIVE=0
 LIVE_UNKNOWN=0
 
-# fm_place_decide: probes every candidate at once, then ranks the eligible ones
-# by worker headroom. A strictly larger headroom is needed to displace an
-# earlier candidate, so a tie keeps this home (always first), then registry
-# order.
+# fm_place_decide: probes every candidate at once, then ranks the eligible ones.
+# The headroom scorer (the default) ranks by worker headroom: a strictly larger
+# headroom is needed to displace an earlier candidate, so a tie keeps this home
+# (always first), then registry order. The t3 scorer hands the same eligible
+# candidates, in the same order, to fm_place_t3_rank.
 fm_place_decide() {
   local dir n i id host home remote headroom best=-1 ranked='' tied='' mates=0
+  local t3_records='' received
+  T3_IDS=()
+  T3_HOSTS=()
+  T3_DETAILS=()
   dir=$(mktemp -d "${TMPDIR:-/tmp}/fm-place.XXXXXX") || {
     REFUSALS='probe: no scratch directory could be created'
     return 2
   }
-  n=$(fm_host_probe_run "$dir" 1 "$(fm_host_probe_candidates "$FM_HOME" "$REGISTRY")")
+  n=$(fm_host_probe_run "$dir" 1 "$CANDIDATES")
   i=0
   while [ "$i" -lt "$n" ]; do
     i=$((i + 1))
@@ -388,29 +414,118 @@ fm_place_decide() {
       continue
     fi
     headroom=$(fm_host_probe_headroom "$(fm_host_probe_field mem_gib "$PLACE_REPORT")")
+    if [ "$FM_PLACEMENT_SCORER" = t3 ]; then
+      received=$(cat "$dir/$i.received" 2>/dev/null)
+      T3_IDS+=("$id")
+      T3_HOSTS+=("$host")
+      T3_DETAILS+=("$(fm_place_positive_reason "$PLACE_REPORT") headroom_workers=$headroom$(fm_place_live_detail "$id")")
+      t3_records="$t3_records$id $(fm_placement_scorer_weight "$id") $(fm_place_fact cpus "$PLACE_REPORT") $(fm_place_fact cpu_util "$PLACE_REPORT") $(fm_place_fact mem_avail_bytes "$PLACE_REPORT") $(fm_place_fact mem_total_bytes "$PLACE_REPORT") ${received:-unobserved}
+"
+      continue
+    fi
     ranked="$ranked $id:$headroom"
     if [ "$headroom" -gt "$best" ]; then
       best=$headroom
       tied=''
       PLACED_HOME=$id
       PLACED_HOST=$host
-      PLACED_DETAIL="$(fm_place_positive_reason "$PLACE_REPORT") headroom_workers=$headroom"
-      [ "$id" != local ] || \
-        PLACED_DETAIL="$PLACED_DETAIL live=${LIVE_COUNTED}/${CAP_VALUE} (alive=${LIVE_ALIVE} unknown=${LIVE_UNKNOWN})"
+      PLACED_DETAIL="$(fm_place_positive_reason "$PLACE_REPORT") headroom_workers=$headroom$(fm_place_live_detail "$id")"
     elif [ "$headroom" -eq "$best" ]; then
       tied="${tied}${tied:+,}$id"
     fi
   done
   rm -rf "$dir"
+  if [ "$FM_PLACEMENT_SCORER" = t3 ] && [ -n "$t3_records" ]; then
+    fm_place_t3_rank "$t3_records"
+  fi
   if [ -z "$PLACED_HOME" ]; then
     [ "$mates" -gt 0 ] || REFUSALS="$REFUSALS; no secondmate is registered in $REGISTRY"
     return 3
   fi
+  [ "$FM_PLACEMENT_SCORER" != t3 ] || return 0
   ranked=$(printf '%s' "$ranked" | tr ' ' '\n' | sed '/^$/d' | sort -t: -k2,2nr -s | tr '\n' ',' | sed 's/,$//')
   PLACED_DETAIL="$PLACED_DETAIL ranked=$ranked"
   PLACED_REASON="the eligible host with the most worker headroom ($best)"
   [ -z "$tied" ] || PLACED_REASON="$PLACED_REASON, tied with $tied and kept by tie order (this home first, then registry order)"
   return 0
+}
+
+# fm_place_live_detail <id>: the cap facts a local placement reports.
+fm_place_live_detail() {
+  [ "$1" = local ] || return 0
+  printf ' live=%s/%s (alive=%s unknown=%s)' "$LIVE_COUNTED" "$CAP_VALUE" "$LIVE_ALIVE" "$LIVE_UNKNOWN"
+}
+
+# fm_place_fact <key> <report>: the report's value, or `unobserved` when absent.
+fm_place_fact() {
+  local value
+  value=$(fm_host_probe_field "$1" "$2")
+  printf '%s' "${value:-unobserved}"
+}
+
+# fm_place_t3_rank <records>: applies the pinned T3 Code score
+# (bin/fm-placement-scorer-lib.sh) to the eligible candidates in T3_IDS order.
+# Sets the PLACED_* decision, or adds each rejection to REFUSALS when nothing
+# scored. A rejected candidate in a successful placement is named in the reason.
+fm_place_t3_rank() {
+  local out line kind id verdict rest winner='' ranked='' score='' tied='' skipped='' k weights='' cid
+  out=$(printf '%s' "$1" | fm_placement_t3_score "$(fm_host_probe_now_ms)")
+  while IFS= read -r line; do
+    kind=${line%% *}
+    case "$kind" in
+      winner) winner=${line#winner } ;;
+      ranked) ranked=${line#ranked} ; ranked=${ranked# } ;;
+    esac
+  done <<EOF
+$out
+EOF
+  [ "$winner" != - ] || winner=
+  if [ -n "$winner" ]; then
+    score=$(printf '%s\n' "$out" | awk -v w="$winner" '$1 == "candidate" && $2 == w && $3 == "score" { print $4; exit }')
+  fi
+  while IFS= read -r line; do
+    case "$line" in
+      'candidate '*) ;;
+      *) continue ;;
+    esac
+    rest=${line#candidate }
+    id=${rest%% *}
+    rest=${rest#* }
+    verdict=${rest%% *}
+    rest=${rest#* }
+    if [ "$verdict" = reject ]; then
+      skipped="${skipped}${skipped:+; }$id(t3: $rest)"
+    elif [ -n "$winner" ] && [ "$id" != "$winner" ] && [ "$rest" = "$score" ]; then
+      tied="${tied}${tied:+,}$id"
+    fi
+  done <<EOF
+$out
+EOF
+  while IFS=' ' read -r cid _; do
+    [ -n "$cid" ] || continue
+    weights="${weights}${weights:+,}$cid:$(fm_placement_scorer_weight "$cid")"
+  done <<EOF
+$CANDIDATES
+EOF
+  if [ -z "$winner" ]; then
+    REFUSALS="${REFUSALS}${REFUSALS:+; }$skipped"
+    return 0
+  fi
+  k=0
+  while [ "$k" -lt "${#T3_IDS[@]}" ]; do
+    if [ "${T3_IDS[$k]}" = "$winner" ]; then
+      PLACED_HOME=$winner
+      PLACED_HOST=${T3_HOSTS[$k]}
+      PLACED_DETAIL=${T3_DETAILS[$k]}
+      break
+    fi
+    k=$((k + 1))
+  done
+  score=$(awk -v s="$score" 'BEGIN { printf "%.2f", s }')
+  PLACED_DETAIL="$PLACED_DETAIL scorer=$FM_PLACEMENT_T3_NAME weights=$weights score=$score ranked=$ranked"
+  PLACED_REASON="the eligible host with the highest T3 Code v0.1.7 score ($score)"
+  [ -z "$tied" ] || PLACED_REASON="$PLACED_REASON, tied with $tied and kept by candidate order (this home first, then registry order)"
+  [ -z "$skipped" ] || PLACED_REASON="$PLACED_REASON; not ranked: $skipped"
 }
 
 # --- handoff ----------------------------------------------------------------

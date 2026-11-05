@@ -40,7 +40,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `fm-decision-hold.sh`    | One-release compatibility shim mapping the retired decision commands onto fm-captain-hold.sh |
 | `fm-intake.sh`           | Route an incoming request by what is still undecided, record the route and its reason on the item, and emit the request's one started line |
 | `fm-wave.sh`             | Report each project's next dispatchable wave and the layer every ticket sits in, from the declared blocked-by edges |
-| `fm-fleet-resources.sh`  | Print each host's memory, load, live workers, and worker headroom for this home and every registered secondmate |
+| `fm-fleet-resources.sh`  | Print each host's memory, load, CPU utilization, live workers, and worker headroom for this home and every registered secondmate |
 | `fm-current-page.sh`     | Render and keep fresh the captain's current page (wins, needs, running, done today, held calls): one keyboard-driven screen on a desktop, stacked panes on a phone, installable as a home-screen app |
 | `fm-current-answers.sh`  | The current page's answer endpoint: a tapped option reaches Main as one inbox note, and the page shows its receipt and Main's reply |
 | `fm-share.sh`            | Explicit share links: publish a snapshot of one artifact under an unguessable revocable link, list and revoke them, and serve only the shared files; `share-slot` serves a running local Pilot slot on the tailnet and prints the one-account grant to paste |
@@ -132,6 +132,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `fm-tangle-lib.sh`       | Shared default-branch resolution and primary-checkout tangle classification          |
 | `fm-timeout-lib.sh`      | Single owner of hard-bounded command execution and its fallback watchdog |
 | `fm-host-probe-lib.sh`   | Single owner of the host placement probe, its ssh transport, and the worker-headroom rule |
+| `fm-placement-scorer-lib.sh` | Single owner of `config/placement-scorer` and the T3 Code v0.1.7 placement score port that ranks gate-passing hosts |
 | `fm-timing-lib.sh`       | Single owner of the deferred network stage's per-step elapsed-time records, inert unless a run asks for them |
 | `fm-supervision-lib.sh`  | Shared in-flight-work-without-fresh-watcher-beacon predicate                         |
 | `fm-ff-lib.sh`           | Shared guarded fast-forward/reconcile helper for origin pulls and secondmate syncs, with durable divergence markers |

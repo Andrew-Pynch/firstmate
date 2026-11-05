@@ -1,0 +1,54 @@
+# Shared vectors for the T3 Code v0.1.7 placement scorer.
+# tests/fm-place.test.sh runs every case through the pinned upstream selector
+# (bin/vendor/t3code/load-balancing.ts, under Bun) and through the Firstmate
+# adapter (fm_placement_t3_score in bin/fm-placement-scorer-lib.sh), and both
+# must give the expected winner and rejection set. Upstream returns only a
+# winner, so a candidate is in its rejection set when choosing among that
+# candidate alone returns null.
+#
+# case <name> <now-ms> <expected-winner or -> <expected-rejected ids, comma-separated, or ->
+# <id> <weight> <cpus> <cpu_util> <mem_avail_bytes> <mem_total_bytes> <sampled_at_ms>
+# `unobserved` is a fact the probe could not read: an unobserved cpu_util is
+# upstream's null, and any other unobserved fact is a missing snapshot.
+case cpu-count-beats-idle 100000 16-core -
+16-core 50 16 0.5 50 100 100000
+4-core 50 4 0.1 50 100 100000
+case weight-moves-the-winner 100000 bertha -
+local 25 16 0.5 50 100 100000
+bertha 100 8 0.5 50 100 100000
+case tie-keeps-candidate-order 100000 local -
+local 50 8 0.25 40 80 100000
+mate 50 8 0.25 40 80 100000
+case stale-and-boundary 100000 fresh-edge stale
+stale 100 64 0.01 99 100 84999
+fresh-edge 50 4 0.5 50 100 85000
+case future-and-boundary 100000 future-edge future
+future 100 64 0.01 99 100 105001
+future-edge 50 4 0.5 50 100 105000
+case cpu-at-95-percent 100000 below busy
+busy 100 64 0.95 99 100 100000
+below 50 2 0.9499 50 100 100000
+case memory-at-5-percent 100000 above full
+full 100 64 0.01 5 100 100000
+above 50 2 0.5 6 100 100000
+case weight-zero-and-negative 100000 normal manual-only,negative
+manual-only 0 64 0.01 99 100 100000
+negative -5 64 0.01 99 100 100000
+normal 50 2 0.5 50 100 100000
+case malformed-values 100000 sound bad-weight,bad-cpu,bad-mem,bad-count,no-cpu-sample,no-snapshot,zero-total,zero-cpus
+bad-weight abc 16 0.1 50 100 100000
+bad-cpu 50 16 x1 50 100 100000
+bad-mem 50 16 0.1 lots 100 100000
+bad-count 50 many 0.1 50 100 100000
+no-cpu-sample 50 16 unobserved 50 100 100000
+no-snapshot 50 unobserved 0.1 50 100 100000
+zero-total 50 16 0.1 50 0 100000
+zero-cpus 50 0 0.1 50 100 100000
+sound 50 1 0.9 6 100 100000
+case every-candidate-rejected 100000 - busy,manual-only
+busy 50 32 0.99 60000000000 66568200192 100000
+manual-only 0 32 0.10 60000000000 66568200192 100000
+case byte-scale-hosts 1730700000000 big-bertha -
+local 50 32 0.135593 17262325760 66568200192 1730699999400
+big-bertha 50 32 0.20 30064771072 33285996544 1730699999800
+lil-timmy 50 16 0.271028 13493633024 51539607552 1730699998100

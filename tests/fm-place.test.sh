@@ -3,7 +3,11 @@
 #
 # What this suite pins: which home a queued row lands on, that an ineligible
 # host refuses with the gate that refused it, that the primary at its ceiling
-# does not strand work, and that --handoff moves the row and instructs the mate.
+# does not strand work, that --handoff moves the row and instructs the mate,
+# and the placement scorer: that without config/placement-scorer every line is
+# the pre-scorer decision byte for byte, that a bad config refuses before any
+# probe, that the opt-in T3 Code scorer ranks only gate-passing hosts, and that
+# the shared vectors agree between the adapter and the pinned upstream selector.
 #
 # The refusal fixtures are the captain's own ineligible cases: a host running a
 # Nucleus simulation, a laptop that does not answer, and a laptop occupied by
@@ -163,10 +167,15 @@ write_nucleus_check() {
 }
 
 # write_mate_report <reports-dir> <host> <platform> <admission-verdict> \
-#   <admission-detail> <nucleus-verdict> <nucleus-detail> <mem-gib>
+#   <admission-detail> <nucleus-verdict> <nucleus-detail> <mem-gib> \
+#   [<cpus> <cpu-util> <mem-total-gib>]
+# The optional trailing facts are the T3 Code ones: the CPU count, the 200 ms
+# CPU sample, and the installed memory, from which the byte facts follow. A
+# report without them is a host whose probe read none of them.
 write_mate_report() {
   local dir=$1 host=$2 platform=$3 admission=$4 admission_detail=$5
   local nucleus=$6 nucleus_detail=$7 mem=$8 admission_exit=1 nucleus_exit=1
+  local cpus=${9:-} cpu_util=${10:-} total=${11:-}
   case "$admission" in
     AVAILABLE) admission_exit=0 ;;
     OCCUPIED) admission_exit=2 ;;
@@ -183,6 +192,12 @@ write_mate_report() {
     printf 'nucleus_exit=%s\n' "$nucleus_exit"
     printf 'nucleus_detail=%s\n' "$nucleus_detail"
     printf 'mem_gib=%s\n' "$mem"
+    if [ -n "$cpus" ]; then
+      printf 'cpus=%s\n' "$cpus"
+      printf 'cpu_util=%s\n' "$cpu_util"
+      printf 'mem_avail_bytes=%s\n' "$((mem * 1073741824))"
+      printf 'mem_total_bytes=%s\n' "$((total * 1073741824))"
+    fi
   } > "$dir/$host.report"
 }
 
@@ -460,6 +475,251 @@ test_a_host_without_worker_headroom_is_refused() {
   pass "a host above the floor but short of one worker's budget is refused"
 }
 
+# --- placement scorer (config/placement-scorer) -----------------------------
+
+# The decision fleet the scorer cases share: this home at 20 of 61 GiB with 8
+# CPUs half busy, and four remote mates. roomy has the most headroom but little
+# idle CPU; tight has little headroom but 32 idle CPUs; busy runs a simulation;
+# tina never answers. Every probed host carries the T3 Code facts, so the
+# headroom cases prove those facts change nothing until the scorer is chosen.
+# Sets SCORER_HOME, SCORER_REPORTS, SCORER_PROC, and SCORER_SSH; call it
+# directly, never in a command substitution, so they survive.
+SCORER_HOME=
+SCORER_REPORTS=
+SCORER_PROC=
+SCORER_SSH=
+build_scorer_fleet() {  # <name>
+  local home
+  home=$(make_home "$1")
+  SCORER_HOME=$home
+  SCORER_REPORTS="$TMP_ROOT/$1-reports"
+  SCORER_PROC="$TMP_ROOT/$1-proc"
+  fm_test_proc_fixture "$SCORER_PROC" 20 61
+  fm_test_proc_cpu_fixture "$SCORER_PROC" 8 50
+  write_cap "$home" 12
+  write_worker "$home" alpha
+  SCORER_SSH=$(make_fake_ssh "$TMP_ROOT/$1-ssh")
+  seed_mate "$home" tight tight-host "$TMP_ROOT/$1-tight" remote
+  seed_mate "$home" roomy roomy-host "$TMP_ROOT/$1-roomy" remote
+  seed_mate "$home" busy busy-host "$TMP_ROOT/$1-busy" remote
+  seed_mate "$home" tina unreachable-laptop "$TMP_ROOT/$1-tina" remote
+  write_mate_report "$SCORER_REPORTS" tight-host Linux not-applicable 'platform Linux is not a macOS laptop' \
+    IDLE 'IDLE: no live job' 14 32 0.10 64
+  write_mate_report "$SCORER_REPORTS" roomy-host Linux not-applicable 'platform Linux is not a macOS laptop' \
+    IDLE 'IDLE: no live job' 50 4 0.90 64
+  write_mate_report "$SCORER_REPORTS" busy-host Linux not-applicable 'platform Linux is not a macOS laptop' \
+    BUSY 'BUSY: an unpaired job start is live' 60 64 0.01 64
+  return 0
+}
+
+run_scorer_fleet() {  # <home>
+  PATH_PREFIX="$SCORER_SSH:$TMUX_FAKE"
+  FM_PLACE_PROC_DIR=$SCORER_PROC FM_FAKE_SSH_REPORTS=$SCORER_REPORTS run_place "$1"
+  PATH_PREFIX=
+}
+
+# The expected lines below are what bin/fm-place.sh printed for these fleets
+# before the scorer existed, so a missing config/placement-scorer (and an
+# explicit headroom one) must reproduce them byte for byte.
+test_without_a_scorer_config_placement_is_unchanged() {
+  local home tie this config expect_a expect_b expect_c
+  this=$(hostname -s 2>/dev/null || hostname)
+  expect_a='PLACE home=roomy host=roomy-host platform=Linux laptop=not-applicable nucleus=idle free_gib=50 headroom_workers=14 ranked=roomy:14,local:4,tight:2 reason=the eligible host with the most worker headroom (14)'
+  expect_b='REFUSE local(cap: 1 live workers recorded against the 1-worker ceiling (alive=1 unknown=0)); tight(memory: 9 GiB available leaves no room for a worker above the 8 GiB floor at 3 GiB per worker); roomy(laptop gate: OCCUPIED: cassidy is signed in); busy(nucleus: BUSY: an unpaired job start is live); tina(reach: ssh: connect to host unreachable-laptop port 22: Connection timed out)'
+  expect_c="PLACE home=local host=$this platform=Linux laptop=not-applicable free_gib=20 headroom_workers=4 live=0/12 (alive=0 unknown=0) ranked=local:4,mate:4 reason=the eligible host with the most worker headroom (4), tied with mate and kept by tie order (this home first, then registry order)"
+  build_scorer_fleet scorer-default
+  home=$SCORER_HOME
+  tie=$(make_home scorer-default-tie)
+  write_cap "$tie" 12
+  seed_mate "$tie" mate even-host "$TMP_ROOT/scorer-default-even" remote
+  write_mate_report "$SCORER_REPORTS" even-host Linux not-applicable 'platform Linux is not a macOS laptop' \
+    IDLE 'IDLE: no live job' 21 64 0.01 64
+  for config in missing headroom commented; do
+    case "$config" in
+      missing) rm -f "$home/config/placement-scorer" "$tie/config/placement-scorer" ;;
+      headroom) printf 'headroom\n' | tee "$home/config/placement-scorer" > "$tie/config/placement-scorer" ;;
+      commented) printf '# rank by memory headroom\n\n  headroom  \n' | tee "$home/config/placement-scorer" > "$tie/config/placement-scorer" ;;
+    esac
+    write_cap "$home" 12
+    write_mate_report "$SCORER_REPORTS" tight-host Linux not-applicable 'platform Linux is not a macOS laptop' \
+      IDLE 'IDLE: no live job' 14 32 0.10 64
+    write_mate_report "$SCORER_REPORTS" roomy-host Linux not-applicable 'platform Linux is not a macOS laptop' \
+      IDLE 'IDLE: no live job' 50 4 0.90 64
+    run_scorer_fleet "$home"
+    expect_code 0 "$PLACE_STATUS" "the headroom decision should place ($config config)"
+    assert_equals "$expect_a" "$PLACE_OUT" "the headroom placement line should be unchanged ($config config)"
+
+    write_cap "$home" 1
+    write_mate_report "$SCORER_REPORTS" tight-host Linux not-applicable 'platform Linux is not a macOS laptop' \
+      IDLE 'IDLE: no live job' 9 32 0.10 64
+    write_mate_report "$SCORER_REPORTS" roomy-host Darwin OCCUPIED 'OCCUPIED: cassidy is signed in' \
+      IDLE 'IDLE: no live job' 50 4 0.90 64
+    run_scorer_fleet "$home"
+    expect_code 3 "$PLACE_STATUS" "the headroom refusal should refuse ($config config)"
+    assert_equals "$expect_b" "$PLACE_OUT" "the headroom refusal line should be unchanged ($config config)"
+
+    run_scorer_fleet "$tie"
+    expect_code 0 "$PLACE_STATUS" "the headroom tie should place ($config config)"
+    assert_equals "$expect_c" "$PLACE_OUT" "the headroom tie line should be unchanged ($config config)"
+  done
+  pass "without a scorer config, and with headroom, every placement line is byte-for-byte the pre-scorer decision"
+}
+
+test_a_bad_scorer_config_refuses_before_any_probe() {
+  local home log bad expected
+  build_scorer_fleet scorer-bad
+  home=$SCORER_HOME
+  log="$TMP_ROOT/scorer-bad-ssh.log"
+  while IFS='|' read -r bad expected; do
+    printf '%b' "$bad" > "$home/config/placement-scorer"
+    : > "$log"
+    PATH_PREFIX="$SCORER_SSH:$TMUX_FAKE"
+    FM_FAKE_SSH_LOG=$log FM_PLACE_PROC_DIR=$SCORER_PROC FM_FAKE_SSH_REPORTS=$SCORER_REPORTS run_place "$home"
+    PATH_PREFIX=
+    expect_code 2 "$PLACE_STATUS" "config '$bad' must be a usage refusal"
+    assert_contains "$PLACE_OUT" "fm-place: placement scorer: $home/config/placement-scorer" "the refusal should name the file ($bad)"
+    assert_contains "$PLACE_OUT" "$expected" "the refusal should say what is wrong ($bad)"
+    assert_not_contains "$PLACE_OUT" 'PLACE ' "a bad config must not place ($bad)"
+    assert_not_contains "$PLACE_OUT" 'REFUSE ' "a bad config must not reach the decision ($bad)"
+    [ ! -s "$log" ] || fail "config '$bad' must refuse before any host is probed (ssh ran: $(cat "$log"))"
+  done <<'EOF'
+t4|unknown scorer 't4'
+headroom local=50|headroom takes no weights
+t3 local=101|weight '101' for local is not an integer from 0 through 100
+t3 local=-1|weight '-1' for local is not an integer from 0 through 100
+t3 local=half|weight 'half' for local is not an integer from 0 through 100
+t3 local|'local' is not <candidate-id>=<weight>
+t3 nobody=50|'nobody' is neither local nor a secondmate
+t3 tight=50 tight=20|tight is weighted more than once
+t3\nheadroom\n|more than one setting line
+# only a comment\n|names no scorer
+EOF
+  rm -f "$home/config/placement-scorer"
+  mkdir "$home/config/placement-scorer"
+  run_scorer_fleet "$home"
+  expect_code 2 "$PLACE_STATUS" "a config path that is not a file must be a usage refusal"
+  assert_contains "$PLACE_OUT" 'is not a readable file' "the refusal should say the file cannot be read"
+  rmdir "$home/config/placement-scorer"
+  pass "a malformed config/placement-scorer exits 2 before any host is probed"
+}
+
+test_the_t3_scorer_ranks_eligible_hosts_by_cpu_and_memory() {
+  local home
+  build_scorer_fleet scorer-t3
+  home=$SCORER_HOME
+  seed_mate "$home" hot hot-host "$TMP_ROOT/scorer-t3-hot" remote
+  seed_mate "$home" blind blind-host "$TMP_ROOT/scorer-t3-blind" remote
+  write_mate_report "$SCORER_REPORTS" hot-host Linux not-applicable 'platform Linux is not a macOS laptop' \
+    IDLE 'IDLE: no live job' 60 64 0.97 64
+  write_mate_report "$SCORER_REPORTS" blind-host Linux not-applicable 'platform Linux is not a macOS laptop' \
+    IDLE 'IDLE: no live job' 60 64 unobserved 64
+
+  run_scorer_fleet "$home"
+  assert_contains "$PLACE_OUT" 'PLACE home=hot host=hot-host' "headroom alone should pick the roomiest eligible host"
+
+  printf 't3 tight=100 busy=100\n' > "$home/config/placement-scorer"
+  run_scorer_fleet "$home"
+  expect_code 0 "$PLACE_STATUS" "the t3 scorer should place the row"
+  assert_equals 'PLACE home=tight host=tight-host platform=Linux laptop=not-applicable nucleus=idle free_gib=14 headroom_workers=2 scorer=t3code-v0.1.7 weights=local:50,tight:100,roomy:50,busy:100,tina:50,hot:50,blind:50 score=630.00 ranked=tight:630.00,local:65.57,roomy:15.62 reason=the eligible host with the highest T3 Code v0.1.7 score (630.00); not ranked: hot(t3: CPU utilization 0.97 is at or above 0.95); blind(t3: CPU utilization was not observed)' \
+    "$PLACE_OUT" "the T3 score should rank idle cores over headroom, name the scorer and weights, and keep busy refused by its gate"
+
+  printf 't3 tight=0\n' > "$home/config/placement-scorer"
+  run_scorer_fleet "$home"
+  expect_code 0 "$PLACE_STATUS" "a weight of 0 should not stop placement"
+  assert_contains "$PLACE_OUT" 'PLACE home=local ' "with tight weighted out, this home has the best score"
+  assert_contains "$PLACE_OUT" 'headroom_workers=4 live=1/12 (alive=1 unknown=0) scorer=t3code-v0.1.7 weights=local:50,tight:0,' \
+    "a local placement should keep its cap facts"
+  assert_contains "$PLACE_OUT" 'tight(t3: weight 0 keeps this host out of t3 ranking)' "weight 0 should be named as the reason"
+
+  write_cap "$home" 1
+  write_mate_report "$SCORER_REPORTS" tight-host Linux not-applicable 'platform Linux is not a macOS laptop' \
+    IDLE 'IDLE: no live job' 14 32 0.99 64
+  write_mate_report "$SCORER_REPORTS" roomy-host Linux not-applicable 'platform Linux is not a macOS laptop' \
+    IDLE 'IDLE: no live job' 50
+  printf 't3\n' > "$home/config/placement-scorer"
+  run_scorer_fleet "$home"
+  expect_code 3 "$PLACE_STATUS" "no host the T3 score accepts means a refusal"
+  assert_equals 'REFUSE local(cap: 1 live workers recorded against the 1-worker ceiling (alive=1 unknown=0)); busy(nucleus: BUSY: an unpaired job start is live); tina(reach: ssh: connect to host unreachable-laptop port 22: Connection timed out); tight(t3: CPU utilization 0.99 is at or above 0.95); roomy(t3: the host reported no complete resource sample); hot(t3: CPU utilization 0.97 is at or above 0.95); blind(t3: CPU utilization was not observed)' \
+    "$PLACE_OUT" "the refusal should keep every gate reason and add every T3 rejection"
+  rm -f "$home/config/placement-scorer"
+  pass "the opt-in T3 Code scorer ranks only gate-passing hosts, by weight, idle cores, and free memory"
+}
+
+# The shared vectors: the Firstmate adapter must give each case's expected
+# winner and rejection set, and so must the pinned upstream selector under Bun
+# wherever Bun is installed.
+vector_results_adapter() {  # <scratch-dir>
+  local dir=$1 f name now out winner rejected
+  mkdir -p "$dir"
+  awk -v dir="$dir" '
+    /^#/ || !NF { next }
+    $1 == "case" { n++; f = sprintf("%s/%03d", dir, n); print $2, $3 > (f ".case"); close(f ".case"); next }
+    { print > (f ".in") }
+  ' "$ROOT/tests/fixtures/t3-placement-vectors.tsv"
+  for f in "$dir"/*.case; do
+    read -r name now < "$f"
+    out=$(bash -c '. "$1"; fm_placement_t3_score "$2"' _ "$ROOT/bin/fm-placement-scorer-lib.sh" "$now" < "${f%.case}.in")
+    winner=$(printf '%s\n' "$out" | awk '$1 == "winner" { print $2 }')
+    rejected=$(printf '%s\n' "$out" | awk '$1 == "candidate" && $3 == "reject" { r = r (r == "" ? "" : ",") $2 } END { print (r == "" ? "-" : r) }')
+    printf '%s %s %s\n' "$name" "$winner" "$rejected"
+  done
+}
+
+vector_results_upstream() {  # <bun> <scratch-dir>
+  local bun=$1 dir=$2
+  mkdir -p "$dir"
+  cat > "$dir/upstream.mjs" <<'JS'
+const [selector, vectors] = process.argv.slice(2);
+const { chooseLoadBalancedEnvironment: choose } = await import(selector);
+const cases = [];
+for (const raw of (await Bun.file(vectors).text()).split("\n")) {
+  const line = raw.trim();
+  if (!line || line.startsWith("#")) continue;
+  const f = line.split(/\s+/);
+  if (f[0] === "case") { cases.push({ name: f[1], now: Number(f[2]), cands: [] }); continue; }
+  const [id, weight, cpus, util, avail, total, at] = f;
+  const missing = [cpus, avail, total].includes("unobserved");
+  cases.at(-1).cands.push({
+    environmentId: id,
+    weight: Number(weight),
+    receivedAt: Number(at),
+    resources: missing ? null : {
+      sampledAt: Number(at),
+      cpuUtilization: util === "unobserved" ? null : Number(util),
+      cpuCount: Number(cpus),
+      availableMemoryBytes: Number(avail),
+      totalMemoryBytes: Number(total),
+    },
+  });
+}
+for (const c of cases) {
+  const winner = choose(c.cands, c.now) ?? "-";
+  const rejected = c.cands.filter((x) => choose([x], c.now) === null).map((x) => x.environmentId);
+  console.log(`${c.name} ${winner} ${rejected.length ? rejected.join(",") : "-"}`);
+}
+JS
+  "$bun" "$dir/upstream.mjs" "$ROOT/bin/vendor/t3code/load-balancing.ts" "$ROOT/tests/fixtures/t3-placement-vectors.tsv"
+}
+
+test_shared_vectors_match_the_pinned_upstream_selector() {
+  local expected adapter upstream bun
+  expected=$(awk '$1 == "case" { print $2, $4, $5 }' "$ROOT/tests/fixtures/t3-placement-vectors.tsv")
+  [ "$(printf '%s\n' "$expected" | wc -l | tr -d ' ')" -ge 10 ] || fail "the shared vectors should hold every boundary case"
+  adapter=$(vector_results_adapter "$TMP_ROOT/vectors-adapter")
+  assert_equals "$expected" "$adapter" "the Firstmate adapter should give every case's expected winner and rejection set"
+  bun=$(command -v bun 2>/dev/null || true)
+  [ -n "$bun" ] || [ ! -x "$HOME/.bun/bin/bun" ] || bun=$HOME/.bun/bin/bun
+  if [ -n "$bun" ]; then
+    upstream=$(vector_results_upstream "$bun" "$TMP_ROOT/vectors-upstream") || fail "the pinned upstream selector did not run under Bun"
+    assert_equals "$adapter" "$upstream" "the pinned upstream selector and the adapter should agree on every case"
+    printf '%s\n' "$upstream" | sed 's/^/# upstream bun: /'
+    pass "the shared vectors give the same winner and rejection set through upstream Bun and the Firstmate adapter"
+  else
+    printf '# bun is not installed: the upstream half of the shared vectors was not run\n'
+    pass "the shared vectors give the expected winner and rejection set through the Firstmate adapter"
+  fi
+}
+
 test_places_locally_when_under_the_cap
 test_cap_overflow_places_the_row_on_an_eligible_mate
 test_refuses_a_host_running_a_simulation
@@ -473,5 +733,9 @@ test_handoff_leaves_a_local_decision_alone
 test_the_host_with_the_most_headroom_wins
 test_a_headroom_tie_keeps_the_row_on_this_home
 test_a_host_without_worker_headroom_is_refused
+test_without_a_scorer_config_placement_is_unchanged
+test_a_bad_scorer_config_refuses_before_any_probe
+test_the_t3_scorer_ranks_eligible_hosts_by_cpu_and_memory
+test_shared_vectors_match_the_pinned_upstream_selector
 
 echo "ALL TESTS PASSED"

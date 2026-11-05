@@ -1198,15 +1198,34 @@ A local standalone-clone home cannot receive a primary-local commit through that
 Each host's worker headroom decides where new work runs: how many more workers its available memory can hold above a floor the host keeps for itself.
 `bin/fm-host-probe-lib.sh` owns the rule, `headroom_workers = floor((available GiB - FM_PLACE_MIN_FREE_GIB) / FM_PLACE_PER_WORKER_GIB)`, and its measured defaults: an 8 GiB floor, because big-ron froze with 3 GiB available, and 3 GiB per worker, because omp workers there sit at 0.8 to 4.3 GiB resident.
 `bin/fm-fleet-resources.sh` is the fact command.
-It reads this host and every host in `data/secondmates.md` at once, and prints each one's available and total memory, load per core, live omp workers and their resident memory, and headroom, or why that host could not be read.
+It reads this host and every host in `data/secondmates.md` at once, and prints each one's available and total memory, load per core, live omp workers and their resident memory, headroom, a 200 ms CPU utilization sample, and byte-precise available and total memory, or why that host could not be read.
 The rule is applied in four places:
 
-- `bin/fm-place.sh` sends a queued row to the eligible home with the most headroom and prefers this home on a tie; the cap, laptop, and Nucleus gates still decide eligibility, and a home without room for one worker is not eligible.
+- `bin/fm-place.sh` sends a queued row to the eligible home with the most headroom and prefers this home on a tie; the cap, laptop, and Nucleus gates still decide eligibility, a home without room for one worker is not eligible, and the [placement scorer](#placement-scorer-configplacement-scorer) can rank those same eligible homes differently.
 - `bin/fm-spawn.sh` refuses a fresh local ship or scout spawn when this host's headroom is below one, prints the mate `bin/fm-place.sh` would choose, and launches anyway only with `--force-local`; relaunches and secondmate spawns are exempt.
 - `bin/fm-teardown.sh` and `bin/fm-control.sh exit` print the freed host's resource line when they finish.
 - The session-start digest and every drained heartbeat print one fleet resources line.
 
 Headroom reads memory as it is now, so workers launched in one burst are all judged against the same reading before any of them has grown.
+
+### Placement scorer (config/placement-scorer)
+
+The optional local, gitignored `config/placement-scorer` file chooses how `bin/fm-place.sh` ranks the homes that already passed every gate.
+With the file absent, or holding `headroom`, placement ranks by worker headroom exactly as above, and its output is unchanged.
+The opt-in `t3` scorer ranks them by the T3 Code v0.1.7 host selector, pinned unmodified in [`bin/vendor/t3code/`](../bin/vendor/t3code/UPSTREAM.md) with its MIT licence and provenance:
+
+```text
+t3 local=50 bertha=100 timmy=25
+```
+
+Each `<candidate-id>=<weight>` gives this home (`local`) or a registered secondmate a weight from 0 through 100; an omitted one weighs 50, and 0 keeps that home out of the ranking.
+The score is `weight * cpus * (1 - cpu_util) * (available bytes / total bytes)`, and the T3 Code selector also drops a home whose sample is stale, whose CPU is at least 95% busy, whose available memory is at most 5% of total, or whose CPU sample was not observed.
+A weight changes ranking only: every gate, including the one-worker headroom floor, still runs first, so a scorer can drop an eligible home and never admits a refused one.
+A `t3` placement line names the scorer, every weight, and the score ranking, and a refusal adds each T3 Code rejection to the gate reasons.
+A malformed file exits 2 before any host is probed.
+The file is a per-home choice and is not inherited by secondmate homes.
+[`bin/fm-placement-scorer-lib.sh`](../bin/fm-placement-scorer-lib.sh) owns the file's grammar and the T3 Code port, and [`bin/fm-host-probe-lib.sh`](../bin/fm-host-probe-lib.sh) owns how the CPU and memory facts are read on Linux and macOS.
+
 ## Project registry (data/projects.md)
 
 `data/projects.md` is the private fleet registry: one line per project, recording the captain's standing delivery posture and the project's Herdr colour tokens.

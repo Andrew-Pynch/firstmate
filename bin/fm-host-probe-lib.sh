@@ -187,17 +187,24 @@ if [ "$platform" = Darwin ] && [ -z "$place_proc" ]; then
       break
     fi
   done
-  if [ -n "$runtime" ]; then
+  cpu_file=
+  [ -z "$runtime" ] || cpu_file=$(mktemp "${TMPDIR:-/tmp}/fm-cpu-sample.XXXXXX" 2>/dev/null)
+  if [ -n "$cpu_file" ]; then
     # Bounded on its own at 2 s, so a runtime that hangs costs only this
-    # sample and never the host's other facts.
-    cpu_util=$(
-      "$runtime" -e 'const o=require("os");const r=()=>{let i=0,t=0;const c=o.cpus();for(const{times:x}of c){i+=x.idle;t+=x.user+x.nice+x.sys+x.idle+x.irq}return[i,t,c.length]};const a=r();setTimeout(()=>{const b=r(),td=b[1]-a[1],id=b[0]-a[0];if(a[2]===b[2]&&td>0&&id>=0)console.log(Math.min(1,Math.max(0,1-id/td)).toFixed(6))},200)' 2>/dev/null </dev/null &
-      sampler=$!
-      (sleep 2; kill "$sampler") >/dev/null 2>&1 </dev/null &
-      watchdog=$!
-      wait "$sampler" 2>/dev/null
-      kill "$watchdog" 2>/dev/null
-    )
+    # sample and never the host's other facts. The sample goes to a file and
+    # is never waited on: after 2 s it is KILLed, which no wrapper can ignore,
+    # and a descendant still holding the file cannot hold this probe open.
+    "$runtime" -e 'const o=require("os");const r=()=>{let i=0,t=0;const c=o.cpus();for(const{times:x}of c){i+=x.idle;t+=x.user+x.nice+x.sys+x.idle+x.irq}return[i,t,c.length]};const a=r();setTimeout(()=>{const b=r(),td=b[1]-a[1],id=b[0]-a[0];if(a[2]===b[2]&&td>0&&id>=0)console.log(Math.min(1,Math.max(0,1-id/td)).toFixed(6))},200)' \
+      >"$cpu_file" 2>/dev/null </dev/null &
+    sampler=$!
+    tries=0
+    while kill -0 "$sampler" 2>/dev/null && [ "$tries" -lt 20 ]; do
+      sleep 0.1
+      tries=$((tries + 1))
+    done
+    kill -KILL "$sampler" 2>/dev/null
+    cpu_util=$(head -1 "$cpu_file" 2>/dev/null)
+    rm -f "$cpu_file"
   fi
 else
   proc=${place_proc:-/proc}

@@ -72,7 +72,7 @@ DARWIN_ROOT="$TMP_ROOT/darwin"
 write_darwin_host() {
   local dir="$DARWIN_ROOT/$1" runtime=$2 vm=$3 real tool
   mkdir -p "$dir/bin" "$dir/home"
-  for tool in sh awk sed head grep ps cat sleep; do
+  for tool in sh awk sed head grep ps cat sleep mktemp rm; do
     ln -sf "$(command -v "$tool")" "$dir/bin/$tool"
   done
   printf '#!/bin/sh\necho Darwin\n' > "$dir/bin/uname"
@@ -106,7 +106,9 @@ SH
       printf '#!/bin/sh\nexec %s "$@"\n' "$real" > "$dir/home/.bun/bin/bun"
       chmod +x "$dir/home/.bun/bin/bun"
       ;;
-    hang) printf '#!/bin/sh\nexec sleep 30\n' > "$dir/bin/node" ;;
+    # A wrapper that ignores TERM and leaves a child holding its output, the
+    # two ways a hung runtime could otherwise outlast a polite stop.
+    hang) printf '#!/bin/sh\ntrap "" TERM\nsleep 30 &\nsleep 30\n' > "$dir/bin/node" ;;
   esac
   chmod +x "$dir/bin/uname" "$dir/bin/vm_stat" "$dir/bin/sysctl"
   [ "$runtime" != hang ] || chmod +x "$dir/bin/node"

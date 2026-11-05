@@ -106,8 +106,8 @@ case "$host" in
     exit 255
     ;;
   slow-host)
-    # A mate that answers only after the T3 Code 15 s freshness window.
-    sleep 16
+    # A mate that answers after 18 s, past the T3 Code 15 s freshness window.
+    sleep 18
     ;;
 esac
 report=${FM_FAKE_SSH_REPORTS:-}/$host.report

@@ -394,6 +394,7 @@ fm_place_decide() {
     return 2
   }
   n=$(fm_host_probe_run "$dir" 1 "$CANDIDATES")
+  received=$(cat "$dir/received" 2>/dev/null)
   i=0
   while [ "$i" -lt "$n" ]; do
     i=$((i + 1))
@@ -415,7 +416,6 @@ fm_place_decide() {
     fi
     headroom=$(fm_host_probe_headroom "$(fm_host_probe_field mem_gib "$PLACE_REPORT")")
     if [ "$FM_PLACEMENT_SCORER" = t3 ]; then
-      received=$(cat "$dir/$i.received" 2>/dev/null)
       T3_IDS+=("$id")
       T3_HOSTS+=("$host")
       T3_DETAILS+=("$(fm_place_positive_reason "$PLACE_REPORT") headroom_workers=$headroom$(fm_place_live_detail "$id")")

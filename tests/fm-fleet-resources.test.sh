@@ -105,7 +105,7 @@ SH
       printf '#!/bin/sh\nexec %s "$@"\n' "$real" > "$dir/home/.bun/bin/bun"
       chmod +x "$dir/home/.bun/bin/bun"
       ;;
-    hang) printf '#!/bin/sh\nsleep 30\n' > "$dir/bin/node" ;;
+    hang) printf '#!/bin/sh\nexec sleep 30\n' > "$dir/bin/node" ;;
   esac
   chmod +x "$dir/bin/uname" "$dir/bin/vm_stat" "$dir/bin/sysctl"
   [ "$runtime" != hang ] || chmod +x "$dir/bin/node"
@@ -264,7 +264,13 @@ test_macos_probe_reads_cpu_and_bytes() {
   assert_contains "$row" 'avail_gib=12 total_gib=48 ' "missing T3 facts must not change the memory reading"
   assert_contains "$row" ' headroom_workers=1 ' "missing T3 facts must not change headroom"
   assert_contains "$row" ' avail_bytes=? total_bytes=51539607552' "a vm_stat without speculative pages leaves available bytes unobserved"
-  assert_contains "$row" ' cpu_util=? ' "a macOS host with no JavaScript runtime has no CPU sample"
+  # The snippet always searches /opt/homebrew/bin, so a Mac running this suite
+  # with Homebrew's node or bun has a runtime even in this fixture.
+  if [ -x /opt/homebrew/bin/node ] || [ -x /opt/homebrew/bin/bun ]; then
+    printf '# /opt/homebrew/bin has a JavaScript runtime: the missing-runtime CPU case is not exercised\n'
+  else
+    assert_contains "$row" ' cpu_util=? ' "a macOS host with no JavaScript runtime has no CPU sample"
+  fi
   assert_contains "$OUT" 'RESOURCES home=slow host=mac-slow headroom_workers=unknown error=reach: the host did not answer within 3s, so its state is unknown' \
     "a CPU sample that hangs is bounded by the whole-probe timeout and reported unknown"
   pass "the macOS probe reports the pinned sampler's facts, unobserved when missing, and is bounded"

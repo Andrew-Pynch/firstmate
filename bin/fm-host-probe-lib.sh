@@ -27,7 +27,8 @@
 #                     Linux reads /proc/stat; macOS runs that same os.cpus()
 #                     sample in node or bun (on PATH, or ~/.bun/bin/bun where
 #                     omp was installed through Bun), and with neither it is
-#                     unobserved.
+#                     unobserved. Every probe that can sample waits those
+#                     200 ms, whichever scorer placement uses.
 #   mem_avail_bytes   available memory in bytes, as the pinned sampler reads it:
 #                     MemAvailable on Linux, free + inactive + speculative pages
 #                     on macOS, clamped to mem_total_bytes
@@ -299,11 +300,12 @@ fm_host_probe_this_host() {
 # EPOCHREALTIME gives milliseconds; elsewhere (stock macOS Bash 3.2) it is
 # whole seconds times 1000.
 fm_host_probe_now_ms() {
-  local t=${EPOCHREALTIME:-}
+  local t=${EPOCHREALTIME:-} frac
   t=${t/,/.}
   case "$t" in
     [0-9]*.[0-9][0-9][0-9]*)
-      printf '%s%s' "${t%%.*}" "$(printf '%s' "${t#*.}" | cut -c1-3)"
+      frac=${t#*.}
+      printf '%s%s' "${t%%.*}" "${frac:0:3}"
       ;;
     *) printf '%s000' "$(date +%s)" ;;
   esac
@@ -327,10 +329,7 @@ fm_host_probe_candidates() {
 }
 
 # _fm_host_probe_one <prefix> <id> <host> <home> <remote> <nucleus>: writes
-# <prefix>.report, <prefix>.reason (empty when the host was read), and
-# <prefix>.received, this home's clock in epoch milliseconds when the report
-# arrived. The receipt time, not the host's own clock, dates the sample, as the
-# pinned T3 Code client does, so clocks on different machines never compare.
+# <prefix>.report and <prefix>.reason (empty when the host was read).
 _fm_host_probe_one() {
   local prefix=$1 id=$2 host=$3 home=$4 remote=$5 nucleus=$6 report rc reason=
   : > "$prefix.report"
@@ -366,7 +365,6 @@ _fm_host_probe_one() {
       fi
     else
       printf '%s\n' "$report" > "$prefix.report"
-      fm_host_probe_now_ms > "$prefix.received"
     fi
   fi
   printf '%s' "$reason" > "$prefix.reason"
@@ -375,11 +373,14 @@ _fm_host_probe_one() {
 # fm_host_probe_run <dir> <mate-nucleus 0|1> <candidates>: probes every
 # candidate line (fm_host_probe_candidates format) concurrently, so the whole
 # read is bounded by one host's timeout rather than their sum. For the Nth line
-# it writes <dir>/<N>.candidate, <dir>/<N>.report, <dir>/<N>.reason, and, for a
-# host that was read, <dir>/<N>.received, and
-# prints the candidate count. This home never runs the Nucleus gate: the
-# captain's rule binds new remote placement, and its own core cap is the local
-# lever.
+# it writes <dir>/<N>.candidate, <dir>/<N>.report, and <dir>/<N>.reason; it
+# writes <dir>/received, this home's clock in epoch milliseconds when the last
+# host answered; and it prints the candidate count. That one receipt time
+# dates every report, the way the pinned T3 Code client dates a sample by its
+# own receipt rather than by the host's clock: the fleet is read as one unit
+# for one decision, so a slow host never ages the others' reports. This home
+# never runs the Nucleus gate: the captain's rule binds new remote placement,
+# and its own core cap is the local lever.
 fm_host_probe_run() {
   local dir=$1 nucleus=$2 candidates=$3 n=0 id host home remote gate pid
   local -a pids=()
@@ -397,5 +398,6 @@ EOF
   for pid in "${pids[@]+"${pids[@]}"}"; do
     wait "$pid" 2>/dev/null || true
   done
+  fm_host_probe_now_ms > "$dir/received"
   printf '%s' "$n"
 }

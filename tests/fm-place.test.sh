@@ -105,6 +105,10 @@ case "$host" in
     printf 'ssh: connect to host %s port 22: Connection timed out\n' "$host" >&2
     exit 255
     ;;
+  slow-host)
+    # A mate that answers only after the T3 Code 15 s freshness window.
+    sleep 16
+    ;;
 esac
 report=${FM_FAKE_SSH_REPORTS:-}/$host.report
 [ -f "$report" ] || {
@@ -645,6 +649,28 @@ test_the_t3_scorer_ranks_eligible_hosts_by_cpu_and_memory() {
   pass "the opt-in T3 Code scorer ranks only gate-passing hosts, by weight, idle cores, and free memory"
 }
 
+# One fleet read feeds one decision, so a mate that answers after the T3 Code
+# freshness window must not make the hosts that answered at once look stale.
+test_a_slow_mate_does_not_age_the_t3_samples() {
+  local home
+  build_scorer_fleet scorer-slow
+  home=$SCORER_HOME
+  seed_mate "$home" slow slow-host "$TMP_ROOT/scorer-slow-slow" remote
+  write_mate_report "$SCORER_REPORTS" slow-host Linux not-applicable 'platform Linux is not a macOS laptop' \
+    IDLE 'IDLE: no live job' 14 4 0.90 64
+  printf 't3\n' > "$home/config/placement-scorer"
+  PATH_PREFIX="$SCORER_SSH:$TMUX_FAKE"
+  FM_PLACE_HOST_TIMEOUT=30 FM_PLACE_PROC_DIR=$SCORER_PROC FM_FAKE_SSH_REPORTS=$SCORER_REPORTS run_place "$home"
+  PATH_PREFIX=
+  expect_code 0 "$PLACE_STATUS" "a slow but answering mate should not stop placement"
+  assert_contains "$PLACE_OUT" 'PLACE home=tight host=tight-host' "the best score should still win after a slow read"
+  assert_contains "$PLACE_OUT" 'ranked=tight:315.00,local:65.57,roomy:15.62,slow:4.37 ' \
+    "every host that answered, fast or slow, should be ranked"
+  assert_not_contains "$PLACE_OUT" 'ms old' "no sample from this read should be stale"
+  rm -f "$home/config/placement-scorer"
+  pass "a slow mate does not push the other hosts' T3 Code samples past the freshness window"
+}
+
 # The shared vectors: the Firstmate adapter must give each case's expected
 # winner and rejection set, and so must the pinned upstream selector under Bun
 # wherever Bun is installed.
@@ -736,6 +762,7 @@ test_a_host_without_worker_headroom_is_refused
 test_without_a_scorer_config_placement_is_unchanged
 test_a_bad_scorer_config_refuses_before_any_probe
 test_the_t3_scorer_ranks_eligible_hosts_by_cpu_and_memory
+test_a_slow_mate_does_not_age_the_t3_samples
 test_shared_vectors_match_the_pinned_upstream_selector
 
 echo "ALL TESTS PASSED"

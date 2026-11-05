@@ -1,0 +1,66 @@
+[Create disposable lab inside the gate worktree] exit=0 elapsed=0.007s
+/home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M6N2WQD0E0NGTQ4MS4JEJW13/.live-placement-6sjjvwof
+
+[Real Linux resource sample] exit=0 elapsed=0.329s
+RESOURCES home=local host=big-ron avail_gib=13 total_gib=61 load_1m=8.47 cpus=32 load_per_core=0.26 workers=6 worker_rss_gib=3.4 headroom_workers=1 cpu_util=0.494624 avail_bytes=14472974336 total_bytes=66568200192
+POLICY floor_gib=8 per_worker_gib=3
+
+[Real Linux resource JSON] exit=0 elapsed=0.32s
+{"floor_gib":8,"per_worker_gib":3,"hosts":[{"home":"local","host":"big-ron","avail_gib":13,"total_gib":61,"load_1m":8.47,"cpus":32,"load_per_core":0.26,"workers":6,"worker_rss_gib":3.4,"headroom_workers":1,"cpu_util":0.094801,"avail_bytes":14534369280,"total_bytes":66568200192,"error":null}]}
+
+[Real Linux resource summary] exit=0 elapsed=0.32s
+fleet resources (floor 8 GiB, 3 GiB per worker): big-ron 13/61 GiB free, load 0.26/core, 6 workers using 3.4 GiB, headroom 1
+
+[Missing config uses headroom] exit=0 elapsed=0.314s
+PLACE home=local host=big-ron platform=Linux laptop=not-applicable free_gib=13 headroom_workers=1 live=0/2 (alive=0 unknown=0) ranked=local:1 reason=the eligible host with the most worker headroom (1)
+
+[Explicit headroom uses the same output contract] exit=0 elapsed=0.312s
+PLACE home=local host=big-ron platform=Linux laptop=not-applicable free_gib=13 headroom_workers=1 live=0/2 (alive=0 unknown=0) ranked=local:1 reason=the eligible host with the most worker headroom (1)
+
+[Opt in to T3 using real CPU and memory] exit=0 elapsed=0.329s
+PLACE home=local host=big-ron platform=Linux laptop=not-applicable free_gib=13 headroom_workers=1 live=0/2 (alive=0 unknown=0) scorer=t3code-v0.1.7 weights=local:50 score=309.27 ranked=local:309.27 reason=the eligible host with the highest T3 Code v0.1.7 score (309.27)
+
+[Set a custom local weight] exit=0 elapsed=0.331s
+PLACE home=local host=big-ron platform=Linux laptop=not-applicable free_gib=13 headroom_workers=1 live=0/2 (alive=0 unknown=0) scorer=t3code-v0.1.7 weights=local:73 score=456.12 ranked=local:456.12 reason=the eligible host with the highest T3 Code v0.1.7 score (456.12)
+
+[Weight zero excludes the only candidate] exit=3 elapsed=0.327s
+REFUSE local(t3: weight 0 keeps this host out of t3 ranking); no secondmate is registered in /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M6N2WQD0E0NGTQ4MS4JEJW13/.live-placement-6sjjvwof/data/secondmates.md
+
+[Maximum weight cannot override the local cap] exit=3 elapsed=0.299s
+REFUSE local(cap: 0 live workers recorded against the 0-worker ceiling (alive=0 unknown=0)); no secondmate is registered in /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M6N2WQD0E0NGTQ4MS4JEJW13/.live-placement-6sjjvwof/data/secondmates.md
+
+[Maximum weight cannot override the memory floor] exit=3 elapsed=0.302s
+REFUSE local(memory: 13 GiB available leaves no room for a worker above the 61 GiB floor at 3 GiB per worker); no secondmate is registered in /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M6N2WQD0E0NGTQ4MS4JEJW13/.live-placement-6sjjvwof/data/secondmates.md
+
+[Reject invalid configuration 'bogus\n'] exit=2 elapsed=0.013s
+fm-place: placement scorer: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M6N2WQD0E0NGTQ4MS4JEJW13/.live-placement-6sjjvwof/config/placement-scorer: unknown scorer 'bogus'; write headroom or t3
+
+[Reject invalid configuration 't3 local=101\n'] exit=2 elapsed=0.013s
+fm-place: placement scorer: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M6N2WQD0E0NGTQ4MS4JEJW13/.live-placement-6sjjvwof/config/placement-scorer: weight '101' for local is not an integer from 0 through 100
+
+[Reject invalid configuration 't3 nobody=50\n'] exit=2 elapsed=0.013s
+fm-place: placement scorer: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M6N2WQD0E0NGTQ4MS4JEJW13/.live-placement-6sjjvwof/config/placement-scorer: 'nobody' is neither local nor a secondmate registered in data/secondmates.md
+
+[Reject invalid configuration 't3 local=1 local=2\n'] exit=2 elapsed=0.013s
+fm-place: placement scorer: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M6N2WQD0E0NGTQ4MS4JEJW13/.live-placement-6sjjvwof/config/placement-scorer: local is weighted more than once
+
+[Reject invalid configuration 'headroom local=1\n'] exit=2 elapsed=0.013s
+fm-place: placement scorer: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M6N2WQD0E0NGTQ4MS4JEJW13/.live-placement-6sjjvwof/config/placement-scorer: headroom takes no weights (got: local=1)
+
+[Reject invalid configuration 't3\nheadroom\n'] exit=2 elapsed=0.012s
+fm-place: placement scorer: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M6N2WQD0E0NGTQ4MS4JEJW13/.live-placement-6sjjvwof/config/placement-scorer has more than one setting line; put the scorer and every weight on one line
+
+[Reject invalid configuration ''] exit=2 elapsed=0.012s
+fm-place: placement scorer: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M6N2WQD0E0NGTQ4MS4JEJW13/.live-placement-6sjjvwof/config/placement-scorer names no scorer; write headroom or t3
+
+[Create disposable same-machine mate] exit=0 elapsed=0.007s
+/home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M6N2WQD0E0NGTQ4MS4JEJW13/.live-placement-6sjjvwof/mate
+
+[Read two real same-machine resource reports] exit=0 elapsed=0.354s
+RESOURCES home=local host=big-ron avail_gib=13 total_gib=61 load_1m=7.95 cpus=32 load_per_core=0.25 workers=6 worker_rss_gib=3.4 headroom_workers=1 cpu_util=0.069659 avail_bytes=14533292032 total_bytes=66568200192
+RESOURCES home=probe-mate host=same-machine avail_gib=13 total_gib=61 load_1m=7.95 cpus=32 load_per_core=0.25 workers=6 worker_rss_gib=3.4 headroom_workers=1 cpu_util=0.069659 avail_bytes=14533074944 total_bytes=66568200192
+POLICY floor_gib=8 per_worker_gib=3
+
+[Maximum weight cannot admit a mate with unknown Nucleus state] exit=3 elapsed=0.345s
+REFUSE probe-mate(nucleus: missing: no Nucleus admission check at /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M6N2WQD0E0NGTQ4MS4JEJW13/.live-placement-6sjjvwof/mate/data/nucleus-live-job-check.sh); local(t3: weight 0 keeps this host out of t3 ranking)
+

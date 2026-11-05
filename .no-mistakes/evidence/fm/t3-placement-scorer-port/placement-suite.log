@@ -1,0 +1,30 @@
+ok - a row is placed on the primary while it is under its live-worker cap
+ok - work overflows to an eligible mate when the primary is at its cap
+ok - a host with a live Nucleus simulation refuses new work by name
+ok - a host that does not answer is refused as unknown, never treated as idle
+ok - a laptop another person is signed in to refuses new work
+ok - one refusal line names every candidate and every gate that failed
+ok - an in-flight row is refused by name and never moved
+ok - a row that is neither a ship nor a scout is refused by name
+ok - --handoff moves a queued row to the mate and instructs it
+ok - a local decision reports handoff=none and moves nothing
+ok - the eligible host with the most worker headroom takes the row
+ok - equal worker headroom prefers this home
+ok - a host above the floor but short of one worker's budget is refused
+ok - without a scorer config, and with headroom, every placement line is byte-for-byte the pre-scorer decision
+ok - a malformed config/placement-scorer exits 2 before any host is probed
+ok - the opt-in T3 Code scorer ranks only gate-passing hosts, by weight, idle cores, and free memory
+ok - a slow mate ages earlier T3 Code samples past the freshness window and only its fresh sample ranks
+# upstream bun: cpu-count-beats-idle 16-core -
+# upstream bun: weight-moves-the-winner bertha -
+# upstream bun: tie-keeps-candidate-order local -
+# upstream bun: stale-and-boundary fresh-edge stale
+# upstream bun: future-and-boundary future-edge future
+# upstream bun: cpu-at-95-percent below busy
+# upstream bun: memory-at-5-percent above full
+# upstream bun: weight-zero-and-negative normal manual-only,negative
+# upstream bun: malformed-values sound bad-weight,bad-cpu,bad-mem,bad-count,no-cpu-sample,no-snapshot,zero-total,zero-cpus
+# upstream bun: every-candidate-rejected - busy,manual-only
+# upstream bun: byte-scale-hosts big-bertha -
+ok - the shared vectors give the same winner and rejection set through upstream Bun and the Firstmate adapter
+ALL TESTS PASSED

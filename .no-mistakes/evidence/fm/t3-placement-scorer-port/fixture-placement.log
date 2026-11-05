@@ -1,0 +1,17 @@
+
+CLI exit=0
+PLACE home=hot host=hot-host platform=Linux laptop=not-applicable nucleus=idle free_gib=60 headroom_workers=17 ranked=hot:17,blind:17,roomy:14,local:4,tight:2 reason=the eligible host with the most worker headroom (17), tied with blind and kept by tie order (this home first, then registry order)
+
+CLI exit=0
+PLACE home=tight host=tight-host platform=Linux laptop=not-applicable nucleus=idle free_gib=14 headroom_workers=2 scorer=t3code-v0.1.7 weights=local:50,tight:100,roomy:50,busy:100,tina:50,hot:50,blind:50 score=630.00 ranked=tight:630.00,local:65.57,roomy:15.62 reason=the eligible host with the highest T3 Code v0.1.7 score (630.00); not ranked: hot(t3: CPU utilization 0.97 is at or above 0.95); blind(t3: CPU utilization was not observed)
+
+CLI exit=0
+PLACE home=local host=big-ron platform=Linux laptop=not-applicable free_gib=20 headroom_workers=4 live=1/12 (alive=1 unknown=0) scorer=t3code-v0.1.7 weights=local:50,tight:0,roomy:7,busy:50,tina:50,hot:50,blind:50 score=65.57 ranked=local:65.57,roomy:2.19 reason=the eligible host with the highest T3 Code v0.1.7 score (65.57); not ranked: tight(t3: weight 0 keeps this host out of t3 ranking); hot(t3: CPU utilization 0.97 is at or above 0.95); blind(t3: CPU utilization was not observed)
+
+CLI exit=3
+REFUSE local(cap: 1 live workers recorded against the 1-worker ceiling (alive=1 unknown=0)); busy(nucleus: BUSY: an unpaired job start is live); tina(reach: ssh: connect to host unreachable-laptop port 22: Connection timed out); tight(t3: CPU utilization 0.99 is at or above 0.95); roomy(t3: the host reported no complete resource sample); hot(t3: CPU utilization 0.97 is at or above 0.95); blind(t3: CPU utilization was not observed)
+ok - the opt-in T3 Code scorer ranks only gate-passing hosts, by weight, idle cores, and free memory
+
+CLI exit=0
+PLACE home=slow host=slow-host platform=Linux laptop=not-applicable nucleus=idle free_gib=14 headroom_workers=2 scorer=t3code-v0.1.7 weights=local:50,tight:50,roomy:50,busy:50,tina:50,slow:50 score=4.37 ranked=slow:4.37 reason=the eligible host with the highest T3 Code v0.1.7 score (4.37); not ranked: local(t3: the sample is 17939 ms old, past the 15000 ms freshness window); tight(t3: the sample is 18200 ms old, past the 15000 ms freshness window); roomy(t3: the sample is 18201 ms old, past the 15000 ms freshness window)
+ok - a slow mate ages earlier T3 Code samples past the freshness window and only its fresh sample ranks

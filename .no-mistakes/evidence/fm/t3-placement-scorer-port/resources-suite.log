@@ -1,0 +1,6 @@
+ok - headroom is floor((available - 8 GiB) / 3 GiB), never negative
+ok - FM_PLACE_MIN_FREE_GIB and FM_PLACE_PER_WORKER_GIB set the rule
+ok - every registered host is read; an unreadable one reports why
+ok - the Linux probe reports a 200 ms CPU sample and byte-precise memory
+ok - the macOS probe reports the pinned sampler's facts, unobserved when missing, and is bounded
+ALL TESTS PASSED

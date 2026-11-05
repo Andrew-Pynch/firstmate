@@ -1,0 +1,34 @@
+[
+  {
+    "file": "load-balancing.ts",
+    "local_sha256": "de5f8fe45b5d20c752f578e17cc2c85a299561f1921f3adebe3272ebf42f52d1",
+    "expected_sha256": "de5f8fe45b5d20c752f578e17cc2c85a299561f1921f3adebe3272ebf42f52d1",
+    "url": "https://raw.githubusercontent.com/pingdotgg/t3code/322f6544dfad0a3c8a0c8cbecf2c7f7874b14268/packages/client-runtime/src/load-balancing.ts",
+    "upstream_sha256": "de5f8fe45b5d20c752f578e17cc2c85a299561f1921f3adebe3272ebf42f52d1",
+    "matches_upstream": true
+  },
+  {
+    "file": "HostResources.ts",
+    "local_sha256": "bf3914795597138620ef253af61d85817ed7b8a5072d4088e70c17a5d23a806a",
+    "expected_sha256": "bf3914795597138620ef253af61d85817ed7b8a5072d4088e70c17a5d23a806a",
+    "url": "https://raw.githubusercontent.com/pingdotgg/t3code/322f6544dfad0a3c8a0c8cbecf2c7f7874b14268/apps/server/src/resourceTelemetry/HostResources.ts",
+    "upstream_sha256": "bf3914795597138620ef253af61d85817ed7b8a5072d4088e70c17a5d23a806a",
+    "matches_upstream": true
+  },
+  {
+    "file": "resourceTelemetry.ts.lines-9-16",
+    "local_sha256": "07515932a6b9352e14eaa8759a2518e32776773d909766b44c8d0a6a529c38de",
+    "expected_sha256": "07515932a6b9352e14eaa8759a2518e32776773d909766b44c8d0a6a529c38de",
+    "url": "https://raw.githubusercontent.com/pingdotgg/t3code/322f6544dfad0a3c8a0c8cbecf2c7f7874b14268/packages/contracts/src/resourceTelemetry.ts",
+    "upstream_sha256": "07515932a6b9352e14eaa8759a2518e32776773d909766b44c8d0a6a529c38de",
+    "matches_upstream": true
+  },
+  {
+    "file": "LICENSE",
+    "local_sha256": "935d8f2af0c703f9c39517ee57cc4930b19d02d533be930b63f0e82f93614b43",
+    "expected_sha256": "935d8f2af0c703f9c39517ee57cc4930b19d02d533be930b63f0e82f93614b43",
+    "url": "https://raw.githubusercontent.com/pingdotgg/t3code/322f6544dfad0a3c8a0c8cbecf2c7f7874b14268/LICENSE",
+    "upstream_sha256": "935d8f2af0c703f9c39517ee57cc4930b19d02d533be930b63f0e82f93614b43",
+    "matches_upstream": true
+  }
+]

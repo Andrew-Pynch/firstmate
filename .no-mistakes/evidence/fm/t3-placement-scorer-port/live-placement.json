@@ -1,0 +1,257 @@
+[
+  {
+    "scenario": "Create disposable lab inside the gate worktree",
+    "command": [
+      "bin/fm-lab-home.sh",
+      "create",
+      "/home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M6N2WQD0E0NGTQ4MS4JEJW13/.live-placement-6sjjvwof"
+    ],
+    "extra_env": {},
+    "elapsed_s": 0.007,
+    "exit": 0,
+    "stdout": "/home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M6N2WQD0E0NGTQ4MS4JEJW13/.live-placement-6sjjvwof\n",
+    "stderr": ""
+  },
+  {
+    "scenario": "Real Linux resource sample",
+    "command": [
+      "bin/fm-fleet-resources.sh",
+      "--local"
+    ],
+    "extra_env": {},
+    "elapsed_s": 0.329,
+    "exit": 0,
+    "stdout": "RESOURCES home=local host=big-ron avail_gib=13 total_gib=61 load_1m=8.47 cpus=32 load_per_core=0.26 workers=6 worker_rss_gib=3.4 headroom_workers=1 cpu_util=0.494624 avail_bytes=14472974336 total_bytes=66568200192\nPOLICY floor_gib=8 per_worker_gib=3\n",
+    "stderr": ""
+  },
+  {
+    "scenario": "Real Linux resource JSON",
+    "command": [
+      "bin/fm-fleet-resources.sh",
+      "--local",
+      "--json"
+    ],
+    "extra_env": {},
+    "elapsed_s": 0.32,
+    "exit": 0,
+    "stdout": "{\"floor_gib\":8,\"per_worker_gib\":3,\"hosts\":[{\"home\":\"local\",\"host\":\"big-ron\",\"avail_gib\":13,\"total_gib\":61,\"load_1m\":8.47,\"cpus\":32,\"load_per_core\":0.26,\"workers\":6,\"worker_rss_gib\":3.4,\"headroom_workers\":1,\"cpu_util\":0.094801,\"avail_bytes\":14534369280,\"total_bytes\":66568200192,\"error\":null}]}\n",
+    "stderr": ""
+  },
+  {
+    "scenario": "Real Linux resource summary",
+    "command": [
+      "bin/fm-fleet-resources.sh",
+      "--local",
+      "--summary"
+    ],
+    "extra_env": {},
+    "elapsed_s": 0.32,
+    "exit": 0,
+    "stdout": "fleet resources (floor 8 GiB, 3 GiB per worker): big-ron 13/61 GiB free, load 0.26/core, 6 workers using 3.4 GiB, headroom 1\n",
+    "stderr": ""
+  },
+  {
+    "scenario": "Missing config uses headroom",
+    "command": [
+      "bin/fm-place.sh"
+    ],
+    "extra_env": {},
+    "elapsed_s": 0.314,
+    "exit": 0,
+    "stdout": "PLACE home=local host=big-ron platform=Linux laptop=not-applicable free_gib=13 headroom_workers=1 live=0/2 (alive=0 unknown=0) ranked=local:1 reason=the eligible host with the most worker headroom (1)\n",
+    "stderr": ""
+  },
+  {
+    "scenario": "Explicit headroom uses the same output contract",
+    "command": [
+      "bin/fm-place.sh"
+    ],
+    "extra_env": {},
+    "elapsed_s": 0.312,
+    "exit": 0,
+    "stdout": "PLACE home=local host=big-ron platform=Linux laptop=not-applicable free_gib=13 headroom_workers=1 live=0/2 (alive=0 unknown=0) ranked=local:1 reason=the eligible host with the most worker headroom (1)\n",
+    "stderr": ""
+  },
+  {
+    "scenario": "Headroom byte comparison on successive real samples",
+    "identical": true,
+    "note": "Deterministic unchanged-decision comparisons are also covered by tests/fm-place.test.sh."
+  },
+  {
+    "scenario": "Opt in to T3 using real CPU and memory",
+    "command": [
+      "bin/fm-place.sh"
+    ],
+    "extra_env": {},
+    "elapsed_s": 0.329,
+    "exit": 0,
+    "stdout": "PLACE home=local host=big-ron platform=Linux laptop=not-applicable free_gib=13 headroom_workers=1 live=0/2 (alive=0 unknown=0) scorer=t3code-v0.1.7 weights=local:50 score=309.27 ranked=local:309.27 reason=the eligible host with the highest T3 Code v0.1.7 score (309.27)\n",
+    "stderr": ""
+  },
+  {
+    "scenario": "Set a custom local weight",
+    "command": [
+      "bin/fm-place.sh"
+    ],
+    "extra_env": {},
+    "elapsed_s": 0.331,
+    "exit": 0,
+    "stdout": "PLACE home=local host=big-ron platform=Linux laptop=not-applicable free_gib=13 headroom_workers=1 live=0/2 (alive=0 unknown=0) scorer=t3code-v0.1.7 weights=local:73 score=456.12 ranked=local:456.12 reason=the eligible host with the highest T3 Code v0.1.7 score (456.12)\n",
+    "stderr": ""
+  },
+  {
+    "scenario": "Weight zero excludes the only candidate",
+    "command": [
+      "bin/fm-place.sh"
+    ],
+    "extra_env": {},
+    "elapsed_s": 0.327,
+    "exit": 3,
+    "stdout": "REFUSE local(t3: weight 0 keeps this host out of t3 ranking); no secondmate is registered in /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M6N2WQD0E0NGTQ4MS4JEJW13/.live-placement-6sjjvwof/data/secondmates.md\n",
+    "stderr": ""
+  },
+  {
+    "scenario": "Maximum weight cannot override the local cap",
+    "command": [
+      "bin/fm-place.sh"
+    ],
+    "extra_env": {},
+    "elapsed_s": 0.299,
+    "exit": 3,
+    "stdout": "REFUSE local(cap: 0 live workers recorded against the 0-worker ceiling (alive=0 unknown=0)); no secondmate is registered in /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M6N2WQD0E0NGTQ4MS4JEJW13/.live-placement-6sjjvwof/data/secondmates.md\n",
+    "stderr": ""
+  },
+  {
+    "scenario": "Maximum weight cannot override the memory floor",
+    "command": [
+      "bin/fm-place.sh"
+    ],
+    "extra_env": {
+      "FM_PLACE_MIN_FREE_GIB": "61"
+    },
+    "elapsed_s": 0.302,
+    "exit": 3,
+    "stdout": "REFUSE local(memory: 13 GiB available leaves no room for a worker above the 61 GiB floor at 3 GiB per worker); no secondmate is registered in /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M6N2WQD0E0NGTQ4MS4JEJW13/.live-placement-6sjjvwof/data/secondmates.md\n",
+    "stderr": ""
+  },
+  {
+    "scenario": "Reject invalid configuration 'bogus\\n'",
+    "command": [
+      "bin/fm-place.sh"
+    ],
+    "extra_env": {},
+    "elapsed_s": 0.013,
+    "exit": 2,
+    "stdout": "",
+    "stderr": "fm-place: placement scorer: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M6N2WQD0E0NGTQ4MS4JEJW13/.live-placement-6sjjvwof/config/placement-scorer: unknown scorer 'bogus'; write headroom or t3\n"
+  },
+  {
+    "scenario": "Reject invalid configuration 't3 local=101\\n'",
+    "command": [
+      "bin/fm-place.sh"
+    ],
+    "extra_env": {},
+    "elapsed_s": 0.013,
+    "exit": 2,
+    "stdout": "",
+    "stderr": "fm-place: placement scorer: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M6N2WQD0E0NGTQ4MS4JEJW13/.live-placement-6sjjvwof/config/placement-scorer: weight '101' for local is not an integer from 0 through 100\n"
+  },
+  {
+    "scenario": "Reject invalid configuration 't3 nobody=50\\n'",
+    "command": [
+      "bin/fm-place.sh"
+    ],
+    "extra_env": {},
+    "elapsed_s": 0.013,
+    "exit": 2,
+    "stdout": "",
+    "stderr": "fm-place: placement scorer: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M6N2WQD0E0NGTQ4MS4JEJW13/.live-placement-6sjjvwof/config/placement-scorer: 'nobody' is neither local nor a secondmate registered in data/secondmates.md\n"
+  },
+  {
+    "scenario": "Reject invalid configuration 't3 local=1 local=2\\n'",
+    "command": [
+      "bin/fm-place.sh"
+    ],
+    "extra_env": {},
+    "elapsed_s": 0.013,
+    "exit": 2,
+    "stdout": "",
+    "stderr": "fm-place: placement scorer: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M6N2WQD0E0NGTQ4MS4JEJW13/.live-placement-6sjjvwof/config/placement-scorer: local is weighted more than once\n"
+  },
+  {
+    "scenario": "Reject invalid configuration 'headroom local=1\\n'",
+    "command": [
+      "bin/fm-place.sh"
+    ],
+    "extra_env": {},
+    "elapsed_s": 0.013,
+    "exit": 2,
+    "stdout": "",
+    "stderr": "fm-place: placement scorer: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M6N2WQD0E0NGTQ4MS4JEJW13/.live-placement-6sjjvwof/config/placement-scorer: headroom takes no weights (got: local=1)\n"
+  },
+  {
+    "scenario": "Reject invalid configuration 't3\\nheadroom\\n'",
+    "command": [
+      "bin/fm-place.sh"
+    ],
+    "extra_env": {},
+    "elapsed_s": 0.012,
+    "exit": 2,
+    "stdout": "",
+    "stderr": "fm-place: placement scorer: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M6N2WQD0E0NGTQ4MS4JEJW13/.live-placement-6sjjvwof/config/placement-scorer has more than one setting line; put the scorer and every weight on one line\n"
+  },
+  {
+    "scenario": "Reject invalid configuration ''",
+    "command": [
+      "bin/fm-place.sh"
+    ],
+    "extra_env": {},
+    "elapsed_s": 0.012,
+    "exit": 2,
+    "stdout": "",
+    "stderr": "fm-place: placement scorer: /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M6N2WQD0E0NGTQ4MS4JEJW13/.live-placement-6sjjvwof/config/placement-scorer names no scorer; write headroom or t3\n"
+  },
+  {
+    "scenario": "Create disposable same-machine mate",
+    "command": [
+      "bin/fm-lab-home.sh",
+      "create",
+      "/home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M6N2WQD0E0NGTQ4MS4JEJW13/.live-placement-6sjjvwof/mate"
+    ],
+    "extra_env": {},
+    "elapsed_s": 0.007,
+    "exit": 0,
+    "stdout": "/home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M6N2WQD0E0NGTQ4MS4JEJW13/.live-placement-6sjjvwof/mate\n",
+    "stderr": ""
+  },
+  {
+    "scenario": "Read two real same-machine resource reports",
+    "command": [
+      "bin/fm-fleet-resources.sh"
+    ],
+    "extra_env": {},
+    "elapsed_s": 0.354,
+    "exit": 0,
+    "stdout": "RESOURCES home=local host=big-ron avail_gib=13 total_gib=61 load_1m=7.95 cpus=32 load_per_core=0.25 workers=6 worker_rss_gib=3.4 headroom_workers=1 cpu_util=0.069659 avail_bytes=14533292032 total_bytes=66568200192\nRESOURCES home=probe-mate host=same-machine avail_gib=13 total_gib=61 load_1m=7.95 cpus=32 load_per_core=0.25 workers=6 worker_rss_gib=3.4 headroom_workers=1 cpu_util=0.069659 avail_bytes=14533074944 total_bytes=66568200192\nPOLICY floor_gib=8 per_worker_gib=3\n",
+    "stderr": ""
+  },
+  {
+    "scenario": "Maximum weight cannot admit a mate with unknown Nucleus state",
+    "command": [
+      "bin/fm-place.sh"
+    ],
+    "extra_env": {},
+    "elapsed_s": 0.345,
+    "exit": 3,
+    "stdout": "REFUSE probe-mate(nucleus: missing: no Nucleus admission check at /home/andrew/.no-mistakes/worktrees/c8a5a98ff0d8/01M6N2WQD0E0NGTQ4MS4JEJW13/.live-placement-6sjjvwof/mate/data/nucleus-live-job-check.sh); local(t3: weight 0 keeps this host out of t3 ranking)\n",
+    "stderr": ""
+  },
+  {
+    "scenario": "All live assertions",
+    "result": "pass"
+  },
+  {
+    "scenario": "Cleanup",
+    "lab_removed": true
+  }
+]

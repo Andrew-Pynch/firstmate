@@ -629,6 +629,10 @@
       "audience": "maintainer-verification"
     },
     {
+      "path": "bin/vendor/t3code/UPSTREAM.md",
+      "audience": "maintainer-verification"
+    },
+    {
       "path": ".agents/skills/agent-skill-trigger-index/SKILL.md",
       "audience": "agent-runtime"
     },

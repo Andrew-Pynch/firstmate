@@ -26,9 +26,10 @@
 #                     unobserved when the CPU count changed or no time passed.
 #                     Linux reads /proc/stat; macOS runs that same os.cpus()
 #                     sample in node or bun (on PATH, or ~/.bun/bin/bun where
-#                     omp was installed through Bun), and with neither it is
-#                     unobserved. Every probe that can sample waits those
-#                     200 ms, whichever scorer placement uses.
+#                     omp was installed through Bun), and with neither, or one
+#                     that does not answer within 2 s, it is unobserved. Every
+#                     probe that can sample waits those 200 ms, whichever
+#                     scorer placement uses.
 #   mem_avail_bytes   available memory in bytes, as the pinned sampler reads it:
 #                     MemAvailable on Linux, free + inactive + speculative pages
 #                     on macOS, clamped to mem_total_bytes
@@ -187,7 +188,16 @@ if [ "$platform" = Darwin ] && [ -z "$place_proc" ]; then
     fi
   done
   if [ -n "$runtime" ]; then
-    cpu_util=$("$runtime" -e 'const o=require("os");const r=()=>{let i=0,t=0;const c=o.cpus();for(const{times:x}of c){i+=x.idle;t+=x.user+x.nice+x.sys+x.idle+x.irq}return[i,t,c.length]};const a=r();setTimeout(()=>{const b=r(),td=b[1]-a[1],id=b[0]-a[0];if(a[2]===b[2]&&td>0&&id>=0)console.log(Math.min(1,Math.max(0,1-id/td)).toFixed(6))},200)' 2>/dev/null </dev/null)
+    # Bounded on its own at 2 s, so a runtime that hangs costs only this
+    # sample and never the host's other facts.
+    cpu_util=$(
+      "$runtime" -e 'const o=require("os");const r=()=>{let i=0,t=0;const c=o.cpus();for(const{times:x}of c){i+=x.idle;t+=x.user+x.nice+x.sys+x.idle+x.irq}return[i,t,c.length]};const a=r();setTimeout(()=>{const b=r(),td=b[1]-a[1],id=b[0]-a[0];if(a[2]===b[2]&&td>0&&id>=0)console.log(Math.min(1,Math.max(0,1-id/td)).toFixed(6))},200)' 2>/dev/null </dev/null &
+      sampler=$!
+      (sleep 2; kill "$sampler") >/dev/null 2>&1 </dev/null &
+      watchdog=$!
+      wait "$sampler" 2>/dev/null
+      kill "$watchdog" 2>/dev/null
+    )
   fi
 else
   proc=${place_proc:-/proc}

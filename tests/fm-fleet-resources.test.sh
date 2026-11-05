@@ -66,7 +66,7 @@ chmod +x "$FAKEBIN/ssh"
 
 DARWIN_ROOT="$TMP_ROOT/darwin"
 
-# write_darwin_host <host> <runtime: real|none|hang> <vm_stat: full|no-speculative>:
+# write_darwin_host <host> <runtime: real|none|hang> <vm_stat: full|no-speculative|stuck>:
 # stand-in macOS tools for one host. lil-timmy's own vm_stat output is the
 # fixture: 16 KiB pages, 48 GiB installed, 16 CPUs.
 write_darwin_host() {
@@ -88,6 +88,7 @@ write_darwin_host() {
     printf 'Pages purgeable:                                3748.\n'
     printf 'EOF\n'
   } > "$dir/bin/vm_stat"
+  [ "$vm" != stuck ] || printf '#!/bin/sh\nexec sleep 30\n' > "$dir/bin/vm_stat"
   cat > "$dir/bin/sysctl" <<'SH'
 #!/bin/sh
 case "$*" in
@@ -243,11 +244,13 @@ test_macos_probe_reads_cpu_and_bytes() {
   fm_test_proc_fixture "$proc" 20 61
   register_remote_mate "$home" timmy mac-valid
   register_remote_mate "$home" tina mac-missing
-  register_remote_mate "$home" slow mac-slow
+  register_remote_mate "$home" hung mac-hung
+  register_remote_mate "$home" stuck mac-stuck
   write_darwin_host mac-missing none no-speculative
-  write_darwin_host mac-slow hang full
+  write_darwin_host mac-hung hang full
+  write_darwin_host mac-stuck none stuck
   if write_darwin_host mac-valid real full; then
-    FM_FAKE_DARWIN_ROOT=$DARWIN_ROOT FM_PLACE_HOST_TIMEOUT=3 run_fleet "$home" "$proc"
+    FM_FAKE_DARWIN_ROOT=$DARWIN_ROOT FM_PLACE_HOST_TIMEOUT=5 run_fleet "$home" "$proc"
     row=$(printf '%s\n' "$OUT" | grep '^RESOURCES home=timmy ')
     assert_contains "$row" 'avail_gib=12 total_gib=48 load_1m=1.60 cpus=16 ' "the macOS memory and load facts should be unchanged"
     assert_contains "$row" ' avail_bytes=13551665152 total_bytes=51539607552' \
@@ -257,7 +260,7 @@ test_macos_probe_reads_cpu_and_bytes() {
   else
     printf '# no node or bun on this host: the valid macOS CPU sample is not exercised\n'
     rm -rf "${DARWIN_ROOT:?}/mac-valid"
-    FM_FAKE_DARWIN_ROOT=$DARWIN_ROOT FM_PLACE_HOST_TIMEOUT=3 run_fleet "$home" "$proc"
+    FM_FAKE_DARWIN_ROOT=$DARWIN_ROOT FM_PLACE_HOST_TIMEOUT=5 run_fleet "$home" "$proc"
   fi
   expect_code 3 "$STATUS" "a host that never answers makes the read exit 3"
   row=$(printf '%s\n' "$OUT" | grep '^RESOURCES home=tina ')
@@ -271,8 +274,12 @@ test_macos_probe_reads_cpu_and_bytes() {
   else
     assert_contains "$row" ' cpu_util=? ' "a macOS host with no JavaScript runtime has no CPU sample"
   fi
-  assert_contains "$OUT" 'RESOURCES home=slow host=mac-slow headroom_workers=unknown error=reach: the host did not answer within 3s, so its state is unknown' \
-    "a CPU sample that hangs is bounded by the whole-probe timeout and reported unknown"
+  row=$(printf '%s\n' "$OUT" | grep '^RESOURCES home=hung ')
+  assert_contains "$row" 'avail_gib=12 total_gib=48 ' "a hung JavaScript runtime must not cost the host's memory facts"
+  assert_contains "$row" ' headroom_workers=1 cpu_util=? avail_bytes=13551665152 ' \
+    "a runtime that does not answer within its own 2 s bound leaves only the CPU sample unobserved"
+  assert_contains "$OUT" 'RESOURCES home=stuck host=mac-stuck headroom_workers=unknown error=reach: the host did not answer within 5s, so its state is unknown' \
+    "a probe that hangs is bounded by the whole-probe timeout and reported unknown"
   pass "the macOS probe reports the pinned sampler's facts, unobserved when missing, and is bounded"
 }
 

@@ -542,7 +542,7 @@ test_without_a_scorer_config_placement_is_unchanged() {
     case "$config" in
       missing) rm -f "$home/config/placement-scorer" "$tie/config/placement-scorer" ;;
       headroom) printf 'headroom\n' | tee "$home/config/placement-scorer" > "$tie/config/placement-scorer" ;;
-      commented) printf '# rank by memory headroom\n\n  headroom  \n' | tee "$home/config/placement-scorer" > "$tie/config/placement-scorer" ;;
+      commented) printf '# rank by memory headroom\n  # an indented note\n\n  headroom  \n' | tee "$home/config/placement-scorer" > "$tie/config/placement-scorer" ;;
     esac
     write_cap "$home" 12
     write_mate_report "$SCORER_REPORTS" tight-host Linux not-applicable 'platform Linux is not a macOS laptop' \
@@ -627,12 +627,12 @@ test_the_t3_scorer_ranks_eligible_hosts_by_cpu_and_memory() {
   assert_equals 'PLACE home=tight host=tight-host platform=Linux laptop=not-applicable nucleus=idle free_gib=14 headroom_workers=2 scorer=t3code-v0.1.7 weights=local:50,tight:100,roomy:50,busy:100,tina:50,hot:50,blind:50 score=630.00 ranked=tight:630.00,local:65.57,roomy:15.62 reason=the eligible host with the highest T3 Code v0.1.7 score (630.00); not ranked: hot(t3: CPU utilization 0.97 is at or above 0.95); blind(t3: CPU utilization was not observed)' \
     "$PLACE_OUT" "the T3 score should rank idle cores over headroom, name the scorer and weights, and keep busy refused by its gate"
 
-  printf 't3 tight=0\n' > "$home/config/placement-scorer"
+  printf 't3 tight=0 roomy=007\n' > "$home/config/placement-scorer"
   run_scorer_fleet "$home"
   expect_code 0 "$PLACE_STATUS" "a weight of 0 should not stop placement"
   assert_contains "$PLACE_OUT" 'PLACE home=local ' "with tight weighted out, this home has the best score"
-  assert_contains "$PLACE_OUT" 'headroom_workers=4 live=1/12 (alive=1 unknown=0) scorer=t3code-v0.1.7 weights=local:50,tight:0,' \
-    "a local placement should keep its cap facts"
+  assert_contains "$PLACE_OUT" 'headroom_workers=4 live=1/12 (alive=1 unknown=0) scorer=t3code-v0.1.7 weights=local:50,tight:0,roomy:7,' \
+    "a local placement should keep its cap facts, and a zero-padded weight reads as its number"
   assert_contains "$PLACE_OUT" 'tight(t3: weight 0 keeps this host out of t3 ranking)' "weight 0 should be named as the reason"
 
   write_cap "$home" 1

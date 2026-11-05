@@ -33,7 +33,8 @@
 #             supply one.
 #
 # config/placement-scorer (optional, private to the home): blank lines and
-# lines starting with # are ignored, and exactly one setting line remains:
+# lines whose first non-blank character is # are ignored, and exactly one
+# setting line remains:
 #   headroom
 #   t3 [<candidate-id>=<weight> ...]
 # A candidate id is `local` (this home) or a secondmate id registered in
@@ -79,12 +80,9 @@ fm_placement_scorer_load() {
     return 1
   fi
   while IFS= read -r line || [ -n "$line" ]; do
+    line=${line#"${line%%[![:space:]]*}"}
     case "$line" in
       '' | '#'*) continue ;;
-    esac
-    case "$line" in
-      *[![:space:]]*) ;;
-      *) continue ;;
     esac
     if [ -n "$setting" ]; then
       FM_PLACEMENT_SCORER_ERROR="$file has more than one setting line; put the scorer and every weight on one line"
